@@ -414,5 +414,6 @@ def convert_module(module: object) -> str:
     bare_imports.extend(joined_imports.values())
     imports = bare_imports
     imports.sort(key=lambda import_: import_.key())
-
-    return f"{header}{'\n'.join(import_.to_pyi(0) for import_ in imports)}\n\n{body_content}"
+    imports_str = '\n'.join(import_.to_pyi(0) for import_ in imports)
+    
+    return f"{header}{imports_str}\n\n{body_content}"
