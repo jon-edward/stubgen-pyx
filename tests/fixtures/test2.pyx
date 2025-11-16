@@ -4,7 +4,7 @@ This is a test of importing modules.
 
 from typing import List, Dict, Tuple as tup
 
-cdef int imported_func():
+cpdef int imported_func():
     return 1
 
 
@@ -30,8 +30,6 @@ cdef class ImportedClass:
     """
     A docstring for ImportedClass
     """
-
-    cdef public int _private_field
 
     def __init__(self):
         """

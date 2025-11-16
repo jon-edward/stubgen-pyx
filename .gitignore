@@ -170,8 +170,7 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-# test_project .c files
-test_project/*.c
-
-# test_project .h files
-test_project/*.h
+tests/fixtures/*.pyi
+tests/fixtures/*.pyd
+tests/fixtures/*.c
+tests/fixtures/*.so
