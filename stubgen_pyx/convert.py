@@ -74,7 +74,7 @@ def _get_annotations(obj: object) -> dict[str, str]:
         return obj.__annotations__
     return {}
 
-if False: # hasattr(inspect, "get_annotations"):
+if hasattr(inspect, "get_annotations"):
     get_annotations = inspect.get_annotations  # type: ignore
 else:
     get_annotations = _get_annotations
