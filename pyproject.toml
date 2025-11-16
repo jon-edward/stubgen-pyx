@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stubgen-pyx"
+version = "0.1.2"
+description = "Generates `.pyi` files from Cython modules in a given package directory."
+readme = "README.md"
+authors = [{name = "Jonathan Townsend"}]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "Cython>=3.0.11",
+    "setuptools>=75.8.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.4.0"]
+
+[project.urls]
+Homepage = "https://github.com/jon-edward/stubgen-pyx"
+
+[project.scripts]
+stubgen-pyx = "stubgen_pyx.__main__:main"
+
+[tool.setuptools]
+packages = ["stubgen_pyx"]
