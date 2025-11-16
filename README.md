@@ -1,44 +1,110 @@
 # stubgen-pyx
 
-Stub generation for Cython code.
+Automatic stub file generation for Cython extensions.
 
 ## Installation
 
-Install the package with `pip install stubgen-pyx`.
+```bash
+pip install stubgen-pyx
+```
 
 ## Usage
 
-From the command line:
+Generate stubs from the command line:
 
 ```bash
 stubgen-pyx /path/to/package
 ```
 
-Or from Python:
+Or use the Python API:
 
 ```python
 import stubgen_pyx
 stubgen_pyx.stubgen("/path/to/package")
 ```
 
-## Why?
+## Overview
 
-Cython is a popular Python extension language, but introspection for Cython modules is often
-limited. `.pyi` files are a common way to provide type hints for Python code that cannot be
-easily analyzed statically.
+Cython is a widely-used extension language for Python, but type information for Cython modules is often unavailable to static analysis tools. This package generates `.pyi` stub files that expose type hints and signatures for Cython code, enabling better IDE support and type checking.
 
-## Why not mypy?
+## Why not use mypy's stubgen?
 
-mypy is a static type checker for Python that can generate `.pyi` files for extension modules
-at a pretty good level of accuracy. However, it's not designed to utilize embedded information
-about Cython module members - this leaves the `.pyi` files quite limited.
+While mypy's stubgen can generate stubs for compiled extension modules through runtime introspection, it cannot access Cython-specific metadata embedded in the compiled modules. This results in incomplete or inaccurate type information.
+
+stubgen-pyx is designed specifically for Cython and leverages embedded metadata to produce more accurate and complete stub files.
+
+### Example
+
+A Cython module like this:
+
+```cython
+cdef class TestClass:
+    """
+    This is a class for testing stub file generation.
+    """
+    a: int
+
+    def __init__(self):
+        """
+        A docstring for __init__
+        """
+        self.a = 1
+
+    cpdef b(self):
+        """
+        A docstring for b
+        """
+        return self.a
+
+    def c(self):
+        """
+        A docstring for c
+        """
+        return self.a
+
+    cdef d(self):
+        """
+        A docstring for d (this should be ignored)
+        """
+        return self.a
+```
+
+Generates the following stub file:
+
+```python
+class TestClass:
+    """
+    This is a class for testing stub file generation.
+    """
+    def __init__(self) -> None:
+        """
+        A docstring for __init__
+        """
+        ...
+
+    def b(self):
+        """
+        A docstring for b
+        """
+        ...
+
+    def c(self):
+        """
+        A docstring for c
+        """
+        ...
+```
+
+Note that `cdef` methods (like `d`) are not included since they're not accessible from Python, and public attributes and `cpdef` methods are properly exposed.
 
 ## Limitations
 
-- `cimport`-ed modules with types that leak into the stub file (by way of function signatures, for example)
-  do not have their imports followed in the stub file. As a workaround, you can set a `__cimport_types__` list
-  or tuple of module types that you want exposed to the stub file.
+**Import resolution for cimported types:** When types from `cimport`-ed modules appear in function signatures or class definitions, their imports are not automatically included in the generated stub file.
 
-- This is only designed to be a _pretty good_ approximation of Python-public members in a Cython module. It's still
-  very much a work in progress and may produce inaccurate results. If you notice any bugs or have any suggestions, please
-  [open an issue](https://github.com/jon-edward/stubgen-pyx/issues).
+**Workaround:** Define a `__cimport_types__` list or tuple at the module level containing the types you want exposed:
+
+```python
+__cimport_types__ = [SomeType, AnotherType]
+```
+
+These types will then be properly imported in the generated stub file.

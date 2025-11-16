@@ -286,7 +286,7 @@ class BodyWithImports(Body):
 
 
 class AstNameTransformer(ast.NodeTransformer):
-    _cython_ints: tuple[str] = (
+    _cython_ints: tuple[str, ...] = (
         "char",
         "short",
         "Py_UNICODE",
@@ -300,18 +300,18 @@ class AstNameTransformer(ast.NodeTransformer):
         "ptrdiff_t",
     )
 
-    _cython_floats: tuple[str] = (
+    _cython_floats: tuple[str, ...] = (
         "longdouble",
         "double",
     )
 
-    _cython_complex: tuple[str] = (
+    _cython_complex: tuple[str, ...] = (
         "longdoublecomplex",
         "doublecomplex",
         "floatcomplex",
     )
 
-    _cython_translation: dict[str, str] = None
+    _cython_translation: dict[str, str]
 
     collected_names: set[str]
 
