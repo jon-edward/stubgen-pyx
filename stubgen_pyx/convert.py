@@ -66,6 +66,19 @@ _DISALLOWED_NAMES: set[str] = {
     "__cimport_types__",
 }
 
+def _get_annotations(obj: object) -> dict[str, str]:
+    """
+    Gets the annotations for an object as a dictionary of name to annotation string.
+    """
+    if hasattr(obj, "__annotations__"):
+        return obj.__annotations__
+    return {}
+
+if False: # hasattr(inspect, "get_annotations"):
+    get_annotations = inspect.get_annotations  # type: ignore
+else:
+    get_annotations = _get_annotations
+
 
 def _docstring_to_string(docstring: str, indentation: int) -> str:
     return f'{_INDENT * indentation}"""{indent(dedent(docstring), _INDENT * indentation)}{_INDENT * indentation}"""'
@@ -246,7 +259,7 @@ class Body(Convertable):
     def members(self) -> list[Convertable]:
         annotations = [
             Annotation(name, annotation=type_)
-            for name, type_ in inspect.get_annotations(self.obj).items()
+            for name, type_ in get_annotations(self.obj).items()
         ]
         result = (
             self._to_convertable(name, value)
