@@ -7,6 +7,8 @@ name = "stubgen-pyx"
 version = "0.1.2"
 description = "Generates `.pyi` files from Cython modules in a given package directory."
 readme = "README.md"
+license = {file = "LICENSE"}
+keywords = ["cython", "stubgen", "type stubs", "pyi", "type hints"]
 authors = [{name = "Jonathan Townsend"}]
 classifiers = [
     "Programming Language :: Python :: 3",
