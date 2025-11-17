@@ -2,8 +2,6 @@
 The main function for stubgen-pyx.
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 
 from stubgen_pyx.build import build

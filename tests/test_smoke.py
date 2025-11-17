@@ -12,7 +12,12 @@ def test_smoke():
             ["stubgen-pyx", "fixtures"],
             cwd=THIS_DIR,
         )
+        
         assert result.returncode == 0
+
+        for pyx_file in THIS_DIR.joinpath("fixtures").glob("*.pyx"):
+            pyi_file = pyx_file.with_suffix(".pyi")
+            assert pyi_file.exists(), f"Expected .pyi file not found: {pyi_file}"
     finally:
         # Clean up generated .pyi files and compiled extensions
         to_delete = itertools.chain(

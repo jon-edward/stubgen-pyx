@@ -2,8 +2,6 @@
 A module for converting Cython modules to `.pyi` files.
 """
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
 import ast
 from dataclasses import dataclass, field
