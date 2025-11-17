@@ -3,6 +3,7 @@ This is a test of importing modules.
 """
 
 from typing import List, Dict, Tuple as tup
+import typing
 
 cpdef int imported_func():
     return 1
@@ -14,7 +15,7 @@ class RegularClass:
     z: complex
 
 
-def returns_tuple() -> tup[int, int]:
+def returns_tuple() -> tup[typing.Any, int]:
     return 1, 2
 
 

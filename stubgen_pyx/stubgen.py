@@ -7,7 +7,7 @@ from pathlib import Path
 from stubgen_pyx.build import build
 from stubgen_pyx.convert import convert_module
 
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 
 def stubgen(
@@ -24,7 +24,7 @@ def stubgen(
     `ext_kwargs` are passed directly to Extensions in `cythonize`.
     """
 
-    modules: list[tuple[object, Path]] = build(package_dir, filter, **ext_kwargs)
+    modules: Iterable[tuple[Any, Path]] = build(package_dir, filter, **ext_kwargs)
 
     for module, file in modules:
         file.with_suffix(".pyi").write_text(convert_module(module))
