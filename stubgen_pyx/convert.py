@@ -8,9 +8,12 @@ from dataclasses import dataclass, field
 import inspect
 import logging
 from textwrap import dedent, indent
+import typing
 from typing import Any, Optional
 
 from stubgen_pyx._version import __version__
+
+typingVals = typing.__dict__.values()
 
 
 _INDENT = "    "
@@ -152,6 +155,21 @@ class Annotation(Convertable):
     def to_pyi(self, indentation: int) -> str:
         return f"{_INDENT * indentation}{self.name}: {self.annotation}"
 
+@dataclass
+class TypeAlias(Convertable):
+    """
+    Simple type annotation.
+    """
+
+    name: str
+    alias: str
+
+    def key(self) -> tuple:
+        return 0.5, self.name, self.alias
+
+    def to_pyi(self, indentation: int) -> str:
+        return f"{_INDENT * indentation}{self.name} = {self.alias}"
+
 
 @dataclass
 class ClassDefinition(Convertable):
@@ -251,6 +269,8 @@ class Body(Convertable):
             if doc.startswith(f"{name}: "):
                 return Annotation(name, annotation=doc[len(name) + 2 :])
             return Annotation(name)
+        elif hasattr(obj, "__origin__"):
+            return TypeAlias(name, repr(obj))
         elif not isinstance(obj, type):
             # value is an object, probably a module-level constant
             return Annotation(name, obj.__class__.__name__)
@@ -281,7 +301,8 @@ class BodyWithImports(Body):
             return True
         if not hasattr(value, "__module__") or not hasattr(value, "__name__"):
             return False
-        return value.__module__ != self.obj.__name__
+        return value.__module__ != self.obj.__name__ and \
+            (value.__module__ != 'typing' or value in typingVals) # Check if it is a typing type but not one that is just imported
 
     def to_import(self, name: str, value: Any) -> Import:
         has_module = hasattr(value, "__module__")
