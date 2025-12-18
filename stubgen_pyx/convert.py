@@ -162,7 +162,11 @@ class ClassDefinition(Convertable):
         return 3, self.name, self.cls
 
     def to_pyi(self, indentation: int) -> str:
-        result = f"{_INDENT * indentation}class {self.name}:\n"
+        bases = [
+            base.__name__
+            for base in self.cls.__bases__
+        ]
+        result = f"{_INDENT * indentation}class {self.name}({', '.join(bases)}):\n"
         if self.cls.__doc__:
             result = (
                 f"{result}{_docstring_to_string(self.cls.__doc__, indentation + 1)}\n"
@@ -257,14 +261,29 @@ class Body(Convertable):
             # value is an object, probably a module-level constant
             return Annotation(name, obj.__class__.__name__)
 
+    def _get_inherited(self) -> dict[str, Any]:
+        inherited = {}
+        for base in self.obj.__bases__:
+            if hasattr(base, "__dict__"):
+                inherited.update(base.__dict__)
+            if hasattr(base, "__bases__"):
+                inherited.update(Body(obj=base)._get_inherited())
+
+        return inherited
+
     def members(self) -> list[Convertable]:
+        if not hasattr(self.obj, '__bases__'):
+            return {}
+        inh = self._get_inherited()
         annotations = [
             Annotation(name, annotation=type_)
             for name, type_ in get_annotations(self.obj).items()
+            if name not in inh or inh[name] is not type_
         ]
         result = (
             self._to_convertable(name, value)
             for name, value in inspect.getmembers(self.obj)
+            if name not in inh or inh[name] is not value
         )
         members = [member for member in result if member is not None]
         members.extend(annotations)
