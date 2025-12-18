@@ -158,7 +158,7 @@ class Annotation(Convertable):
 @dataclass
 class TypeAlias(Convertable):
     """
-    Simple type annotation.
+    Simple type alias (e.g. `Number = Union[int, float]`).
     """
 
     name: str
