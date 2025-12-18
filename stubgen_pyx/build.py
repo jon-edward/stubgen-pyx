@@ -4,6 +4,7 @@ A module for building Cython modules in place.
 
 import importlib
 from pathlib import Path
+import shutil
 import sys
 
 from Cython.Build import cythonize
@@ -62,6 +63,9 @@ def build(
     else:
         raise ValueError(f"Invalid package directory: {package_dir}")
 
+    inits = [nam[:-len(".__init__")] for nam in cy_names if nam.endswith(".__init__")]
+    cy_names = [(nam if not nam.endswith(".__init__") else nam[:-len(".__init__")]) for nam in cy_names]
+
     extensions = [
         Extension(
             name=name,
@@ -76,7 +80,7 @@ def build(
         compiler_directives=compiler_directives,
     )
 
-    setup(
+    dist = setup(
         ext_modules=ext_modules,
         script_args=[
             "build_ext",
@@ -84,14 +88,25 @@ def build(
         ],
     )
 
+    # Move files with changed names e.g. 'pkg.so' -> 'pkg/__init__.so'
+    cmd = dist.get_command_obj("build_ext")
+    for nam in inits:
+        fname = cmd.get_ext_filename(nam)
+        file = Path(fname).absolute()
+        if file.exists():
+            suffixes = "".join(file.suffixes)
+            realname = file.name.split(".")[0]
+            nfile = file.parent / realname / ('__init__'+suffixes)
+
+            if file != nfile:
+                shutil.move(str(file), str(nfile))
+
     sys_path = sys.path
     current_dir = str(Path(".").absolute())
     sys_path.insert(0, current_dir)
 
     try:
         for name, file in zip(cy_names, cy_files):
-            if name.endswith(".__init__"):
-                name = name[:-len(".__init__")]
             yield importlib.import_module(name), file
     finally:
         try:
