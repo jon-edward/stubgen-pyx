@@ -90,6 +90,8 @@ def build(
 
     try:
         for name, file in zip(cy_names, cy_files):
+            if name.endswith(".__init__"):
+                name = name[:-len(".__init__")]
             yield importlib.import_module(name), file
     finally:
         try:
