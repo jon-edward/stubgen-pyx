@@ -55,6 +55,8 @@ _DISALLOWED_NAMES: set[str] = {
     "__setstate_cython__",
     "__str__",
     "__annotations__",
+    "__members__",
+    "__qualname__",
     "__dataclass_fields__",
     "__dataclass_params__",
     "__dict__",
