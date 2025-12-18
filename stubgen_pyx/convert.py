@@ -226,6 +226,8 @@ class Body(Convertable):
             "cython_function_or_method",
             "wrapper_descriptor",
             "method_descriptor",
+            "method",
+            "builtin_function_or_method",
         )
 
     def _is_class(self, value) -> bool:
