@@ -275,8 +275,9 @@ class Body(Convertable):
 
     def members(self) -> list[Convertable]:
         if not hasattr(self.obj, '__bases__'):
-            return {}
-        inh = self._get_inherited()
+            inh = {}
+        else:
+            inh = self._get_inherited()
         annotations = [
             Annotation(name, annotation=type_)
             for name, type_ in get_annotations(self.obj).items()
