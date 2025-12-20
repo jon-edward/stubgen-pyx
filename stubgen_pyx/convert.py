@@ -84,8 +84,14 @@ else:
 
 
 def _docstring_to_string(docstring: str, indentation: int) -> str:
-    docstring = f'"""{docstring}"""' if docstring.count("\n") == 0 else f'"""{indent(dedent(docstring), _INDENT * indentation)}{_INDENT * indentation}"""' 
-    return f'{_INDENT * indentation}{docstring}'
+    docstring = docstring.strip()
+    first_line, rest = docstring.split("\n", 1) if "\n" in docstring else (docstring, "")
+    
+    if rest:
+        rest = f"\n{dedent(rest)}\n"    
+
+    docstring = f"{first_line}{rest}".replace('\"\"\"', r"\"\"\"")
+    return indent(f'"""{docstring}"""', _INDENT * indentation)
 
 
 def _is_valid_signature(signature: str) -> bool:
