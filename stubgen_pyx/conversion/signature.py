@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 
 from Cython.Compiler import Nodes
@@ -63,7 +65,9 @@ def _extract_type_from_base_type(base_type) -> str | None:
         if base_type.name is not None:
             return _decode_or_pass(base_type.name)
         if base_type.base_type_node is not None:
-            name = f".".join(base_type.base_type_node.module_path + [base_type.base_type_node.name])
+            name = f".".join(
+                base_type.base_type_node.module_path + [base_type.base_type_node.name]
+            )
             return name
     except AttributeError:
         pass

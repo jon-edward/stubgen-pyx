@@ -54,7 +54,7 @@ def get_metaclass(node: Nodes.PyClassDefNode | Nodes.CClassDefNode) -> str | Non
 
 
 def get_enum_names(node: Nodes.CEnumDefNode) -> list[str]:
-    return [item.name for item in node.items] # type: ignore
+    return [item.name for item in node.items]  # type: ignore
 
 
 def docstring_to_string(docstring: str) -> str:

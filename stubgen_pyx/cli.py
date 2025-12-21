@@ -1,12 +1,17 @@
+from __future__ import annotations
+
 import argparse
 import os
 
 from .stubgen import StubgenPyx
 
+
 def main():
     parser = argparse.ArgumentParser(description="Generate stubs for Cython modules")
-    parser.add_argument("dir", help="Directory to search for Cython modules", type=str, default=".")
-    
+    parser.add_argument(
+        "dir", help="Directory to search for Cython modules", type=str, default="."
+    )
+
     args = parser.parse_args()
     dir: str = args.dir
 

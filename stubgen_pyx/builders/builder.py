@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 import textwrap
 
@@ -10,14 +12,15 @@ from ..models.pyi_elements import (
     PyiScope,
     PyiSignature,
     PyiArgument,
-    PyiEnum
+    PyiEnum,
 )
 
 
 @dataclass
 class Builder:
     def build_argument(
-        self, argument: PyiArgument,
+        self,
+        argument: PyiArgument,
     ) -> str:
         output = f"{argument.name}"
         if argument.annotation is not None:
@@ -27,21 +30,18 @@ class Builder:
         return output
 
     def build_signature(
-        self, signature: PyiSignature,
+        self,
+        signature: PyiSignature,
     ) -> str:
         arg_strings: list[str] = []
         if signature.num_posonly_args > 0:
             for i in range(signature.num_posonly_args):
-                arg_strings.append(
-                    self.build_argument(signature.args[i])
-                )
+                arg_strings.append(self.build_argument(signature.args[i]))
             arg_strings.append("/")
         for i in range(signature.num_posonly_args, len(signature.args)):
             arg_strings.append(self.build_argument(signature.args[i]))
         if signature.var_arg is not None:
-            arg_strings.append(
-                "*" + self.build_argument(signature.var_arg)
-            )
+            arg_strings.append("*" + self.build_argument(signature.var_arg))
         if signature.num_kwonly_args > 0 and signature.var_arg is None:
             arg_strings.insert(-signature.num_kwonly_args, "*")
         if signature.kw_arg is not None:
@@ -52,7 +52,8 @@ class Builder:
         return output
 
     def build_class(
-        self, class_: PyiClass,
+        self,
+        class_: PyiClass,
     ) -> str | None:
         output = "".join(f"{decorator}\n" for decorator in class_.decorators)
         output += f"class {class_.name}"
@@ -64,23 +65,19 @@ class Builder:
             if class_.metaclass is not None:
                 output += f"metaclass={class_.metaclass}"
             output += ")"
-        
+
         output += ": "
         content = ""
         if class_.doc is not None:
             content += f"{textwrap.indent(repr_doc(class_.doc), '    ')}\n"
-        content += textwrap.indent(
-            self.build_scope(class_.scope) or "", "    "
-        )
+        content += textwrap.indent(self.build_scope(class_.scope) or "", "    ")
         if content.rstrip():
             output += f"\n{content}"
         else:
             output += "..."
         return output
 
-    def build_function(
-        self, function: PyiFunction
-    ) -> str | None:
+    def build_function(self, function: PyiFunction) -> str | None:
         output = "".join(f"{decorator}\n" for decorator in function.decorators)
         output += f"def {function.name}{self.build_signature(function.signature)}: "
         if function.doc is not None:
@@ -101,9 +98,7 @@ class Builder:
     ) -> str | None:
         return import_statement.statement
 
-    def build_scope(
-        self, scope: PyiScope
-    ) -> str | None:
+    def build_scope(self, scope: PyiScope) -> str | None:
         output = ""
 
         for element in scope.enums:
@@ -138,9 +133,7 @@ class Builder:
 
         return output or None
 
-    def build_module(
-        self, module: PyiModule
-    ) -> str:
+    def build_module(self, module: PyiModule) -> str:
         output = repr_doc(module.doc) + "\n\n" if module.doc else ""
 
         for import_statement in module.imports:
@@ -153,16 +146,12 @@ class Builder:
 
         output += f"{self.build_scope(module.scope) or ''}" or ""
         return output
-    
-    def build_enum(
-        self, enum: PyiEnum
-    ) -> str | None:
+
+    def build_enum(self, enum: PyiEnum) -> str | None:
         if not enum.names:
             return None
-        
-        annotations = [
-            f"{name}: int" for name in enum.names
-        ]
+
+        annotations = [f"{name}: int" for name in enum.names]
 
         if enum.enum_name is not None:
             # Named enums are converted to classes
@@ -175,7 +164,7 @@ class Builder:
                 ),
             )
             return self.build_class(class_)
-        
+
         return "\n".join(annotations)
 
 

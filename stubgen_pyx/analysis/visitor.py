@@ -41,7 +41,7 @@ class ScopeVisitor(TreeVisitor):
     def visit_Node(self, node):
         """Default visitor for generic nodes."""
         return node
-    
+
     def visit_CEnumDefNode(self, node):
         """Visits Cython enum definition nodes."""
         if not node.create_wrapper:

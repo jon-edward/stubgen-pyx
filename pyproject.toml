@@ -31,3 +31,8 @@ stubgen-pyx = "stubgen_pyx.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["stubgen_pyx"]
+
+[dependency-groups]
+dev = [
+   "ruff>=0.14.10",
+]

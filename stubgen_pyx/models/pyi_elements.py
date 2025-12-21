@@ -72,6 +72,7 @@ class PyiClass(PyiElement):
     decorators: list[str] = field(default_factory=list)
     scope: PyiScope = field(default_factory=PyiScope)
 
+
 @dataclass
 class PyiEnum(PyiElement):
     enum_name: str | None

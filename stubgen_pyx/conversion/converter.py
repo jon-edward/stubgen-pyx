@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 from Cython.Compiler import Nodes
@@ -10,7 +12,7 @@ from ..models.pyi_elements import (
     PyiImport,
     PyiAssignment,
     PyiFunction,
-    PyiEnum
+    PyiEnum,
 )
 from .signature import get_signature
 from .conversion_utils import (
@@ -19,7 +21,7 @@ from .conversion_utils import (
     get_metaclass,
     get_source,
     get_enum_names,
-    unparse_expr
+    unparse_expr,
 )
 
 
@@ -107,15 +109,19 @@ class Converter:
         if isinstance(assignment, Nodes.SingleAssignmentNode):
             expr = unparse_expr(assignment.rhs)
             if expr != "...":
-                name: str = assignment.lhs.name # type: ignore
-                annotation = assignment.lhs.annotation.string.value if assignment.lhs.annotation is not None else None
+                name: str = assignment.lhs.name  # type: ignore
+                annotation = (
+                    assignment.lhs.annotation.string.value
+                    if assignment.lhs.annotation is not None
+                    else None
+                )
                 assign: str = name
                 if annotation:
                     assign = f"{assign}: {annotation}"
                 assign = f"{assign} = {expr}"
                 return PyiAssignment(assign)
         return PyiAssignment(get_source(source_code, assignment))
-    
+
     def convert_enum(self, node: Nodes.CEnumDefNode) -> PyiEnum:
-        name: str | None = node.name # type: ignore
+        name: str | None = node.name  # type: ignore
         return PyiEnum(enum_name=name, names=get_enum_names(node))

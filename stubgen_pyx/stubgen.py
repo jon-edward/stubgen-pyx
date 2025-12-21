@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 import glob
 import logging
@@ -25,21 +27,25 @@ class StubgenPyx:
 
             logger.info(f"Converting {pyx_file}")
             parse_result = parse_pyx(pyx_file_path)
-            
+
             module_visitor = ModuleVisitor(node=parse_result.module_result.source_ast)
-            module = self.converter.convert_module(module_visitor, parse_result.module_result.source)
+            module = self.converter.convert_module(
+                module_visitor, parse_result.module_result.source
+            )
 
             if parse_result.pxd_result:
                 # Convert extra elements from .pxd
                 pxd_visitor = ModuleVisitor(node=parse_result.pxd_result.source_ast)
-                pxd_module = self.converter.convert_module(pxd_visitor, parse_result.pxd_result.source)
+                pxd_module = self.converter.convert_module(
+                    pxd_visitor, parse_result.pxd_result.source
+                )
 
                 extra_imports = pxd_module.imports
                 extra_enums = pxd_module.scope.enums
             else:
                 extra_imports = []
                 extra_enums = []
-            
+
             module.scope.enums += extra_enums
             module.imports += extra_imports
 
