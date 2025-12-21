@@ -10,9 +10,6 @@ from dataclasses import dataclass
 
 from .test2 cimport imported_func, ImportedClass
 
-__cimport_types__ = {
-    ImportedClass,
-}
 
 @dataclass
 class PythonClass:

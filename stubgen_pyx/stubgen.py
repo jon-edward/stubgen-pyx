@@ -1,30 +1,47 @@
-"""
-The main function for stubgen-pyx.
-"""
-
+from dataclasses import dataclass, field
+import glob
+import logging
 from pathlib import Path
 
-from stubgen_pyx.build import build
-from stubgen_pyx.convert import convert_module
+from .analysis.visitor import ModuleVisitor
+from .conversion.converter import Converter
+from .builders.builder import Builder
+from .parsing.parser import parse_pyx
 
-from typing import Any, Callable, Iterable
+
+logger = logging.getLogger(__name__)
 
 
-def stubgen(
-    package_dir: str,
-    filter: Callable[[Path], bool] = lambda _: True,
-    /,
-    **ext_kwargs: Any,
-) -> None:
-    """
-    Compiles all `.pyx` files in `package_dir` in place and generates a `.pyi` file for each module.
+@dataclass
+class StubgenPyx:
+    converter: Converter = field(default_factory=Converter)
+    builder: Builder = field(default_factory=Builder)
 
-    `filter` is a function which takes a `Path` object and returns `True` if the module's `.pyi` file should be generated.
+    def convert_glob(self, pyx_file: str):
+        pyx_files = glob.glob(pyx_file, recursive=True)
 
-    `ext_kwargs` are passed directly to Extensions in `cythonize`.
-    """
+        for pyx_file in pyx_files:
+            pyx_file_path = Path(pyx_file)
 
-    modules: Iterable[tuple[Any, Path]] = build(package_dir, filter, **ext_kwargs)
+            logger.info(f"Converting {pyx_file}")
+            parse_result = parse_pyx(pyx_file_path)
+            
+            module_visitor = ModuleVisitor(node=parse_result.module_result.source_ast)
+            module = self.converter.convert_module(module_visitor, parse_result.module_result.source)
 
-    for module, file in modules:
-        file.with_suffix(".pyi").write_text(convert_module(module))
+            if parse_result.pxd_result:
+                # Convert extra elements from .pxd
+                pxd_visitor = ModuleVisitor(node=parse_result.pxd_result.source_ast)
+                pxd_module = self.converter.convert_module(pxd_visitor, parse_result.pxd_result.source)
+
+                extra_imports = pxd_module.imports
+                extra_enums = pxd_module.scope.enums
+            else:
+                extra_imports = []
+                extra_enums = []
+            
+            module.scope.enums += extra_enums
+            module.imports += extra_imports
+
+            content = self.builder.build_module(module)
+            pyx_file_path.with_suffix(".pyi").write_text(content, encoding="utf-8")
