@@ -1,14 +1,24 @@
+"""StubgenPyx converts .pyx files to .pyi files."""
+
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass, field
 import glob
 import logging
 from pathlib import Path
 
+from .config import StubgenPyxConfig
 from .analysis.visitor import ModuleVisitor
 from .conversion.converter import Converter
 from .builders.builder import Builder
-from .parsing.parser import parse_pyx
+from .parsing.parser import parse_pyx, path_to_module_name
+from .postprocessing.normalize_names import normalize_names
+from .postprocessing.sort_imports import sort_imports
+from .postprocessing.trim_imports import trim_unused_imports
+from .postprocessing.deduplicate_imports import deduplicate_imports
+from .models.pyi_elements import PyiImport
+from ._version import __version__
 
 
 logger = logging.getLogger(__name__)
@@ -16,38 +26,102 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class StubgenPyx:
+    """StubgenPyx converts .pyx files to .pyi files."""
+
     converter: Converter = field(default_factory=Converter)
+    """Converter converts Visitors to PyiElements."""
+
     builder: Builder = field(default_factory=Builder)
+    """Builder builds .pyi files from PyiElements."""
+
+    config: StubgenPyxConfig = field(default_factory=StubgenPyxConfig)
+    """Configuration for StubgenPyx."""
+
+    def convert_str(self, pyx_str: str, pxd_str: str | None = None, pyx_path: Path | None = None):
+        """Converts a .pyx file to a .pyi file."""
+        module_name = path_to_module_name(pyx_path) if pyx_path else None
+        parse_result = parse_pyx(pyx_str, module_name=module_name)
+
+        module_visitor = ModuleVisitor(node=parse_result.source_ast)
+        module = self.converter.convert_module(
+            module_visitor, parse_result.source
+        )
+
+        if pxd_str and not self.config.no_pxd_to_stubs:
+            # Convert extra elements from .pxd
+            pxd_parse_result = parse_pyx(pxd_str, module_name=module_name)
+            pxd_visitor = ModuleVisitor(node=pxd_parse_result.source_ast)
+            pxd_module = self.converter.convert_module(
+                pxd_visitor, parse_result.source
+            )
+
+            extra_imports = pxd_module.imports
+            extra_enums = pxd_module.scope.enums
+        else:
+            extra_imports = []
+            extra_enums = []
+
+        module.scope.enums += extra_enums
+        module.imports += extra_imports
+
+        module.imports.append(
+            PyiImport(
+                statement=f"from __future__ import annotations",
+            )
+        )
+
+        content = self.builder.build_module(module)
+
+        ast_content = ast.parse(content)
+        ast_content, used_names = normalize_names(
+            ast_content, disable=self.config.no_normalize_names
+        )
+
+        if not self.config.no_trim_imports:
+            ast_content = trim_unused_imports(ast_content, used_names)
+
+        content = deduplicate_imports(ast_content)
+        content = ast.unparse(ast_content)
+
+        if not self.config.exclude_epilog:
+            content = f"{content}\n\n{self._epilog(pyx_path)}"
+
+        if not self.config.no_sort_imports:
+            content = sort_imports(content)
+
+        return content.strip()
+
 
     def convert_glob(self, pyx_file: str):
+        """Converts a glob pattern of .pyx files to .pyi files."""
         pyx_files = glob.glob(pyx_file, recursive=True)
 
         for pyx_file in pyx_files:
+            logger.info(f"Converting {pyx_file}")
+            
             pyx_file_path = Path(pyx_file)
 
-            logger.info(f"Converting {pyx_file}")
-            parse_result = parse_pyx(pyx_file_path)
+            pxd_file_path = pyx_file_path.with_suffix(".pxd")
+            if pxd_file_path.exists():
+                pxd_str = pxd_file_path.read_text(encoding="utf-8")
+            else:
+                pxd_str = None
 
-            module_visitor = ModuleVisitor(node=parse_result.module_result.source_ast)
-            module = self.converter.convert_module(
-                module_visitor, parse_result.module_result.source
+            pyx_file_path.with_suffix(".pyi").write_text(
+                self.convert_str(
+                    pyx_str=pyx_file_path.read_text(encoding="utf-8"),
+                    pxd_str=pxd_str,
+                    pyx_path=pyx_file_path,
+                ),
+                encoding="utf-8",
             )
 
-            if parse_result.pxd_result:
-                # Convert extra elements from .pxd
-                pxd_visitor = ModuleVisitor(node=parse_result.pxd_result.source_ast)
-                pxd_module = self.converter.convert_module(
-                    pxd_visitor, parse_result.pxd_result.source
-                )
-
-                extra_imports = pxd_module.imports
-                extra_enums = pxd_module.scope.enums
-            else:
-                extra_imports = []
-                extra_enums = []
-
-            module.scope.enums += extra_enums
-            module.imports += extra_imports
-
-            content = self.builder.build_module(module)
-            pyx_file_path.with_suffix(".pyi").write_text(content, encoding="utf-8")
+    def _epilog(self, pyx_path: Path | None) -> str:
+        if pyx_path is not None:
+            source_desc = f" from {pyx_path}"
+        else:
+            source_desc = ""
+        
+        return (
+            f"# This file was generated by stubgen-pyx v{__version__}{source_desc}\n"
+        )
