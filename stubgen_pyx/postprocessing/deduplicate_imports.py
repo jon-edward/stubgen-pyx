@@ -2,6 +2,8 @@
 Removes all but the last import statement that provides the same name.
 """
 
+from __future__ import annotations
+
 import ast
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
