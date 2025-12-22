@@ -1,3 +1,7 @@
+"""
+Provides utility functions for converting Cython AST nodes to PyiElements.
+"""
+
 from __future__ import annotations
 
 import textwrap
@@ -54,16 +58,20 @@ def get_metaclass(node: Nodes.PyClassDefNode | Nodes.CClassDefNode) -> str | Non
 
 
 def get_enum_names(node: Nodes.CEnumDefNode) -> list[str]:
+    """Gets the enum names for a Cython AST node."""
     return [item.name for item in node.items]  # type: ignore
 
 
 def docstring_to_string(docstring: str) -> str:
-    docstring = (
-        f'"""{docstring}"""'
-        if docstring.count("\n") == 0
-        else f'"""{textwrap.dedent(docstring)}"""'
+    """Converts a Cython docstring to a Python docstring."""
+    docstring = docstring.strip()
+    first_line, rest = (
+        docstring.split("\n", 1) if "\n" in docstring else (docstring, "")
     )
-    return docstring
+    if rest:
+        rest = f"\n{textwrap.dedent(rest)}\n"
+    docstring = f"{first_line}{rest}".replace('"""', r"\"\"\"")
+    return f'"""{docstring}"""'
 
 
 def unparse_expr(node: Nodes.Node | None) -> str | None:

@@ -1,3 +1,7 @@
+"""
+Generates Python code from PyiElements.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -18,6 +22,9 @@ from ..models.pyi_elements import (
 
 @dataclass
 class Builder:
+    """
+    Generates Python code from PyiElements.
+    """
     def build_argument(
         self,
         argument: PyiArgument,
@@ -69,7 +76,7 @@ class Builder:
         output += ": "
         content = ""
         if class_.doc is not None:
-            content += f"{textwrap.indent(repr_doc(class_.doc), '    ')}\n"
+            content += f"{textwrap.indent(class_.doc, '    ')}\n"
         content += textwrap.indent(self.build_scope(class_.scope) or "", "    ")
         if content.rstrip():
             output += f"\n{content}"
@@ -81,7 +88,7 @@ class Builder:
         output = "".join(f"{decorator}\n" for decorator in function.decorators)
         output += f"def {function.name}{self.build_signature(function.signature)}: "
         if function.doc is not None:
-            output += f"\n{textwrap.indent(repr_doc(function.doc), '    ')}"
+            output += f"\n{textwrap.indent(function.doc, '    ')}"
         else:
             output += "..."
         return output
@@ -134,7 +141,7 @@ class Builder:
         return output or None
 
     def build_module(self, module: PyiModule) -> str:
-        output = repr_doc(module.doc) + "\n\n" if module.doc else ""
+        output = module.doc + "\n\n" if module.doc else ""
 
         for import_statement in module.imports:
             import_content = self.build_import(import_statement)
@@ -166,13 +173,3 @@ class Builder:
             return self.build_class(class_)
 
         return "\n".join(annotations)
-
-
-def repr_doc(docstring: str) -> str:
-    docstring = docstring.replace('"""', r"\"\"\"")
-    docstring = (
-        f'"""{docstring}"""'
-        if docstring.count("\n") == 0
-        else f'"""{textwrap.dedent(docstring)}"""'
-    )
-    return docstring

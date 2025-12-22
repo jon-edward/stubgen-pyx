@@ -1,3 +1,7 @@
+"""
+Converts Cython signature nodes to PyiSignature.
+"""
+
 from __future__ import annotations
 
 import logging

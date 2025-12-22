@@ -1,3 +1,8 @@
+"""Parser for Cython modules using Cython compiler internals.
+
+This performs preprocessing of Cython code before parsing. See `preprocess.py` for details.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -12,8 +17,6 @@ from .preprocess import preprocess
 
 Errors.init_thread()
 
-_MODULE_NAME = "__pyx_module__"
-
 
 @dataclass
 class ParsedSource:
@@ -24,37 +27,21 @@ class ParsedSource:
     """The AST of the source code."""
 
 
-@dataclass
-class ParseResult:
-    module_result: ParsedSource
-    """The result of parsing the module."""
-
-    pxd_result: ParsedSource | None
-    """The result of parsing the pxd file if it exists."""
+_DEFAULT_MODULE_NAME = "__pyx_module__"
 
 
-def parse_pyx(source: Path | str) -> ParseResult:
+def parse_pyx(source: Path | str, module_name: str | None = None) -> ParsedSource:
     """Parse a Cython module into a ParseResult object."""
-
+    module_name = module_name or _DEFAULT_MODULE_NAME
+    
     if isinstance(source, str):
-        return ParseResult(_parse_str(source), None)
-
-    pxd_source = source.with_suffix(".pxd")
-
-    module_name = _path_to_module_name(source)
-
-    if pxd_source.is_file():
-        return ParseResult(
-            _parse_str(source.read_text(encoding="utf-8")),
-            _parse_str(pxd_source.read_text(encoding="utf-8")),
-        )
-
-    return ParseResult(_parse_str(source.read_text(encoding="utf-8")), None)
+        return _parse_str(source, module_name)
+    return _parse_str(source.read_text(encoding="utf-8"), module_name)
 
 
-def _parse_str(source: str, module_name: str = _MODULE_NAME) -> ParsedSource:
+def _parse_str(source: str, module_name: str) -> ParsedSource:
     """Parse a Cython module into a ParsedSource object."""
-    context = StringParseContext(_MODULE_NAME)
+    context = StringParseContext(module_name)
 
     source = preprocess(source)
     ast = parse_from_strings(module_name, source, context=context)
@@ -67,5 +54,6 @@ def _normalize_part(part: str) -> str:
     return part.replace("-", "_").replace(".", "_").replace(" ", "_")
 
 
-def _path_to_module_name(path: Path) -> str:
+def path_to_module_name(path: Path) -> str:
+    """Convert a path to a module name for debugging."""
     return ".".join([_normalize_part(part) for part in path.with_suffix("").parts])

@@ -1,3 +1,7 @@
+"""
+Converts Cython AST nodes to PyiElements.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -22,6 +26,7 @@ from .conversion_utils import (
     get_source,
     get_enum_names,
     unparse_expr,
+    docstring_to_string,
 )
 
 
@@ -32,7 +37,9 @@ class Converter:
     """
 
     def convert_module(self, visitor: ModuleVisitor, source_code: str) -> PyiModule:
+        doc = docstring_to_string(visitor.node.doc) if visitor.node.doc else None
         return PyiModule(
+            doc=doc,
             imports=self.convert_imports(visitor.import_visitor, source_code),
             scope=self.convert_scope(visitor.scope, source_code),
         )
@@ -72,9 +79,13 @@ class Converter:
         else:
             name: str = class_visitor.node.name
 
+        node_doc: str | None = class_visitor.node.doc  # type: ignore
+
+        doc = docstring_to_string(node_doc) if node_doc else None
+
         return PyiClass(
             name=name,
-            doc=class_visitor.node.doc,  # type: ignore
+            doc=doc,
             bases=get_bases(class_visitor.node),
             metaclass=get_metaclass(class_visitor.node),
             decorators=get_decorators(source_code, class_visitor.node),
@@ -85,20 +96,20 @@ class Converter:
         self, cdef_func: Nodes.CFuncDefNode, source_code: str
     ) -> PyiFunction:
         name: str = cdef_func.declarator.base.name  # type: ignore
-        doc: str | None = cdef_func.doc or None  # type: ignore
+        doc = docstring_to_string(cdef_func.doc) if cdef_func.doc else None  # type: ignore
         return PyiFunction(
             name,
-            doc,
+            doc=doc,
             decorators=get_decorators(source_code, cdef_func),
             signature=get_signature(cdef_func),
         )
 
     def convert_py_func(self, node: Nodes.DefNode, source_code: str) -> PyiFunction:
         name = node.name  # type: ignore
-        doc = node.doc or None
+        doc = docstring_to_string(node.doc) if node.doc else None
         return PyiFunction(
             name,
-            doc,
+            doc=doc,
             decorators=get_decorators(source_code, node),
             signature=get_signature(node),
         )

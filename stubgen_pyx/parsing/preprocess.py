@@ -215,25 +215,6 @@ def _get_line_segments(
     return segments
 
 
-def _is_annotation(tokens: _Tokens) -> bool:
-    """Check if tokens form a type annotation pattern."""
-    print([token.string for token in tokens])
-    if not len(tokens):
-        return False
-    if len(tokens) == 1:
-        return tokens[0].string not in ("else", "except")
-
-    if tokens[0].type != tokenize.NAME:
-        return False
-
-    for i in range(1, len(tokens), 2):
-        if tokens[i].type != tokenize.OP or tokens[i].string != ".":
-            return False
-        if tokens[i + 1].type != tokenize.NAME:
-            return False
-    return True
-
-
 _COMPOUND_TOKEN_STRINGS = {
     "if",
     "else",
