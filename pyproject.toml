@@ -18,6 +18,7 @@ classifiers = [
 requires-python = ">=3.9"
 dependencies = [
     "Cython>=3.0.11",
+    "isort>=6.1.0",
 ]
 
 [project.optional-dependencies]
@@ -29,8 +30,8 @@ Homepage = "https://github.com/jon-edward/stubgen-pyx"
 [project.scripts]
 stubgen-pyx = "stubgen_pyx.cli:main"
 
-[tool.setuptools.packages.find]
-where = ["stubgen_pyx"]
+[tool.setuptools]
+packages = ["stubgen_pyx"]
 
 [dependency-groups]
 dev = [
