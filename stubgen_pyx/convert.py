@@ -191,13 +191,17 @@ class ClassDefinition(Convertable):
         bases = [
             base.__name__
             for base in self.cls.__bases__
+            if base.__name__ != "object"
         ]
         result = f"{_INDENT * indentation}class {self.name}({', '.join(bases)}):\n"
         if self.cls.__doc__:
-            result = (
-                f"{result}{_docstring_to_string(self.cls.__doc__, indentation + 1)}\n"
-            )
-        return f"{result}{Body(self.cls).to_pyi(indentation + 1)}"
+            extra = f"{_docstring_to_string(self.cls.__doc__, indentation + 1)}\n"
+        else:
+            extra = ""
+        extra += Body(self.cls).to_pyi(indentation + 1)
+        if extra == "":
+            extra = _INDENT * (indentation + 1) + "..."
+        return f"{result}{extra}"
 
 
 @dataclass
