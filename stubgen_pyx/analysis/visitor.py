@@ -209,7 +209,7 @@ def _collect_attribute(node) -> str:
         attribute = attribute.obj
 
     if isinstance(attribute, ExprNodes.NameNode):
-        names.append(attribute.name)
+        names.append(attribute.name)  # type: ignore
 
     names.reverse()
 

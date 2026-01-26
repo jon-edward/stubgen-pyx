@@ -34,10 +34,24 @@ from .conversion_utils import (
 @dataclass
 class Converter:
     """
-    Converts Visitors to PyiElements.
+    Converts Cython AST visitors to PyiElements for code generation.
+
+    This class handles the transformation of Cython Compiler AST nodes
+    (as collected by visitors) into intermediate representations (PyiElements)
+    that can be processed and built into Python stub files.
     """
 
     def convert_module(self, visitor: ModuleVisitor, source_code: str) -> PyiModule:
+        """
+        Convert a ModuleVisitor to a PyiModule.
+
+        Args:
+            visitor: The module visitor containing AST nodes
+            source_code: The original source code
+
+        Returns:
+            PyiModule representation of the module
+        """
         doc = docstring_to_string(visitor.node.doc) if visitor.node.doc else None
         return PyiModule(
             doc=doc,
@@ -48,12 +62,20 @@ class Converter:
     def convert_imports(
         self, visitor: ImportVisitor, source_code: str
     ) -> list[PyiImport]:
+        """Convert import nodes to PyiImport objects."""
         return [self.convert_import(node, source_code) for node in visitor.imports]
 
     def convert_import(self, node: Nodes.Node, source_code: str) -> PyiImport:
+        """Convert a single import node to PyiImport."""
         return PyiImport(get_source(source_code, node))
 
     def convert_scope(self, visitor: ScopeVisitor, source_code: str) -> PyiScope:
+        """
+        Convert a ScopeVisitor to a PyiScope.
+
+        Combines assignments, functions, classes, and enums from the visitor
+        into a single scope representation.
+        """
         return PyiScope(
             assignments=[
                 self.convert_assignment(assignment, source_code)

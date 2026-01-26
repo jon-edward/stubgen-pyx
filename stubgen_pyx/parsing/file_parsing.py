@@ -7,13 +7,15 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 from pathlib import Path
-import re
 import tokenize
 
 from .preprocess import remove_indices, tokenize_py, line_col_to_offset
 
 
 def file_parsing_preprocess(source: Path, code: str) -> str:
+    """
+    Preprocess Cython code before parsing it.
+    """
     code = _expand_includes(source, code)
     code = _replace_equals_star(code)
     return code
@@ -28,7 +30,7 @@ def _expand_includes(source: Path, code: str) -> str:
             code,
             include.start,
             include.end,
-            replace_with=f"{include.path.read_text()}\n",
+            replace_with=include.path.read_text(),
         )
     return code
 

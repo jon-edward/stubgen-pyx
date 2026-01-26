@@ -10,6 +10,7 @@ import itertools
 
 
 def collect_names(tree: ast.AST) -> set[str]:
+    """Collects names from a Python .pyi AST."""
     collector = _NameCollector()
     collector.visit(tree)
     return collector.names
@@ -30,7 +31,7 @@ class _NameCollector(ast.NodeVisitor):
         self.visit(subtree)
 
     @staticmethod
-    def _get_str_constant(node: ast.AST) -> str | None:
+    def _get_str_constant(node: ast.AST | None) -> str | None:
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             return node.value
 
@@ -49,7 +50,7 @@ class _NameCollector(ast.NodeVisitor):
             if str_constant:
                 self._try_parsed_visit(str_constant)
 
-    def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> ast.AST:
+    def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef):
         self._visit_arguments(node.args)
         returns_constant = self._get_str_constant(node.returns)
         if returns_constant:
@@ -69,7 +70,7 @@ class _NameCollector(ast.NodeVisitor):
             self._try_parsed_visit(str_constant)
         return self.generic_visit(node)
 
-    def visit_Attribute(self, node: ast.Attribute) -> ast.Name:
+    def visit_Attribute(self, node: ast.Attribute) -> ast.Attribute:
         names = []
         attribute = node
 

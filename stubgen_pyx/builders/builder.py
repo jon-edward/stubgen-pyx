@@ -23,14 +23,27 @@ from ..models.pyi_elements import (
 @dataclass
 class Builder:
     """
-    Generates Python code from PyiElements.
+    Generates Python stub code from PyiElements.
+
+    This class converts intermediate PyiElement representations into
+    properly formatted Python .pyi stub file text, handling indentation,
+    decorators, docstrings, and type annotations.
     """
 
     def build_argument(
         self,
         argument: PyiArgument,
     ) -> str:
-        output = f"{argument.name}"
+        """
+        Build a string representation of a function argument.
+
+        Args:
+            argument: The PyiArgument to build
+
+        Returns:
+            String representation including name, annotation, and default
+        """
+        output = argument.name
         if argument.annotation is not None:
             output += f": {argument.annotation}"
         if argument.default is not None:
@@ -41,6 +54,18 @@ class Builder:
         self,
         signature: PyiSignature,
     ) -> str:
+        """
+        Build a string representation of a function signature.
+
+        Handles positional-only arguments, positional/keyword arguments,
+        *args, keyword-only arguments, **kwargs, and return type annotations.
+
+        Args:
+            signature: The PyiSignature to build
+
+        Returns:
+            String representation of the signature (e.g., "(x: int, y: str) -> bool")
+        """
         arg_strings: list[str] = []
         if signature.num_posonly_args > 0:
             for i in range(signature.num_posonly_args):
@@ -63,6 +88,15 @@ class Builder:
         self,
         class_: PyiClass,
     ) -> str | None:
+        """
+        Build a string representation of a class definition.
+
+        Args:
+            class_: The PyiClass to build
+
+        Returns:
+            String representation of the class, or None if it cannot be built
+        """
         output = "".join(f"{decorator}\n" for decorator in class_.decorators)
         output += f"class {class_.name}"
 
@@ -86,6 +120,15 @@ class Builder:
         return output
 
     def build_function(self, function: PyiFunction) -> str | None:
+        """
+        Build a string representation of a function definition.
+
+        Args:
+            function: The PyiFunction to build
+
+        Returns:
+            String representation of the function, or None if it cannot be built
+        """
         output = "".join(f"{decorator}\n" for decorator in function.decorators)
         output += f"{'async ' if function.is_async else ''}def {function.name}{self.build_signature(function.signature)}: "
         if function.doc is not None:
@@ -98,15 +141,28 @@ class Builder:
         self,
         assignment: PyiAssignment,
     ) -> str | None:
+        """Build a string representation of an assignment statement."""
         return assignment.statement
 
     def build_import(
         self,
         import_statement: PyiImport,
     ) -> str | None:
+        """Build a string representation of an import statement."""
         return import_statement.statement
 
     def build_scope(self, scope: PyiScope) -> str | None:
+        """
+        Build a string representation of a scope (module or class body).
+
+        Combines all elements (enums, assignments, functions, classes) in proper order.
+
+        Args:
+            scope: The PyiScope to build
+
+        Returns:
+            String representation of the scope, or None if empty
+        """
         output = ""
 
         for element in scope.enums:
@@ -142,6 +198,17 @@ class Builder:
         return output or None
 
     def build_module(self, module: PyiModule) -> str:
+        """
+        Build a string representation of an entire module.
+
+        Combines module docstring, imports, and scope contents in proper order.
+
+        Args:
+            module: The PyiModule to build
+
+        Returns:
+            String representation of the complete module
+        """
         output = module.doc + "\n\n" if module.doc else ""
 
         for import_statement in module.imports:
@@ -156,6 +223,7 @@ class Builder:
         return output
 
     def build_enum(self, enum: PyiEnum) -> str | None:
+        """Build a string representation of an enum."""
         if not enum.names:
             return None
 
