@@ -11,8 +11,6 @@ from .epilog import epilog
 
 
 def postprocessing_pipeline(pyi_code: str, config: StubgenPyxConfig, pyx_path: Path | None = None) -> str:
-    with open("__test.pyi", "w") as f:
-        f.write(pyi_code)
     pyi_ast = ast.parse(pyi_code)
     
     if not config.no_trim_imports:
