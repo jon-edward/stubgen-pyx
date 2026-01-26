@@ -1,10 +1,8 @@
 """
-API for stubgen-pyx, a tool for generating `.pyi` files from Cython modules.
+Automatic stub file generation for Cython extensions.
 """
 
-from stubgen_pyx.stubgen import stubgen
-from stubgen_pyx.build import build
-from stubgen_pyx.convert import convert_module
+from .stubgen import StubgenPyx
+from .config import StubgenPyxConfig
 
-
-__all__ = ["stubgen", "build", "convert_module"]
+__all__ = ["StubgenPyx", "StubgenPyxConfig"]

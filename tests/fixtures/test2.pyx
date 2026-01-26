@@ -2,6 +2,8 @@
 This is a test of importing modules.
 """
 
+from dataclasses import dataclass
+
 from typing import List, Dict, Tuple as tup
 import typing
 
@@ -9,7 +11,8 @@ cpdef int imported_func():
     return 1
 
 
-class RegularClass:
+@dataclass
+class RegularDataclass:
     x: int
     y: float
     z: complex
