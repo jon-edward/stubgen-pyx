@@ -20,7 +20,7 @@ def test_conversion_result_success():
     assert result.pyx_file == pyx_file
     assert result.pyi_file == pyi_file
     assert result.error is None
-    assert "✓" in result.status_message
+    assert "Converted" in result.status_message
 
 
 def test_conversion_result_failure():
@@ -37,7 +37,7 @@ def test_conversion_result_failure():
     assert result.pyx_file == pyx_file
     assert result.pyi_file == pyi_file
     assert result.error == error
-    assert "✗" in result.status_message
+    assert "Failed to convert" in result.status_message
     assert "Test error" in result.status_message
 
 
@@ -55,5 +55,5 @@ def test_conversion_result_status_message_failure():
     result = ConversionResult(
         success=False, pyx_file=Path("b.pyx"), pyi_file=Path("b.pyi"), error=error
     )
-    assert "Failed" in result.status_message
+    assert "Failed to convert" in result.status_message
     assert "Parse failed" in result.status_message

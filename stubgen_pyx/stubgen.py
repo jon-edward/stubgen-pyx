@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 import glob
 import logging
 from pathlib import Path
-from typing import NamedTuple
 
 from .config import StubgenPyxConfig
 from .analysis.visitor import ModuleVisitor
@@ -21,7 +20,8 @@ from ._version import __version__
 logger = logging.getLogger(__name__)
 
 
-class ConversionResult(NamedTuple):
+@dataclass
+class ConversionResult:
     """Result of a file conversion operation."""
 
     success: bool
@@ -40,8 +40,8 @@ class ConversionResult(NamedTuple):
     def status_message(self) -> str:
         """Human-readable status message."""
         if self.success:
-            return f"✓ Converted {self.pyx_file} → {self.pyi_file}"
-        return f"✗ Failed to convert {self.pyx_file}: {self.error}"
+            return f"Converted {self.pyx_file} to {self.pyi_file}"
+        return f"Failed to convert {self.pyx_file}: {self.error}"
 
 
 @dataclass
@@ -132,23 +132,12 @@ class StubgenPyx:
 
         logger.info(f"Found {len(pyx_files)} file(s) to convert")
 
-        for i, pyx_file in enumerate(pyx_files, 1):
+        for pyx_file in pyx_files:
             result = self._convert_single_file(Path(pyx_file))
             results.append(result)
 
             if self.config.verbose or not result.success:
                 logger.info(result.status_message)
-
-        # Summary reporting
-        successful = sum(1 for r in results if r.success)
-        failed = len(results) - successful
-
-        if failed > 0:
-            logger.warning(
-                f"Conversion complete: {successful} succeeded, {failed} failed"
-            )
-        else:
-            logger.info(f"Conversion complete: all {successful} file(s) succeeded")
 
         return results
 

@@ -178,6 +178,10 @@ def main():
             if result.success:
                 result.pyi_file.rename(output_dir / result.pyi_file.name)
 
+    # Summary reporting
+    successful_count = sum(1 for r in results if r.success)
+    logger.info(f"Successfully converted {successful_count} file(s)")
+
     # Exit with appropriate code
     failed_count = sum(1 for r in results if not r.success)
     if failed_count > 0:
@@ -187,6 +191,5 @@ def main():
     if not results:
         logger.error(f"No .pyx files found matching pattern: {pyx_file_pattern}")
         sys.exit(1)
-
-    logger.info("All conversions completed successfully")
+    
     sys.exit(0)
