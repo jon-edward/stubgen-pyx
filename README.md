@@ -310,7 +310,7 @@ Note:
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/stubgen-pyx.git
+git clone https://github.com/jon-edward/stubgen-pyx.git
 cd stubgen-pyx
 
 # Create virtual environment
