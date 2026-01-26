@@ -6,15 +6,15 @@ from dataclasses import dataclass
 
 _RESERVED_MODULES = {
     "__future__",
+    "asyncio"
 }
 
 
-def trim_unused_imports(tree: ast.AST, used_names: set[str]) -> ast.AST:
+def trim_imports(tree: ast.AST, used_names: set[str]) -> ast.AST:
     """
     Trim unused imports from a Python AST.
     """
-    remover = _UnusedImportRemover(used_names)
-    return remover.visit(tree)
+    return _UnusedImportRemover(used_names).visit(tree)
 
 
 @dataclass

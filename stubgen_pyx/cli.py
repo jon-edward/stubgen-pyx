@@ -20,6 +20,10 @@ def main():
     )
 
     parser.add_argument(
+        "--file", help="Glob pattern for files to generate stubs for", type=str, default=None
+    )
+
+    parser.add_argument(
         "--verbose", help="Enable verbose logging", action="store_true", default=False
     )
 
@@ -48,7 +52,19 @@ def main():
     )
 
     parser.add_argument(
+        "--no-deduplicate-imports",
+        help="Do not deduplicate imports in the output stub.",
+        action="store_true",
+    )
+
+    parser.add_argument(
         "--exclude-epilog", help="Disable inclusion of epilog", action="store_true"
+    )
+
+    parser.add_argument(
+        "--continue-on-error",
+        help="Continue on error",
+        action="store_true",
     )
 
     args = parser.parse_args()
@@ -59,6 +75,8 @@ def main():
         no_normalize_names=args.no_normalize_names,
         no_pxd_to_stubs=args.no_pxd_to_stubs,
         exclude_epilog=args.exclude_epilog,
+        no_deduplicate_imports=args.no_deduplicate_imports,
+        continue_on_error=args.continue_on_error,
     )
 
     logging.basicConfig(
@@ -66,9 +84,11 @@ def main():
         format="%(asctime)s - %(levelname)s - %(message)s",
     )
 
-    dir: str = args.dir
-
     stubgen = StubgenPyx(config=config)
 
-    pyx_glob = os.path.join(dir, "**", "*.pyx")
-    stubgen.convert_glob(pyx_glob)
+    if args.file:
+        pyx_file_pattern = os.path.join(args.dir, args.file)
+    else:
+        pyx_file_pattern = os.path.join(args.dir, "**", "*.pyx")
+    
+    stubgen.convert_glob(pyx_file_pattern)

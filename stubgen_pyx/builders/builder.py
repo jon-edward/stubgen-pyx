@@ -86,7 +86,7 @@ class Builder:
 
     def build_function(self, function: PyiFunction) -> str | None:
         output = "".join(f"{decorator}\n" for decorator in function.decorators)
-        output += f"def {function.name}{self.build_signature(function.signature)}: "
+        output += f"{'async ' if function.is_async else ''}def {function.name}{self.build_signature(function.signature)}: "
         if function.doc is not None:
             output += f"\n{textwrap.indent(function.doc, '    ')}"
         else:

@@ -104,11 +104,12 @@ def _get_return_type_annotation(node: Nodes.CFuncDefNode | Nodes.DefNode) -> str
 
 def _to_argument(arg: Nodes.CArgDeclNode) -> PyiArgument:
     """Converts a CArgDeclNode to an Argument."""
-    name = _decode_or_pass(arg.declarator.name)  # type: ignore
-    annotation = _get_annotation(arg)
-
-    if not name and annotation:
-        name, annotation = annotation, None
+    name: str = _decode_or_pass(arg.declarator.name)  # type: ignore
+    if not name:
+        name = arg.base_type.name # type: ignore
+        annotation = None
+    else:
+        annotation = _get_annotation(arg)
 
     default = unparse_expr(arg.default)  # type: ignore
     return PyiArgument(name, default=default, annotation=annotation)

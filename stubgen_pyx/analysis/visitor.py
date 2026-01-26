@@ -159,6 +159,13 @@ class ImportVisitor(TreeVisitor):
             self.imports.append(node)
             return node
         return node
+    
+    def visit_IfStatNode(self, node):
+        """Pass through `if typing.TYPE_CHECKING: ` and `if TYPE_CHECKING: ` blocks"""
+        for clause in node.if_clauses:
+            condition_name = _collect_attribute(clause.condition)
+            if condition_name in ("TYPE_CHECKING", "typing.TYPE_CHECKING"):
+                self.visitchildren(clause)
 
 
 @dataclass
@@ -191,3 +198,20 @@ class ClassVisitor:
 
     def __post_init__(self):
         self.scope = ScopeVisitor(node=self.node)
+
+
+def _collect_attribute(node) -> str:
+    names = []
+    attribute = node
+
+    while isinstance(attribute, ExprNodes.AttributeNode):
+        names.append(attribute.attribute)
+        attribute = attribute.obj
+    
+    if isinstance(attribute, ExprNodes.NameNode):
+        names.append(attribute.name)
+
+    names.reverse()
+
+    name = ".".join(names)
+    return name

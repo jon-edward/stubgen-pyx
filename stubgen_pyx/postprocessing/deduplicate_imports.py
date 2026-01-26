@@ -26,6 +26,7 @@ class _DuplicateImportRemover(ast.NodeTransformer):
     name_to_imports: Dict[
         str, List[tuple[ast.Import | ast.ImportFrom, int, ast.alias]]
     ] = field(default_factory=dict)
+    
     current_body: Optional[List] = None
     nodes_to_remove: set[ast.AST] = field(default_factory=set)
 

@@ -42,6 +42,7 @@ class PyiFunction(PyiElement):
     """Represents a function or method."""
 
     name: str
+    is_async: bool
     doc: str | None = None
     signature: PyiSignature = field(default_factory=PyiSignature)
     decorators: list[str] = field(default_factory=list)

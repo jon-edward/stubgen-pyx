@@ -3,6 +3,7 @@ Converts Cython AST nodes to PyiElements.
 """
 
 from __future__ import annotations
+import ast
 
 from dataclasses import dataclass
 
@@ -99,6 +100,7 @@ class Converter:
         doc = docstring_to_string(cdef_func.doc) if cdef_func.doc else None  # type: ignore
         return PyiFunction(
             name,
+            is_async=False,
             doc=doc,
             decorators=get_decorators(source_code, cdef_func),
             signature=get_signature(cdef_func),
@@ -109,6 +111,7 @@ class Converter:
         doc = docstring_to_string(node.doc) if node.doc else None
         return PyiFunction(
             name,
+            is_async=node.is_async_def,
             doc=doc,
             decorators=get_decorators(source_code, node),
             signature=get_signature(node),
@@ -119,8 +122,8 @@ class Converter:
     ) -> PyiAssignment:
         if isinstance(assignment, Nodes.SingleAssignmentNode):
             expr = unparse_expr(assignment.rhs)
+            name: str = assignment.lhs.name  # type: ignore
             if expr != "...":
-                name: str = assignment.lhs.name  # type: ignore
                 annotation = (
                     assignment.lhs.annotation.string.value
                     if assignment.lhs.annotation is not None
@@ -131,6 +134,18 @@ class Converter:
                     assign = f"{assign}: {annotation}"
                 assign = f"{assign} = {expr}"
                 return PyiAssignment(assign)
+            
+            try:
+                assignment_source = get_source(source_code, assignment)
+                ast.parse(assignment_source)
+                return PyiAssignment(assignment_source)
+            except SyntaxError:
+                pass
+
+            return PyiAssignment(
+                f"{name} = ..."
+            )
+        
         return PyiAssignment(get_source(source_code, assignment))
 
     def convert_enum(self, node: Nodes.CEnumDefNode) -> PyiEnum:

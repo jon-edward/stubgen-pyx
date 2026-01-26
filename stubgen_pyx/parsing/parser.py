@@ -13,6 +13,7 @@ from Cython.Compiler.TreeFragment import parse_from_strings, StringParseContext
 from Cython.Compiler import Errors
 from Cython.Compiler.ModuleNode import ModuleNode
 
+from .file_parsing import file_parsing_preprocess
 from .preprocess import preprocess
 
 Errors.init_thread()
@@ -30,24 +31,28 @@ class ParsedSource:
 _DEFAULT_MODULE_NAME = "__pyx_module__"
 
 
-def parse_pyx(source: Path | str, module_name: str | None = None) -> ParsedSource:
+def parse_pyx(source: str, module_name: str | None = None, pyx_path: Path | None = None) -> ParsedSource:
     """Parse a Cython module into a ParseResult object."""
     module_name = module_name or _DEFAULT_MODULE_NAME
+
+    if pyx_path:
+        source = file_parsing_preprocess(pyx_path, source)
+        module_name = path_to_module_name(pyx_path)
     
-    if isinstance(source, str):
-        return _parse_str(source, module_name)
-    return _parse_str(source.read_text(encoding="utf-8"), module_name)
+    return _parse_str(source, module_name)
 
 
 def _parse_str(source: str, module_name: str) -> ParsedSource:
     """Parse a Cython module into a ParsedSource object."""
-    context = StringParseContext(module_name)
+    context = StringParseContext(module_name, cpp=True)
 
     source = preprocess(source)
+
     ast = parse_from_strings(module_name, source, context=context)
     ast = typing.cast("ModuleNode", ast)
 
-    return ParsedSource(source, ast)
+    parsed = ParsedSource(source, ast)
+    return parsed
 
 
 def _normalize_part(part: str) -> str:

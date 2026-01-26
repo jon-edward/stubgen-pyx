@@ -64,13 +64,9 @@ def get_enum_names(node: Nodes.CEnumDefNode) -> list[str]:
 
 def docstring_to_string(docstring: str) -> str:
     """Converts a Cython docstring to a Python docstring."""
-    docstring = docstring.strip()
-    first_line, rest = (
-        docstring.split("\n", 1) if "\n" in docstring else (docstring, "")
-    )
-    if rest:
-        rest = f"\n{textwrap.dedent(rest)}\n"
-    docstring = f"{first_line}{rest}".replace('"""', r"\"\"\"")
+    first_line, *rest = docstring.splitlines(keepends=True)
+    rest_joined = textwrap.dedent("".join(rest))
+    docstring = f"{first_line}{rest_joined}".replace('"""', r"\"\"\"")
     return f'"""{docstring}"""'
 
 
