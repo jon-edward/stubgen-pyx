@@ -25,6 +25,7 @@ class Builder:
     """
     Generates Python code from PyiElements.
     """
+
     def build_argument(
         self,
         argument: PyiArgument,

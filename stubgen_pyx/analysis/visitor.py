@@ -159,7 +159,7 @@ class ImportVisitor(TreeVisitor):
             self.imports.append(node)
             return node
         return node
-    
+
     def visit_IfStatNode(self, node):
         """Pass through `if typing.TYPE_CHECKING: ` and `if TYPE_CHECKING: ` blocks"""
         for clause in node.if_clauses:
@@ -207,7 +207,7 @@ def _collect_attribute(node) -> str:
     while isinstance(attribute, ExprNodes.AttributeNode):
         names.append(attribute.attribute)
         attribute = attribute.obj
-    
+
     if isinstance(attribute, ExprNodes.NameNode):
         names.append(attribute.name)
 

@@ -1,3 +1,7 @@
+"""
+Configuration for stubgen_pyx.
+"""
+
 from dataclasses import dataclass
 
 

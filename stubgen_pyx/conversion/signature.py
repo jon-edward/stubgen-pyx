@@ -106,7 +106,7 @@ def _to_argument(arg: Nodes.CArgDeclNode) -> PyiArgument:
     """Converts a CArgDeclNode to an Argument."""
     name: str = _decode_or_pass(arg.declarator.name)  # type: ignore
     if not name:
-        name = arg.base_type.name # type: ignore
+        name = arg.base_type.name  # type: ignore
         annotation = None
     else:
         annotation = _get_annotation(arg)

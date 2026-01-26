@@ -20,7 +20,10 @@ def main():
     )
 
     parser.add_argument(
-        "--file", help="Glob pattern for files to generate stubs for", type=str, default=None
+        "--file",
+        help="Glob pattern for files to generate stubs for",
+        type=str,
+        default=None,
     )
 
     parser.add_argument(
@@ -90,5 +93,5 @@ def main():
         pyx_file_pattern = os.path.join(args.dir, args.file)
     else:
         pyx_file_pattern = os.path.join(args.dir, "**", "*.pyx")
-    
+
     stubgen.convert_glob(pyx_file_pattern)

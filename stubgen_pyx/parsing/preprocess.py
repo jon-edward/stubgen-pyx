@@ -52,7 +52,7 @@ def remove_contained_newlines(code: str) -> str:
     """Remove newlines between brackets, parentheses, and braces."""
     indices = _get_newline_indices_in_brackets(code)
     for idx in indices:
-        code = remove_indices(code, idx, idx+1, replace_with="")
+        code = remove_indices(code, idx, idx + 1, replace_with="")
     return code
 
 

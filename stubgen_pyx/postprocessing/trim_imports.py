@@ -1,13 +1,14 @@
+"""
+Trim unused imports from a Python AST.
+"""
+
 from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
 
 
-_RESERVED_MODULES = {
-    "__future__",
-    "asyncio"
-}
+_RESERVED_MODULES = {"__future__", "asyncio"}
 
 
 def trim_imports(tree: ast.AST, used_names: set[str]) -> ast.AST:

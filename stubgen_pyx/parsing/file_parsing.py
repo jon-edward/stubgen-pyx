@@ -12,10 +12,12 @@ import tokenize
 
 from .preprocess import remove_indices, tokenize_py, line_col_to_offset
 
+
 def file_parsing_preprocess(source: Path, code: str) -> str:
     code = _expand_includes(source, code)
     code = _replace_equals_star(code)
     return code
+
 
 def _expand_includes(source: Path, code: str) -> str:
     """Expand includes in Cython code."""
@@ -30,11 +32,13 @@ def _expand_includes(source: Path, code: str) -> str:
         )
     return code
 
+
 @dataclass
 class _Include:
     path: Path
     start: int
     end: int
+
 
 def _try_parse_string(code: str) -> str | None:
     try:
@@ -45,18 +49,24 @@ def _try_parse_string(code: str) -> str | None:
     except SyntaxError:
         return None
 
+
 def _get_includes(source: Path, code: str) -> list[_Include]:
     """Get character spans of all strings (reversed for safe removal)."""
     results = []
     last_token: tokenize.TokenInfo | None = None
     for token in tokenize_py(code):
-        if token.type == tokenize.STRING and last_token and last_token.type == tokenize.NAME and last_token.string == "include":
+        if (
+            token.type == tokenize.STRING
+            and last_token
+            and last_token.type == tokenize.NAME
+            and last_token.string == "include"
+        ):
             include_str = _try_parse_string(token.string)
-            
+
             if not include_str:
                 last_token = token
                 continue
-        
+
             start = line_col_to_offset(code, last_token.start)
             end = line_col_to_offset(code, token.end)
 
@@ -70,6 +80,7 @@ def _get_includes(source: Path, code: str) -> list[_Include]:
     results.reverse()
     return results
 
+
 def _get_equals_star_indices(code: str) -> list[tuple[int, int]]:
     results = []
     last_token: tokenize.TokenInfo | None = None
@@ -81,6 +92,7 @@ def _get_equals_star_indices(code: str) -> list[tuple[int, int]]:
         last_token = token
     results.reverse()
     return results
+
 
 def _replace_equals_star(code: str) -> str:
     for start, end in _get_equals_star_indices(code):

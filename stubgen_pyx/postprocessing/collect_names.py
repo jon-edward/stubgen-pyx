@@ -1,6 +1,13 @@
+"""
+Collects names from a Python .pyi AST.
+"""
+
+from __future__ import annotations
+
 import ast
 from dataclasses import dataclass, field
 import itertools
+
 
 def collect_names(tree: ast.AST) -> set[str]:
     collector = _NameCollector()
@@ -21,30 +28,27 @@ class _NameCollector(ast.NodeVisitor):
         if subtree is None:
             return
         self.visit(subtree)
-    
+
     @staticmethod
     def _get_str_constant(node: ast.AST) -> str | None:
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             return node.value
-    
+
     def _visit_arguments(self, args: ast.arguments):
         extra_args = []
         if args.vararg:
             extra_args.append(args.vararg)
         if args.kwarg:
             extra_args.append(args.kwarg)
-        
+
         all_args = itertools.chain(
-            args.args,
-            args.kwonlyargs,
-            args.posonlyargs,
-            extra_args
+            args.args, args.kwonlyargs, args.posonlyargs, extra_args
         )
         for arg in all_args:
             str_constant = self._get_str_constant(arg.annotation)
             if str_constant:
                 self._try_parsed_visit(str_constant)
-    
+
     def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> ast.AST:
         self._visit_arguments(node.args)
         returns_constant = self._get_str_constant(node.returns)
@@ -54,7 +58,7 @@ class _NameCollector(ast.NodeVisitor):
     def visit_FunctionDef(self, node: ast.FunctionDef):
         self._visit_function(node)
         return self.generic_visit(node)
-    
+
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
         self._visit_function(node)
         return self.generic_visit(node)
@@ -72,15 +76,15 @@ class _NameCollector(ast.NodeVisitor):
         while isinstance(attribute, ast.Attribute):
             names.append(attribute.attr)
             attribute = attribute.value
-        
+
         if isinstance(attribute, ast.Name):
             names.append(attribute.id)
 
         names.reverse()
         names.pop()
 
-        for i in range(1, len(names)+1):
-            # Add all potentially used module names to access the 
+        for i in range(1, len(names) + 1):
+            # Add all potentially used module names to access the
             # attribute
             self.names.add(".".join(names[0:i]))
 

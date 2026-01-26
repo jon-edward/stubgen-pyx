@@ -31,14 +31,16 @@ class ParsedSource:
 _DEFAULT_MODULE_NAME = "__pyx_module__"
 
 
-def parse_pyx(source: str, module_name: str | None = None, pyx_path: Path | None = None) -> ParsedSource:
+def parse_pyx(
+    source: str, module_name: str | None = None, pyx_path: Path | None = None
+) -> ParsedSource:
     """Parse a Cython module into a ParseResult object."""
     module_name = module_name or _DEFAULT_MODULE_NAME
 
     if pyx_path:
         source = file_parsing_preprocess(pyx_path, source)
         module_name = path_to_module_name(pyx_path)
-    
+
     return _parse_str(source, module_name)
 
 

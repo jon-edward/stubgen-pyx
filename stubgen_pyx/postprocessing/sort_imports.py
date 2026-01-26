@@ -1,5 +1,7 @@
 """Utility for sorting imports."""
 
+from __future__ import annotations
+
 import isort
 
 

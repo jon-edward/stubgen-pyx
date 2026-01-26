@@ -134,7 +134,7 @@ class Converter:
                     assign = f"{assign}: {annotation}"
                 assign = f"{assign} = {expr}"
                 return PyiAssignment(assign)
-            
+
             try:
                 assignment_source = get_source(source_code, assignment)
                 ast.parse(assignment_source)
@@ -142,10 +142,8 @@ class Converter:
             except SyntaxError:
                 pass
 
-            return PyiAssignment(
-                f"{name} = ..."
-            )
-        
+            return PyiAssignment(f"{name} = ...")
+
         return PyiAssignment(get_source(source_code, assignment))
 
     def convert_enum(self, node: Nodes.CEnumDefNode) -> PyiEnum:

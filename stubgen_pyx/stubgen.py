@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import itertools
 from dataclasses import dataclass, field
 import glob
 import logging
@@ -34,19 +33,21 @@ class StubgenPyx:
     config: StubgenPyxConfig = field(default_factory=StubgenPyxConfig)
     """Configuration for StubgenPyx."""
 
-    def convert_str(self, pyx_str: str, pxd_str: str | None = None, pyx_path: Path | None = None):
+    def convert_str(
+        self, pyx_str: str, pxd_str: str | None = None, pyx_path: Path | None = None
+    ):
         """Converts a .pyx file to a .pyi file."""
         module_name = path_to_module_name(pyx_path) if pyx_path else None
         parse_result = parse_pyx(pyx_str, module_name=module_name, pyx_path=pyx_path)
 
         module_visitor = ModuleVisitor(node=parse_result.source_ast)
-        module = self.converter.convert_module(
-            module_visitor, parse_result.source
-        )
+        module = self.converter.convert_module(module_visitor, parse_result.source)
 
         if pxd_str and not self.config.no_pxd_to_stubs:
             # Convert extra elements from .pxd
-            pxd_parse_result = parse_pyx(pxd_str, module_name=module_name, pyx_path=pyx_path)
+            pxd_parse_result = parse_pyx(
+                pxd_str, module_name=module_name, pyx_path=pyx_path
+            )
             pxd_visitor = ModuleVisitor(node=pxd_parse_result.source_ast)
             pxd_module = self.converter.convert_module(
                 pxd_visitor, pxd_parse_result.source
@@ -70,7 +71,6 @@ class StubgenPyx:
         content = self.builder.build_module(module)
         return postprocessing_pipeline(content, self.config, pyx_path).strip()
 
-
     def convert_glob(self, pyx_file_pattern: str):
         """Converts a glob pattern of .pyx files to .pyi files."""
 
@@ -79,11 +79,15 @@ class StubgenPyx:
         for pyx_file in pyx_files:
             try:
                 logger.info(f"Converting {pyx_file}")
-                
+
                 pyx_file_path = Path(pyx_file)
 
                 pxd_file_path = pyx_file_path.with_suffix(".pxd")
-                if pxd_file_path.exists() and not self.config.no_pxd_to_stubs and pxd_file_path != pyx_file_path:
+                if (
+                    pxd_file_path.exists()
+                    and not self.config.no_pxd_to_stubs
+                    and pxd_file_path != pyx_file_path
+                ):
                     logger.debug(f"Found pxd file: {pxd_file_path}")
                     pxd_str = pxd_file_path.read_text(encoding="utf-8")
                 else:
