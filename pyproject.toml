@@ -30,8 +30,9 @@ Homepage = "https://github.com/jon-edward/stubgen-pyx"
 [project.scripts]
 stubgen-pyx = "stubgen_pyx.cli:main"
 
-[tool.setuptools]
-packages = ["stubgen_pyx"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["stubgen_pyx*"]
 
 [dependency-groups]
 dev = [
