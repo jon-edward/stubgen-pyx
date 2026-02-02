@@ -169,14 +169,7 @@ def main():
     if args.dry_run:
         logger.info("DRY RUN MODE - no files will be written")
 
-    results = stubgen.convert_glob(pyx_file_pattern)
-
-    # Handle output directory relocation if specified
-    if output_dir and not args.dry_run:
-        logger.info(f"Moving .pyi files to {output_dir}")
-        for result in results:
-            if result.success:
-                result.pyi_file.rename(output_dir / result.pyi_file.name)
+    results = stubgen.convert_glob(pyx_file_pattern, output_dir=output_dir)
 
     # Summary reporting
     successful_count = sum(1 for r in results if r.success)
@@ -193,3 +186,7 @@ def main():
         sys.exit(1)
     
     sys.exit(0)
+
+# This helps to execute in the development env
+if "__main__" == __name__:
+    main()
