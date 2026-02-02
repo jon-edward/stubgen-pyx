@@ -17,6 +17,11 @@ def temp_dir():
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
 
+@pytest.fixture
+def temp_outdir():
+    """Create a temporary directory for test files."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        yield Path(tmpdir)
 
 def test_convert_empty_pyx_file(temp_dir):
     """Test converting a minimal .pyx file."""
@@ -184,3 +189,24 @@ def hello():
 
     # The trimmed version should be shorter or equal
     assert len(result_trim) <= len(result_no_trim)
+
+
+def test_convert_glob_multiple_files_in_output_dir(temp_dir, temp_outdir):
+    """Test conversion of multiple files in separate out dir."""
+    for i in range(3):
+        pyx_file = temp_dir / f"test{i}.pyx"
+        pyx_file.write_text(f"def func{i}(): pass")
+
+    config = StubgenPyxConfig()
+    stubgen = StubgenPyx(config=config)
+
+    pattern = str(temp_dir / "*.pyx")
+    results = stubgen.convert_glob(pattern, output_dir=temp_outdir)
+
+    assert len(results) == 3
+    assert all(r.success for r in results)
+
+    # Verify all .pyi files exist in output dir and NOT in source dir
+    for i in range(3):
+        assert not (temp_dir / f"test{i}.pyi").exists()
+        assert (temp_outdir / f"test{i}.pyi").exists()
