@@ -135,8 +135,11 @@ class StubgenPyx:
 
         logger.info(f"Found {len(pyx_files)} file(s) to convert")
 
-        for pyx_file in pyx_files:
-            result = self._convert_single_file(Path(pyx_file))
+        for pyx_path in (Path(_pyx_file) for _pyx_file in pyx_files):
+            pyi_path = (output_dir / pyx_path.with_suffix(".pyi").name
+                        if output_dir
+                        else None)
+            result = self._convert_single_file(pyx_path, pyi_path)
             results.append(result)
 
             if self.config.verbose or not result.success:
