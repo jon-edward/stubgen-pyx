@@ -113,12 +113,15 @@ class StubgenPyx:
         content = self.builder.build_module(module)
         return postprocessing_pipeline(content, self.config, pyx_path).strip()
 
-    def convert_glob(self, pyx_file_pattern: str) -> list[ConversionResult]:
-        """
-        Converts a glob pattern of .pyx files to .pyi files.
+    def convert_glob(self, pyx_file_pattern: str,
+                     output_dir: Path | None = None) -> list[ConversionResult]:
+        """Converts a glob pattern of .pyx files to .pyi files.
 
         Args:
             pyx_file_pattern: Glob pattern for files to convert (e.g., "**/*.pyx")
+            output_dir: Path to the output directory where pyi files shall be
+                written. If None, the pyi files will be collocated next to each
+                corresponding pyx file.
 
         Returns:
             List of ConversionResult objects with status for each file
