@@ -113,12 +113,15 @@ class StubgenPyx:
         content = self.builder.build_module(module)
         return postprocessing_pipeline(content, self.config, pyx_path).strip()
 
-    def convert_glob(self, pyx_file_pattern: str) -> list[ConversionResult]:
-        """
-        Converts a glob pattern of .pyx files to .pyi files.
+    def convert_glob(self, pyx_file_pattern: str,
+                     output_dir: Path | None = None) -> list[ConversionResult]:
+        """Converts a glob pattern of .pyx files to .pyi files.
 
         Args:
             pyx_file_pattern: Glob pattern for files to convert (e.g., "**/*.pyx")
+            output_dir: Path to the output directory where pyi files shall be
+                written. If None, the pyi files will be collocated next to each
+                corresponding pyx file.
 
         Returns:
             List of ConversionResult objects with status for each file
@@ -132,8 +135,11 @@ class StubgenPyx:
 
         logger.info(f"Found {len(pyx_files)} file(s) to convert")
 
-        for pyx_file in pyx_files:
-            result = self._convert_single_file(Path(pyx_file))
+        for pyx_path in (Path(_pyx_file) for _pyx_file in pyx_files):
+            pyi_path = (output_dir / pyx_path.with_suffix(".pyi").name
+                        if output_dir
+                        else None)
+            result = self._convert_single_file(pyx_path, pyi_path)
             results.append(result)
 
             if self.config.verbose or not result.success:
@@ -141,12 +147,15 @@ class StubgenPyx:
 
         return results
 
-    def _convert_single_file(self, pyx_file_path: Path) -> ConversionResult:
-        """
-        Convert a single .pyx file to .pyi format.
+    def _convert_single_file(self, pyx_file_path: Path,
+                             pyi_file_path: Path | None = None) -> ConversionResult:
+        """Convert a single .pyx file to .pyi format.
 
         Args:
-            pyx_file_path: Path to the .pyx file
+            pyx_file_path: Path to the input .pyx file
+            pyi_file_path: Path to the output .pyi file to produce
+                           If not specified, the output file will be collocated
+                           next to the input pyx file.
 
         Returns:
             ConversionResult with success status and any errors
@@ -184,9 +193,10 @@ class StubgenPyx:
             )
 
             # Write pyi file
-            pyi_file_path = pyx_file_path.with_suffix(".pyi")
+            pyi_file_path = pyi_file_path or pyx_file_path.with_suffix(".pyi")
             try:
                 pyi_file_path.write_text(pyi_content, encoding="utf-8")
+                logger.debug(f"Wrote pyi file: {pyi_file_path}")
             except IOError as e:
                 raise IOError(f"Failed to write {pyi_file_path}: {e}") from e
 
