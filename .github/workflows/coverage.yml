@@ -16,9 +16,9 @@ jobs:
           uv python install ${{ matrix.python-version }}
           uv venv
           uv pip install .[test]
-      - name: Test with pytest
+      - name: Generate test coverage
         run: |
-          uv run pytest
+          uv run pytest --cov=stubgen_pyx tests/
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
         with:
