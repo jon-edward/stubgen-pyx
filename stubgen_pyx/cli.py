@@ -62,14 +62,12 @@ Examples:
         "-v",
         help="Enable verbose logging",
         action="store_true",
-        default=False,
     )
 
     parser.add_argument(
         "--dry-run",
         help="Preview conversions without writing files",
         action="store_true",
-        default=False,
     )
 
     parser.add_argument(
@@ -114,6 +112,12 @@ Examples:
         action="store_true",
     )
 
+    parser.add_argument(
+        "--include-private",
+        help="Include private functions (starting with _ and not ending with _) in the output stub",
+        action="store_true",
+    )
+
     return parser
 
 
@@ -140,6 +144,7 @@ def main():
         exclude_epilog=args.exclude_epilog,
         no_deduplicate_imports=args.no_deduplicate_imports,
         continue_on_error=args.continue_on_error,
+        include_private=args.include_private,
         verbose=args.verbose,
     )
 

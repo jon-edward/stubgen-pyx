@@ -77,6 +77,8 @@ class StubgenPyx:
         Raises:
             Various exceptions from parsing, conversion, or building.
         """
+        self.builder.include_private = self.config.include_private
+
         module_name = path_to_module_name(pyx_path) if pyx_path else None
         parse_result = parse_pyx(pyx_str, module_name=module_name, pyx_path=pyx_path)
 

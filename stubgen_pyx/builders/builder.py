@@ -29,6 +29,12 @@ class Builder:
     and type annotations.
     """
 
+    include_private: bool = False
+
+    def _is_private(self, name: str) -> bool:
+        """Check if a name is private (starts with _ but doesn't end with _)."""
+        return name.startswith("_") and not name.endswith("_")
+
     def build_argument(self, argument: PyiArgument) -> str:
         """Build a string representation of a function argument.
 
@@ -171,6 +177,8 @@ class Builder:
             output += "\n"
 
         for element in scope.functions:
+            if not self.include_private and self._is_private(element.name):
+                continue
             function_content = self.build_function(element)
             if not function_content:
                 continue

@@ -19,6 +19,7 @@ class StubgenPyxConfig:
         no_deduplicate_imports: Skip deduplicating imports.
         exclude_epilog: Skip adding generation epilog comment.
         continue_on_error: Continue processing files that failed.
+        include_private: Include private members.
         verbose: Enable verbose logging.
     """
 
@@ -29,6 +30,7 @@ class StubgenPyxConfig:
     no_deduplicate_imports: bool = False
     exclude_epilog: bool = False
     continue_on_error: bool = False
+    include_private: bool = False
     verbose: bool = False
 
     def __post_init__(self):
