@@ -9,12 +9,36 @@ import textwrap
 from Cython.Compiler import Nodes, ExprNodes
 
 
+class _LinesCache:
+    """Cache for lines of source code."""
+
+    def __init__(self):
+        self._source: str | None = None
+        self.lines: list[str] = []
+
+    @property
+    def source(self) -> str | None:
+        return self._source
+
+    @source.setter
+    def source(self, value: str) -> None:
+        if value == self._source:
+            return
+        self._source = value
+        self.lines = value.splitlines(keepends=True)
+
+
+_lines_cache = _LinesCache()
+
+
 def get_source(source: str, node: Nodes.Node) -> str:
     """Gets the source code lines for a Cython AST node.
 
     The calculated end_pos is often inaccurate.
     """
-    lines = source.splitlines(keepends=True)
+    _lines_cache.source = source
+    lines = _lines_cache.lines
+
     end_pos = node.end_pos()
     if end_pos is None:
         end_pos = node.pos

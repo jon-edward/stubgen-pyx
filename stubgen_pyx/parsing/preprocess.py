@@ -8,10 +8,19 @@ from __future__ import annotations
 import io
 import re
 import tokenize
-from typing import Callable
+from typing import Callable, Generator
 
 _Tokens = tuple[tokenize.TokenInfo, ...]
 _PreprocessTransform = Callable[[str], str]
+
+_TAB_PATTERN = re.compile(r"^(\t+)", flags=re.MULTILINE)
+_LINE_INDENT_PATTERN = re.compile(r"^(\s*)")
+_LINE_CONTINUATION_PATTERN = re.compile(r"\\\n\s*")
+_BRACKET_PAIRS = {
+    "(": ")",
+    "[": "]",
+    "{": "}",
+}
 
 
 def preprocess(code: str) -> str:
@@ -32,8 +41,7 @@ def preprocess(code: str) -> str:
 
 def replace_tabs_with_spaces(code: str) -> str:
     """Replace leading tabs with 4 spaces each."""
-    tab_pattern = re.compile(r"^(\t+)", flags=re.MULTILINE)
-    return tab_pattern.sub(lambda m: "    " * len(m.group(1)), code)
+    return _TAB_PATTERN.sub(lambda m: "    " * len(m.group(1)), code)
 
 
 def remove_comments(code: str) -> str:
@@ -45,7 +53,7 @@ def remove_comments(code: str) -> str:
 
 def collapse_line_continuations(code: str) -> str:
     """Collapse line continuations (backslash + newline) into spaces."""
-    return re.sub(r"\\\n\s*", " ", code, flags=re.MULTILINE)
+    return _LINE_CONTINUATION_PATTERN.sub(" ", code)
 
 
 def remove_contained_newlines(code: str) -> str:
@@ -68,7 +76,7 @@ def expand_colons(code: str) -> str:
         indentation = _get_line_indentation(lines[line_num - 1])
         replace_with = f":\n{indentation}    "
 
-        idx = line_col_to_offset(code, (line_num, col))
+        idx = LineColConverter(code).line_col_to_offset((line_num, col))
         code = remove_indices(
             code, idx, idx + 1, replace_with=replace_with, strip_middle=True
         )
@@ -84,7 +92,7 @@ def expand_semicolons(code: str) -> str:
         indentation = _get_line_indentation(lines[line_num - 1])
         replace_with = f"\n{indentation}"
 
-        idx = line_col_to_offset(code, (line_num, col))
+        idx = LineColConverter(code).line_col_to_offset((line_num, col))
         code = remove_indices(
             code, idx, idx + 1, replace_with=replace_with, strip_middle=True
         )
@@ -92,12 +100,42 @@ def expand_semicolons(code: str) -> str:
     return code
 
 
-def line_col_to_offset(code: str, line_col: tuple[int, int]) -> int:
-    """Convert (line, column) position to character offset."""
-    lines = code.splitlines(keepends=True)
-    line_num, col = line_col
-    offset = sum(len(lines[i]) for i in range(line_num - 1))
-    return offset + col
+class LineColConverter:
+    """
+    Convert (line, column) position to character offset,
+    cached for performance
+    """
+
+    _code: str
+    _cumulative_lengths: list[int] | None = None
+
+    @property
+    def code(self) -> str:
+        return self._code
+
+    @code.setter
+    def code(self, code: str):
+        self._code = code
+        self._cumulative_lengths = None
+
+    def __init__(self, code: str):
+        self.code = code
+
+    def _compute_cumulative_lengths(self) -> list[int]:
+        """Compute cumulative character offsets at the start of each line."""
+        lines = self.code.splitlines(keepends=True)
+        cumulative = [0] * len(lines)
+        total = 0
+        for i, line in enumerate(lines):
+            cumulative[i] = total
+            total += len(line)
+        return cumulative
+
+    def line_col_to_offset(self, line_col: tuple[int, int]) -> int:
+        if self._cumulative_lengths is None:
+            self._cumulative_lengths = self._compute_cumulative_lengths()
+        line_num, col = line_col
+        return self._cumulative_lengths[line_num - 1] + col
 
 
 def remove_indices(
@@ -113,23 +151,26 @@ def remove_indices(
 
 def _get_line_indentation(line: str) -> str:
     """Extract leading whitespace from a line."""
-    match = re.match(r"^(\s*)", line)
+    match = _LINE_INDENT_PATTERN.match(line)
     return match.group(1) if match else ""
 
 
-def tokenize_py(code: str) -> _Tokens:
+def tokenize_py(code: str) -> Generator[tokenize.TokenInfo, None, None]:
     """Tokenize Python/Cython code."""
-    return tuple(tokenize.generate_tokens(io.StringIO(code).readline))
+    return tokenize.generate_tokens(io.StringIO(code).readline)
 
 
 def _get_comment_span_indices(code: str) -> list[tuple[int, int]]:
     """Get character spans of all comments (reversed for safe removal)."""
     results = []
+    line_converter = LineColConverter(code)
+
     for token in tokenize_py(code):
         if token.type == tokenize.COMMENT:
-            start = line_col_to_offset(code, token.start)
-            end = line_col_to_offset(code, token.end)
+            start = line_converter.line_col_to_offset(token.start)
+            end = line_converter.line_col_to_offset(token.end)
             results.append((start, end))
+
     results.sort(reverse=True)
     return results
 
@@ -139,19 +180,18 @@ def _get_newline_indices_in_brackets(code: str) -> list[int]:
     results = []
 
     bracket_stack: list[str] = []
-    bracket_pairs = {"(": ")", "[": "]", "{": "}"}
 
-    tokens = tokenize_py(code)
+    line_converter = LineColConverter(code)
 
-    for idx, token in enumerate(tokens):
+    for token in tokenize_py(code):
         token_str = token.string
 
-        if token_str in bracket_pairs and token.type == tokenize.OP:
+        if token_str in _BRACKET_PAIRS and token.type == tokenize.OP:
             bracket_stack.append(token_str)
-        elif bracket_stack and token_str == bracket_pairs[bracket_stack[-1]]:
+        elif bracket_stack and token_str == _BRACKET_PAIRS[bracket_stack[-1]]:
             bracket_stack.pop()
         elif token.type == tokenize.NL and bracket_stack:
-            results.append(line_col_to_offset(code, token.start))
+            results.append(line_converter.line_col_to_offset(token.start))
 
     results.sort(reverse=True)
     return results
@@ -161,15 +201,14 @@ def _get_colon_line_col_before_block(code: str) -> list[tuple[int, int]]:
     """Get (line, col) positions of colons that start code blocks (reversed)."""
     results = []
     bracket_stack = []
-    bracket_pairs = {"(": ")", "[": "]", "{": "}"}
 
     for segment in _get_line_segments(code):
         for idx, token in enumerate(segment):
             token_str = token.string
 
-            if token_str in bracket_pairs:
+            if token_str in _BRACKET_PAIRS and token.type == tokenize.OP:
                 bracket_stack.append(token_str)
-            elif bracket_stack and token_str == bracket_pairs[bracket_stack[-1]]:
+            elif bracket_stack and token_str == _BRACKET_PAIRS[bracket_stack[-1]]:
                 bracket_stack.pop()
             elif token.type == tokenize.OP and token_str == ":" and not bracket_stack:
                 if not _is_block(segment[0:idx]):
@@ -183,9 +222,11 @@ def _get_colon_line_col_before_block(code: str) -> list[tuple[int, int]]:
 def _get_semicolon_line_col(code: str) -> list[tuple[int, int]]:
     """Get (line, col) positions of semicolons (reversed)."""
     results = []
+
     for token in tokenize_py(code):
         if token.type == tokenize.OP and token.string == ";":
             results.append(token.start)
+
     results.sort(reverse=True)
     return results
 

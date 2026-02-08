@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
 
 
 def deduplicate_imports(node: ast.AST) -> ast.Module:
@@ -23,17 +22,13 @@ class _DuplicateImportRemover(ast.NodeTransformer):
     the final one.
     """
 
-    name_to_imports: Dict[
-        str, List[tuple[ast.Import | ast.ImportFrom, int, ast.alias]]
+    name_to_imports: dict[
+        str, list[tuple[ast.Import | ast.ImportFrom, int, ast.alias]]
     ] = field(default_factory=dict)
-
-    current_body: Optional[List] = None
     nodes_to_remove: set[ast.AST] = field(default_factory=set)
 
     def visit_Module(self, node: ast.Module) -> ast.Module:
-        """Process the module, tracking all imports first"""
-        self.current_body = node.body
-
+        """Process the module, tracking all imports first."""
         # First pass: collect all imports and their positions
         for idx, stmt in enumerate(node.body):
             if isinstance(stmt, (ast.Import, ast.ImportFrom)):
@@ -52,7 +47,7 @@ class _DuplicateImportRemover(ast.NodeTransformer):
         return node
 
     def _register_import(self, node: ast.Import | ast.ImportFrom, idx: int):
-        """Register an import statement and track what names it provides"""
+        """Register an import statement and track what names it provides."""
         if isinstance(node, ast.Import):
             for alias in node.names:
                 # The name available in the namespace
@@ -62,12 +57,20 @@ class _DuplicateImportRemover(ast.NodeTransformer):
                 self.name_to_imports[name].append((node, idx, alias))
 
         elif isinstance(node, ast.ImportFrom):
-            for alias in node.names:
-                # The name available in the namespace
-                name = alias.asname if alias.asname else alias.name
-                if name not in self.name_to_imports:
-                    self.name_to_imports[name] = []
-                self.name_to_imports[name].append((node, idx, alias))
+            # For `from x import *`, use module name as the key to only deduplicate exact matches
+            if any(alias.name == "*" for alias in node.names):
+                key = f"_star_import_:{node.module}"
+                if key not in self.name_to_imports:
+                    self.name_to_imports[key] = []
+                # Store the entire import statement for star imports
+                self.name_to_imports[key].append((node, idx, node.names[0]))
+            else:
+                # For regular imports, track each imported name
+                for alias in node.names:
+                    name = alias.asname if alias.asname else alias.name
+                    if name not in self.name_to_imports:
+                        self.name_to_imports[name] = []
+                    self.name_to_imports[name].append((node, idx, alias))
 
     def _mark_duplicates_for_removal(self):
         """Mark all but the last import of each name for removal"""

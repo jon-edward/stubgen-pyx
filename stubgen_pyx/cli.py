@@ -184,8 +184,9 @@ def main():
     if not results:
         logger.error(f"No .pyx files found matching pattern: {pyx_file_pattern}")
         sys.exit(1)
-    
+
     sys.exit(0)
+
 
 # This helps to execute in the development env
 if "__main__" == __name__:

@@ -60,7 +60,7 @@ def _decode_or_pass(value: str | bytes) -> str:
         return value.decode("utf-8")
     if isinstance(value, str):
         return value
-    return str(value)
+    raise TypeError(f"Expected str or bytes, got {type(value)}")
 
 
 def _extract_type_from_base_type(base_type) -> str | None:
@@ -104,7 +104,11 @@ def _get_return_type_annotation(node: Nodes.CFuncDefNode | Nodes.DefNode) -> str
 
 def _to_argument(arg: Nodes.CArgDeclNode) -> PyiArgument:
     """Converts a CArgDeclNode to an Argument."""
-    name: str = _decode_or_pass(arg.declarator.name)  # type: ignore
+    declarator: Nodes.CDeclaratorNode | Nodes.CPtrDeclaratorNode = arg.declarator  # type: ignore
+    if isinstance(declarator, Nodes.CPtrDeclaratorNode):
+        name = _decode_or_pass(declarator.base.name)  # type: ignore
+    else:
+        name = _decode_or_pass(declarator.name)  # type: ignore
     if not name:
         name = arg.base_type.name  # type: ignore
         annotation = None

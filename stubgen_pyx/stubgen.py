@@ -97,12 +97,24 @@ class StubgenPyx:
 
             extra_imports = pxd_module.imports
             extra_enums = pxd_module.scope.enums
+            extra_classes = pxd_module.scope.classes
         else:
             extra_imports = []
             extra_enums = []
+            extra_classes = []
 
         module.scope.enums += extra_enums
         module.imports += extra_imports
+
+        module_class_names = {
+            class_element.name for class_element in module.scope.classes
+        }
+
+        module.scope.classes += [
+            extra_class
+            for extra_class in extra_classes
+            if extra_class.name not in module_class_names
+        ]
 
         module.imports.append(
             PyiImport(
@@ -113,8 +125,9 @@ class StubgenPyx:
         content = self.builder.build_module(module)
         return postprocessing_pipeline(content, self.config, pyx_path).strip()
 
-    def convert_glob(self, pyx_file_pattern: str,
-                     output_dir: Path | None = None) -> list[ConversionResult]:
+    def convert_glob(
+        self, pyx_file_pattern: str, output_dir: Path | None = None
+    ) -> list[ConversionResult]:
         """Converts a glob pattern of .pyx files to .pyi files.
 
         Args:
@@ -136,9 +149,9 @@ class StubgenPyx:
         logger.info(f"Found {len(pyx_files)} file(s) to convert")
 
         for pyx_path in (Path(_pyx_file) for _pyx_file in pyx_files):
-            pyi_path = (output_dir / pyx_path.with_suffix(".pyi").name
-                        if output_dir
-                        else None)
+            pyi_path = (
+                output_dir / pyx_path.with_suffix(".pyi").name if output_dir else None
+            )
             result = self._convert_single_file(pyx_path, pyi_path)
             results.append(result)
 
@@ -147,8 +160,9 @@ class StubgenPyx:
 
         return results
 
-    def _convert_single_file(self, pyx_file_path: Path,
-                             pyi_file_path: Path | None = None) -> ConversionResult:
+    def _convert_single_file(
+        self, pyx_file_path: Path, pyi_file_path: Path | None = None
+    ) -> ConversionResult:
         """Convert a single .pyx file to .pyi format.
 
         Args:

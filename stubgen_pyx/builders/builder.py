@@ -170,6 +170,16 @@ class Builder:
             if not enum_content:
                 continue
             output += f"{enum_content}\n\n"
+        if scope.enums:
+            output += "\n"
+
+        for element in scope.classes:
+            class_content = self.build_class(element)
+            if not class_content:
+                continue
+            output += f"{class_content}\n\n"
+        if scope.classes:
+            output += "\n"
 
         for element in scope.assignments:
             assignment_content = self.build_assignment(element)
@@ -185,14 +195,6 @@ class Builder:
                 continue
             output += f"\n{function_content}\n"
         if scope.functions:
-            output += "\n"
-
-        for element in scope.classes:
-            class_content = self.build_class(element)
-            if not class_content:
-                continue
-            output += f"\n{class_content}\n"
-        if scope.classes:
             output += "\n"
 
         return output or None

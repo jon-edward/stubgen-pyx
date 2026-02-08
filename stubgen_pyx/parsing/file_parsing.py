@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import tokenize
 
-from .preprocess import remove_indices, tokenize_py, line_col_to_offset
+from .preprocess import remove_indices, tokenize_py, LineColConverter
 
 
 def file_parsing_preprocess(source: Path, code: str) -> str:
@@ -53,9 +53,11 @@ def _try_parse_string(code: str) -> str | None:
 
 
 def _get_includes(source: Path, code: str) -> list[_Include]:
-    """Get character spans of all strings (reversed for safe removal)."""
+    """Get character spans of all include directives (reversed for safe removal)."""
     results = []
     last_token: tokenize.TokenInfo | None = None
+
+    line_converter = LineColConverter(code)
     for token in tokenize_py(code):
         if (
             token.type == tokenize.STRING
@@ -69,16 +71,16 @@ def _get_includes(source: Path, code: str) -> list[_Include]:
                 last_token = token
                 continue
 
-            start = line_col_to_offset(code, last_token.start)
-            end = line_col_to_offset(code, token.end)
-
             include_path = source.parent / include_str
             if not include_path.is_file():
                 last_token = token
                 continue
 
-            results.append(_Include(Path(include_path), start, end))
+            start = line_converter.line_col_to_offset(last_token.start)
+            end = line_converter.line_col_to_offset(token.end)
+            results.append(_Include(include_path, start, end))
         last_token = token
+
     results.reverse()
     return results
 
@@ -86,12 +88,15 @@ def _get_includes(source: Path, code: str) -> list[_Include]:
 def _get_equals_star_indices(code: str) -> list[tuple[int, int]]:
     results = []
     last_token: tokenize.TokenInfo | None = None
+
+    line_converter = LineColConverter(code)
     for token in tokenize_py(code):
         if token.string == "*" and last_token and last_token.string == "=":
-            start = line_col_to_offset(code, token.start)
-            end = line_col_to_offset(code, token.end)
+            start = line_converter.line_col_to_offset(token.start)
+            end = line_converter.line_col_to_offset(token.end)
             results.append((start, end))
         last_token = token
+
     results.reverse()
     return results
 
