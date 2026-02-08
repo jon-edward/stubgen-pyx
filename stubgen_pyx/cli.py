@@ -31,6 +31,7 @@ Examples:
 
     parser.add_argument(
         "--version",
+        "-V",
         action="version",
         version=f"%(prog)s {__version__}",
     )
