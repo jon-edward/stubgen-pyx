@@ -17,11 +17,13 @@ def temp_dir():
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
 
+
 @pytest.fixture
 def temp_outdir():
     """Create a temporary directory for test files."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
+
 
 def test_convert_empty_pyx_file(temp_dir):
     """Test converting a minimal .pyx file."""
