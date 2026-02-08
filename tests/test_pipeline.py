@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 
-import pytest
 
 from stubgen_pyx.postprocessing.pipeline import (
     postprocessing_pipeline,

@@ -12,7 +12,7 @@ class BaseClass:
 class ChildClass(BaseClass):
     def c(self) -> int:
         return self.a
-    
+
     def d(self) -> int:
         return self.b()
 

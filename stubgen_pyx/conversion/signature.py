@@ -67,7 +67,7 @@ def _extract_type_from_base_type(base_type) -> str | None:
         if base_type.name is not None:
             return _decode_or_pass(base_type.name)
         if base_type.base_type_node is not None:
-            name = f".".join(
+            name = ".".join(
                 base_type.base_type_node.module_path + [base_type.base_type_node.name]
             )
             return name

@@ -46,22 +46,22 @@ cdef class TestClass:
         """
         self.a = imported_func()
         self._test_class_2 = TestClass2()
-    
+
     def test_class_2(self) -> TestClass2:
         return self._test_class_2
-    
+
     cpdef b(self):
         """
         A docstring for b
         """
         return self.a
-    
+
     def c(self):
         """
         A docstring for c
         """
         return self.a
-    
+
     cdef d(self):
         """
         A docstring for d (this should be ignored)
@@ -88,6 +88,6 @@ cpdef ImportedClass imported_class_test():
 def print_dict(d: dict) -> List[bint]:
     """
     Follows imports.
-    """  
+    """
     pprint.pprint(d)
     return [False, False, True]

@@ -1,18 +1,16 @@
-name: Test Build
+name: Upload coverage
 
 on: [push, pull_request]
 
 jobs:
-  test:
-    strategy:
-      matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12"]
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+  coverage:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - name: Install uv
         uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.11"
       - name: Install Python and package
         run: |
           uv python install ${{ matrix.python-version }}
@@ -20,4 +18,8 @@ jobs:
           uv pip install .[test]
       - name: Test with pytest
         run: |
-          uv run pytest --cov=stubgen_pyx tests/
+          uv run pytest
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}

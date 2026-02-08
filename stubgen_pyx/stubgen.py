@@ -14,7 +14,6 @@ from .builders.builder import Builder
 from .parsing.parser import parse_pyx, path_to_module_name
 from .postprocessing.pipeline import postprocessing_pipeline
 from .models.pyi_elements import PyiImport
-from ._version import __version__
 
 
 logger = logging.getLogger(__name__)
@@ -117,7 +116,7 @@ class StubgenPyx:
 
         module.imports.append(
             PyiImport(
-                statement=f"from __future__ import annotations",
+                statement="from __future__ import annotations",
             )
         )
 

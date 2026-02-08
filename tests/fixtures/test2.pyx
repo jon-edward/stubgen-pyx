@@ -40,10 +40,10 @@ cdef class ImportedClass:
         A docstring for __init__
         """
         self._private_field = 1
-    
+
     cpdef int public_method(self):
         return self._private_field
-    
+
     @property
     def public_field(self) -> int:
         return self._private_field

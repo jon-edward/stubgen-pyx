@@ -22,7 +22,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7.4.0", "coverage>=7.2.7"]
+test = ["pytest>=7.4.0", "pytest-cov>=7.0.0"]
 
 [project.urls]
 Homepage = "https://github.com/jon-edward/stubgen-pyx"
@@ -36,5 +36,6 @@ include = ["stubgen_pyx*"]
 
 [dependency-groups]
 dev = [
+   "pre-commit>=4.3.0",
    "ruff>=0.14.10",
 ]

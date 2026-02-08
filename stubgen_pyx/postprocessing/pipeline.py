@@ -78,7 +78,7 @@ def _combined_import_transform(
 
     if deduplicate:
         tree = _DuplicateImportRemover().visit(tree)
-    
+
     if normalize:
         tree = _NameNormalizer().visit(tree)
 

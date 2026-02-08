@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import pytest
 
 from stubgen_pyx.config import StubgenPyxConfig
 
@@ -38,7 +37,7 @@ def test_config_custom_values():
 def test_config_post_init_warning_all_disabled(caplog):
     """Test that warning is logged when all postprocessing is disabled."""
     with caplog.at_level(logging.WARNING):
-        config = StubgenPyxConfig(
+        StubgenPyxConfig(
             no_sort_imports=True,
             no_trim_imports=True,
             no_normalize_names=True,
@@ -50,5 +49,5 @@ def test_config_post_init_warning_all_disabled(caplog):
 def test_config_post_init_info_continue_on_error(caplog):
     """Test that info is logged when continue_on_error is enabled."""
     with caplog.at_level(logging.INFO):
-        config = StubgenPyxConfig(continue_on_error=True)
+        StubgenPyxConfig(continue_on_error=True)
     assert "Continuing on errors" in caplog.text
