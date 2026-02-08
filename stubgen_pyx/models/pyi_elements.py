@@ -1,7 +1,4 @@
-"""
-This module contains the dataclasses that represent the elements of the AST
-that are used to generate the pyi file.
-"""
+"""Dataclasses representing AST elements used to generate .pyi stub files."""
 
 from __future__ import annotations
 
@@ -9,14 +6,15 @@ from dataclasses import dataclass, field
 import re
 
 
-@dataclass
+_IMPORT_RE = re.compile(r"\bcimport\b")
+
+
+@dataclass(slots=True)
 class PyiElement:
-    """
-    Base class for all elements of the AST.
-    """
+    """Base class for all AST elements."""
 
 
-@dataclass
+@dataclass(slots=True)
 class PyiArgument(PyiElement):
     """Represents a function argument."""
 
@@ -25,7 +23,7 @@ class PyiArgument(PyiElement):
     annotation: str | None = None
 
 
-@dataclass
+@dataclass(slots=True)
 class PyiSignature(PyiElement):
     """Represents a function signature."""
 
@@ -37,7 +35,7 @@ class PyiSignature(PyiElement):
     num_kwonly_args: int = 0
 
 
-@dataclass
+@dataclass(slots=True)
 class PyiFunction(PyiElement):
     """Represents a function or method."""
 
@@ -48,27 +46,27 @@ class PyiFunction(PyiElement):
     decorators: list[str] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(slots=True)
 class PyiStatement(PyiElement):
     """Represents a statement that should be included in the pyi file as-is."""
 
     statement: str
 
 
-@dataclass
+@dataclass(slots=True)
 class PyiAssignment(PyiStatement):
     """Represents an assignment statement that should be included in the pyi file as-is."""
 
 
-@dataclass
+@dataclass(slots=True)
 class PyiImport(PyiStatement):
     """Represents an import statement. The `cimport` keyword is replaced with `import`."""
 
     def __post_init__(self):
-        self.statement = re.sub(r"\bcimport\b", "import", self.statement)
+        self.statement = _IMPORT_RE.sub("import", self.statement)
 
 
-@dataclass
+@dataclass(slots=True)
 class PyiScope(PyiElement):
     """Represents a scope (module or class context)."""
 
@@ -78,7 +76,7 @@ class PyiScope(PyiElement):
     enums: list[PyiEnum] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(slots=True)
 class PyiClass(PyiElement):
     """Represents a Python class."""
 
@@ -90,7 +88,7 @@ class PyiClass(PyiElement):
     scope: PyiScope = field(default_factory=PyiScope)
 
 
-@dataclass
+@dataclass(slots=True)
 class PyiEnum(PyiElement):
     """Represents a cdef enum."""
 
@@ -98,7 +96,7 @@ class PyiEnum(PyiElement):
     names: list[str] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(slots=True)
 class PyiModule(PyiElement):
     """Represents a Python module."""
 

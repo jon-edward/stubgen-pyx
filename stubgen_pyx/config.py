@@ -1,6 +1,4 @@
-"""
-Configuration for stubgen_pyx.
-"""
+"""Configuration for stubgen-pyx code generation."""
 
 import logging
 from dataclasses import dataclass
@@ -11,18 +9,17 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class StubgenPyxConfig:
-    """
-    Configuration for stubgen_pyx.
+    """Options controlling .pyi generation behavior.
 
     Attributes:
-        no_sort_imports: Skip sorting imports
-        no_trim_imports: Skip trimming unused imports
-        no_pxd_to_stubs: Skip including .pxd file contents
-        no_normalize_names: Skip normalizing Cython type names
-        no_deduplicate_imports: Skip deduplicating imports
-        exclude_epilog: Skip adding generation epilog comment
-        continue_on_error: Continue processing even if a file fails
-        verbose: Enable verbose logging output
+        no_sort_imports: Skip import sorting.
+        no_trim_imports: Skip removing unused imports.
+        no_pxd_to_stubs: Skip merging .pxd file contents.
+        no_normalize_names: Skip normalizing Cython type names.
+        no_deduplicate_imports: Skip deduplicating imports.
+        exclude_epilog: Skip adding generation epilog comment.
+        continue_on_error: Continue processing files that failed.
+        verbose: Enable verbose logging.
     """
 
     no_sort_imports: bool = False
@@ -35,8 +32,7 @@ class StubgenPyxConfig:
     verbose: bool = False
 
     def __post_init__(self):
-        """Validate configuration options."""
-        # Log warning if all postprocessing is disabled
+        """Validate configuration and log warnings for unusual settings."""
         if all(
             [
                 self.no_sort_imports,
@@ -49,6 +45,5 @@ class StubgenPyxConfig:
                 "All postprocessing steps are disabled. Output may be verbose."
             )
 
-        # Log info if error handling is enabled
         if self.continue_on_error:
             logger.info("Continuing on errors - failed files will be skipped")

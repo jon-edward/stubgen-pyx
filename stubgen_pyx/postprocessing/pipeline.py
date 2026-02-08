@@ -1,4 +1,7 @@
-"""Postprocessing pipeline."""
+"""Post-processing pipeline for generated .pyi files.
+
+Applies transformations like import normalization, trimming, and sorting.
+"""
 
 from __future__ import annotations
 
@@ -18,26 +21,22 @@ logger = logging.getLogger(__name__)
 def postprocessing_pipeline(
     pyi_code: str, config: StubgenPyxConfig, pyx_path: Path | None = None
 ) -> str:
-    """
-    Apply postprocessing transformations to generated .pyi code.
+    """Apply post-processing transformations to .pyi code.
 
-    This pipeline optimizes by combining multiple AST passes where possible,
-    reducing the number of times the tree is traversed.
+    Optimizes by combining multiple AST passes where possible.
 
     Args:
-        pyi_code: The generated .pyi code to postprocess
-        config: Configuration options for postprocessing
-        pyx_path: Optional path to the source .pyx file for epilog
+        pyi_code: Generated .pyi code to postprocess.
+        config: Configuration options for processing.
+        pyx_path: Optional source file path for epilog comments.
 
     Returns:
-        The postprocessed .pyi code as a string
+        Processed .pyi code after all enabled transformations.
     """
     pyi_ast = ast.parse(pyi_code)
 
-    # Collect names for trimming (must be done before normalization alters names)
     used_names = collect_names(pyi_ast) if not config.no_trim_imports else None
 
-    # Combine import-related operations into a single transformation pass
     if (
         not config.no_deduplicate_imports
         or not config.no_trim_imports
@@ -51,7 +50,6 @@ def postprocessing_pipeline(
             deduplicate=not config.no_deduplicate_imports,
         )
     else:
-        # Still apply normalization if imports aren't being touched
         if not config.no_normalize_names:
             pyi_ast = normalize_names(pyi_ast)
 
@@ -73,23 +71,18 @@ def _combined_import_transform(
     normalize: bool = True,
     deduplicate: bool = True,
 ) -> ast.AST:
-    """
-    Combine multiple import-related AST transformations into a single pass.
-
-    This reduces tree traversal overhead when multiple transformations are needed.
-    """
+    """Combine import transformations into a single AST pass for efficiency."""
     from .normalize_names import _NameNormalizer
     from .trim_imports import _UnusedImportRemover
     from .deduplicate_imports import _DuplicateImportRemover
 
-    # Apply transformations in the most efficient order
     if deduplicate:
         tree = _DuplicateImportRemover().visit(tree)
+    
+    if normalize:
+        tree = _NameNormalizer().visit(tree)
 
     if trim_unused and used_names is not None:
         tree = _UnusedImportRemover(used_names).visit(tree)
-
-    if normalize:
-        tree = _NameNormalizer().visit(tree)
 
     return tree

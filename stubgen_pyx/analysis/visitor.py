@@ -1,6 +1,4 @@
-"""
-Visits and collects Cython AST nodes.
-"""
+"""AST visitors for collecting Cython nodes during tree traversal."""
 
 from __future__ import annotations
 
@@ -12,51 +10,48 @@ from Cython.Compiler.Visitor import TreeVisitor
 
 @dataclass
 class ScopeVisitor(TreeVisitor):
-    """Visits and collects Cython AST nodes in a scope."""
+    """Traverses and collects Cython AST nodes in a scope.
+
+    Attributes:
+        node: The root node to visit.
+        assignments: Collected variable assignments and annotated names.
+        py_functions: Collected Python (def) function definitions.
+        cdef_functions: Collected Cython (cdef) function definitions.
+        classes: Collected class definitions.
+        enums: Collected enum definitions.
+    """
 
     node: Nodes.Node
-    """The node to visit."""
-
     assignments: list[Nodes.SingleAssignmentNode] = field(
         default_factory=list, init=False
     )
-    """A list of collected assignment nodes."""
-
     py_functions: list[Nodes.DefNode] = field(default_factory=list, init=False)
-    """A list of collected Python function nodes."""
-
     cdef_functions: list[Nodes.CFuncDefNode] = field(default_factory=list, init=False)
-    """A list of collected C function nodes."""
-
     classes: list[ClassVisitor] = field(default_factory=list, init=False)
-    """A list of collected class nodes."""
-
     enums: list[Nodes.CEnumDefNode] = field(default_factory=list, init=False)
-    """A list of collected enum nodes."""
 
     def __post_init__(self):
         super().__init__()
         self.visitchildren(self.node)
 
     def visit_Node(self, node):
-        """Default visitor for generic nodes."""
+        """Generic node visitor."""
         return node
 
     def visit_CEnumDefNode(self, node):
-        """Visits Cython enum definition nodes."""
+        """Collect public enums."""
         if not node.create_wrapper:
-            # Only Python-visible enums
             return node
         self.enums.append(node)
         return node
 
     def visit_StatListNode(self, node):
-        """Visits statement list nodes and their children."""
+        """Traverse statement lists."""
         self.visitchildren(node)
         return node
 
     def visit_SingleAssignmentNode(self, node):
-        """Visits assignment nodes, discarding import assignments."""
+        """Collect non-import assignments."""
         if isinstance(node.rhs, ExprNodes.ImportNode):
             return node
         if isinstance(node.lhs, ExprNodes.NameNode):
@@ -64,7 +59,7 @@ class ScopeVisitor(TreeVisitor):
         return node
 
     def visit_ExprStatNode(self, node):
-        """Visits expression statement nodes."""
+        """Collect annotated name expressions."""
         if (
             isinstance(node.expr, ExprNodes.NameNode)
             and node.expr.annotation is not None
@@ -73,24 +68,23 @@ class ScopeVisitor(TreeVisitor):
         return node
 
     def visit_PyClassDefNode(self, node):
-        """Visits Python class definition nodes."""
+        """Collect Python class definitions."""
         self.classes.append(ClassVisitor(node=node))
         return node
 
     def visit_CClassDefNode(self, node):
-        """Visits Cython extension type (cdef class) nodes."""
+        """Collect Cython extension type (cdef class) definitions."""
         self.classes.append(ClassVisitor(node=node))
         return node
 
     def visit_DefNode(self, node):
-        """Visits Python function definition nodes."""
+        """Collect Python function definitions."""
         self.py_functions.append(node)
         return node
 
     def visit_CFuncDefNode(self, node):
-        """Visits cpdef function definition nodes."""
+        """Collect Python-visible (cpdef) function definitions."""
         if not node.declarator.overridable:
-            # Only cdef, not public to Python
             return node
         self.cdef_functions.append(node)
         return node

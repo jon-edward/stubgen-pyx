@@ -1,6 +1,4 @@
-"""
-Removes all but the last import statement that provides the same name.
-"""
+"""Removes duplicate import statements, keeping only the last occurrence."""
 
 from __future__ import annotations
 
@@ -9,17 +7,16 @@ from dataclasses import dataclass, field
 
 
 def deduplicate_imports(node: ast.AST) -> ast.Module:
+    """Remove duplicate imports from an AST, keeping the last occurrence."""
     return _DuplicateImportRemover().visit(node)
 
 
 @dataclass
 class _DuplicateImportRemover(ast.NodeTransformer):
-    """
-    Removes all but the last import statement that provides the same name.
+    """Remove all but the last import of each name.
 
-    In Python, if a name is imported multiple times, the last import wins.
-    This transformer removes earlier imports of the same name, keeping only
-    the final one.
+    In Python, when a name is imported multiple times, the last import wins.
+    This removes earlier imports, keeping only the final one.
     """
 
     name_to_imports: dict[
@@ -28,16 +25,13 @@ class _DuplicateImportRemover(ast.NodeTransformer):
     nodes_to_remove: set[ast.AST] = field(default_factory=set)
 
     def visit_Module(self, node: ast.Module) -> ast.Module:
-        """Process the module, tracking all imports first."""
-        # First pass: collect all imports and their positions
+        """First pass: collect imports. Second pass: remove duplicates."""
         for idx, stmt in enumerate(node.body):
             if isinstance(stmt, (ast.Import, ast.ImportFrom)):
                 self._register_import(stmt, idx)
 
-        # Determine which imports to remove (all but the last)
         self._mark_duplicates_for_removal()
 
-        # Second pass: remove marked imports
         new_body = []
         for idx, stmt in enumerate(node.body):
             if stmt not in self.nodes_to_remove:
@@ -47,25 +41,21 @@ class _DuplicateImportRemover(ast.NodeTransformer):
         return node
 
     def _register_import(self, node: ast.Import | ast.ImportFrom, idx: int):
-        """Register an import statement and track what names it provides."""
+        """Track all imports and the names they provide."""
         if isinstance(node, ast.Import):
             for alias in node.names:
-                # The name available in the namespace
                 name = alias.asname if alias.asname else alias.name
                 if name not in self.name_to_imports:
                     self.name_to_imports[name] = []
                 self.name_to_imports[name].append((node, idx, alias))
 
         elif isinstance(node, ast.ImportFrom):
-            # For `from x import *`, use module name as the key to only deduplicate exact matches
             if any(alias.name == "*" for alias in node.names):
                 key = f"_star_import_:{node.module}"
                 if key not in self.name_to_imports:
                     self.name_to_imports[key] = []
-                # Store the entire import statement for star imports
                 self.name_to_imports[key].append((node, idx, node.names[0]))
             else:
-                # For regular imports, track each imported name
                 for alias in node.names:
                     name = alias.asname if alias.asname else alias.name
                     if name not in self.name_to_imports:
@@ -73,20 +63,17 @@ class _DuplicateImportRemover(ast.NodeTransformer):
                     self.name_to_imports[name].append((node, idx, alias))
 
     def _mark_duplicates_for_removal(self):
-        """Mark all but the last import of each name for removal"""
+        """Mark all but the last import of each name for removal."""
         for _, imports in self.name_to_imports.items():
             if len(imports) <= 1:
                 continue
 
-            # Sort by index to find the last one
             imports.sort(key=lambda x: x[1])
 
-            # Mark all but the last for removal
             for node, _, alias in imports[:-1]:
                 if len(node.names) == 1:
                     self.nodes_to_remove.add(node)
                 else:
-                    if alias in node.names:
-                        node.names.remove(alias)
+                    node.names[:] = [a for a in node.names if a is not alias]
                     if not node.names:
                         self.nodes_to_remove.add(node)

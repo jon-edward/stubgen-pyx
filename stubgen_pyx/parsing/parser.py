@@ -1,6 +1,7 @@
-"""Parser for Cython modules using Cython compiler internals.
+"""Cython module parser using Cython compiler internals.
 
-This performs preprocessing of Cython code before parsing. See `preprocess.py` for details.
+Parses Cython code after preprocessing for directives and pragmas.
+See `preprocess.py` for preprocessing details.
 """
 
 from __future__ import annotations
@@ -21,11 +22,15 @@ Errors.init_thread()
 
 @dataclass
 class ParsedSource:
-    source: str
-    """The source code after preprocessing."""
+    """Parsed source code and its AST.
 
+    Attributes:
+        source: The preprocessed source code text.
+        source_ast: The Cython compiler AST.
+    """
+
+    source: str
     source_ast: ModuleNode
-    """The AST of the source code."""
 
 
 _DEFAULT_MODULE_NAME = "__pyx_module__"
@@ -34,7 +39,18 @@ _DEFAULT_MODULE_NAME = "__pyx_module__"
 def parse_pyx(
     source: str, module_name: str | None = None, pyx_path: Path | None = None
 ) -> ParsedSource:
-    """Parse a Cython module into a ParseResult object."""
+    """Parse Cython source code.
+
+    Applies file and string preprocessing, then parses with Cython compiler.
+
+    Args:
+        source: Cython source code string.
+        module_name: Optional module name for error messages.
+        pyx_path: Optional file path for context and preprocessing.
+
+    Returns:
+        ParsedSource with preprocessed code and AST.
+    """
     module_name = module_name or _DEFAULT_MODULE_NAME
 
     if pyx_path:
@@ -45,7 +61,7 @@ def parse_pyx(
 
 
 def _parse_str(source: str, module_name: str) -> ParsedSource:
-    """Parse a Cython module into a ParsedSource object."""
+    """Internal: parse preprocessed source with Cython compiler."""
     context = StringParseContext(module_name, cpp=True)
 
     source = preprocess(source)
@@ -58,9 +74,13 @@ def _parse_str(source: str, module_name: str) -> ParsedSource:
 
 
 def _normalize_part(part: str) -> str:
+    """Replace special characters with underscores for module names."""
     return part.replace("-", "_").replace(".", "_").replace(" ", "_")
 
 
 def path_to_module_name(path: Path) -> str:
-    """Convert a path to a module name for debugging."""
+    """Convert a file path to a Python module name.
+
+    Handles path separators and special characters for debugging context.
+    """
     return ".".join([_normalize_part(part) for part in path.with_suffix("").parts])

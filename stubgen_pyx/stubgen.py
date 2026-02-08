@@ -22,23 +22,23 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ConversionResult:
-    """Result of a file conversion operation."""
+    """Result of converting a single .pyx file to .pyi.
+
+    Attributes:
+        success: Whether the conversion completed without error.
+        pyx_file: Path to the source .pyx file.
+        pyi_file: Path to the generated .pyi file.
+        error: Exception if conversion failed, otherwise None.
+    """
 
     success: bool
-    """Whether the conversion succeeded."""
-
     pyx_file: Path
-    """Path to the source .pyx file."""
-
     pyi_file: Path
-    """Path to the generated .pyi file."""
-
     error: Exception | None = None
-    """Exception if conversion failed, None otherwise."""
 
     @property
     def status_message(self) -> str:
-        """Human-readable status message."""
+        """Human-readable status summary."""
         if self.success:
             return f"Converted {self.pyx_file} to {self.pyi_file}"
         return f"Failed to convert {self.pyx_file}: {self.error}"
@@ -46,38 +46,36 @@ class ConversionResult:
 
 @dataclass
 class StubgenPyx:
-    """
-    StubgenPyx converts .pyx files to .pyi files.
+    """Primary API for converting Cython .pyx files to .pyi stub files.
 
-    This tool parses Cython source files, extracts type information,
-    and generates Python stub files (.pyi) for type checking.
+    Parses Cython source, extracts types, and generates type stubs with optional
+    postprocessing (import normalization, trimming, etc.).
+
+    Attributes:
+        converter: Converts Cython AST visitors to PyiElements.
+        builder: Builds .pyi text from PyiElements.
+        config: Configuration controlling generation behavior.
     """
 
     converter: Converter = field(default_factory=Converter)
-    """Converter converts Visitors to PyiElements."""
-
     builder: Builder = field(default_factory=Builder)
-    """Builder builds .pyi files from PyiElements."""
-
     config: StubgenPyxConfig = field(default_factory=StubgenPyxConfig)
-    """Configuration for StubgenPyx."""
 
     def convert_str(
         self, pyx_str: str, pxd_str: str | None = None, pyx_path: Path | None = None
     ) -> str:
-        """
-        Converts a .pyx file string to a .pyi file string.
+        """Convert Cython source strings to .pyi stub code.
 
         Args:
-            pyx_str: The source Cython code
-            pxd_str: Optional companion .pxd file content
-            pyx_path: Optional path for better error messages and module names
+            pyx_str: The source Cython code.
+            pxd_str: Optional companion .pxd file content to merge.
+            pyx_path: Optional file path for context and error messages.
 
         Returns:
-            The generated .pyi stub file content
+            Generated .pyi stub file content.
 
         Raises:
-            Various exceptions from parsing, conversion, or building steps
+            Various exceptions from parsing, conversion, or building.
         """
         module_name = path_to_module_name(pyx_path) if pyx_path else None
         parse_result = parse_pyx(pyx_str, module_name=module_name, pyx_path=pyx_path)
@@ -86,7 +84,6 @@ class StubgenPyx:
         module = self.converter.convert_module(module_visitor, parse_result.source)
 
         if pxd_str and not self.config.no_pxd_to_stubs:
-            # Convert extra elements from .pxd
             pxd_parse_result = parse_pyx(
                 pxd_str, module_name=module_name, pyx_path=pyx_path
             )
@@ -128,16 +125,15 @@ class StubgenPyx:
     def convert_glob(
         self, pyx_file_pattern: str, output_dir: Path | None = None
     ) -> list[ConversionResult]:
-        """Converts a glob pattern of .pyx files to .pyi files.
+        """Convert multiple .pyx files matching a glob pattern.
 
         Args:
-            pyx_file_pattern: Glob pattern for files to convert (e.g., "**/*.pyx")
-            output_dir: Path to the output directory where pyi files shall be
-                written. If None, the pyi files will be collocated next to each
-                corresponding pyx file.
+            pyx_file_pattern: Glob pattern (e.g., "**/*.pyx", "src/*.pyx").
+            output_dir: Optional output directory for .pyi files. If None,
+                .pyi files are placed next to their source files.
 
         Returns:
-            List of ConversionResult objects with status for each file
+            List of ConversionResult objects with status for each file.
         """
         pyx_files = glob.glob(pyx_file_pattern, recursive=True)
         results: list[ConversionResult] = []
@@ -163,21 +159,22 @@ class StubgenPyx:
     def _convert_single_file(
         self, pyx_file_path: Path, pyi_file_path: Path | None = None
     ) -> ConversionResult:
-        """Convert a single .pyx file to .pyi format.
+        """Convert a single .pyx file, optionally merging a companion .pxd file.
+
+        Reads the .pyx file and companion .pxd (if it exists), converts them,
+        and writes the resulting .pyi file.
 
         Args:
-            pyx_file_path: Path to the input .pyx file
-            pyi_file_path: Path to the output .pyi file to produce
-                           If not specified, the output file will be collocated
-                           next to the input pyx file.
+            pyx_file_path: Path to the input .pyx file.
+            pyi_file_path: Path to write the output .pyi file. If None,
+                defaults to the same location as the .pyx file with .pyi extension.
 
         Returns:
-            ConversionResult with success status and any errors
+            ConversionResult with success status and any error details.
         """
         try:
             logger.debug(f"Converting {pyx_file_path}")
 
-            # Read pyx file
             try:
                 pyx_str = pyx_file_path.read_text(encoding="utf-8")
             except UnicodeDecodeError as e:
@@ -185,7 +182,6 @@ class StubgenPyx:
             except FileNotFoundError as e:
                 raise ValueError(f"File not found: {pyx_file_path}") from e
 
-            # Try to read companion .pxd file
             pxd_str = None
             pxd_file_path = pyx_file_path.with_suffix(".pxd")
             if (
@@ -199,14 +195,12 @@ class StubgenPyx:
                 except UnicodeDecodeError as e:
                     logger.warning(f"Could not read .pxd file {pxd_file_path}: {e}")
 
-            # Convert to pyi
             pyi_content = self.convert_str(
                 pyx_str=pyx_str,
                 pxd_str=pxd_str,
                 pyx_path=pyx_file_path,
             )
 
-            # Write pyi file
             pyi_file_path = pyi_file_path or pyx_file_path.with_suffix(".pyi")
             try:
                 pyi_file_path.write_text(pyi_content, encoding="utf-8")

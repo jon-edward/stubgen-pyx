@@ -33,24 +33,21 @@ from .conversion_utils import (
 
 @dataclass
 class Converter:
-    """
-    Converts Cython AST visitors to PyiElements for code generation.
+    """Converts Cython AST visitors to PyiElements for code generation.
 
-    This class handles the transformation of Cython Compiler AST nodes
-    (as collected by visitors) into intermediate representations (PyiElements)
-    that can be processed and built into Python stub files.
+    Transforms Cython Compiler AST nodes (as collected by visitors) into
+    intermediate PyiElement representations for building .pyi stub files.
     """
 
     def convert_module(self, visitor: ModuleVisitor, source_code: str) -> PyiModule:
-        """
-        Convert a ModuleVisitor to a PyiModule.
+        """Convert a ModuleVisitor to a PyiModule.
 
         Args:
-            visitor: The module visitor containing AST nodes
-            source_code: The original source code
+            visitor: Module visitor containing AST information.
+            source_code: The original source code text.
 
         Returns:
-            PyiModule representation of the module
+            PyiModule representation with imports and scope.
         """
         doc = docstring_to_string(visitor.node.doc) if visitor.node.doc else None
         return PyiModule(
@@ -62,7 +59,7 @@ class Converter:
     def convert_imports(
         self, visitor: ImportVisitor, source_code: str
     ) -> list[PyiImport]:
-        """Convert import nodes to PyiImport objects."""
+        """Convert import visitor nodes to PyiImport objects."""
         return [self.convert_import(node, source_code) for node in visitor.imports]
 
     def convert_import(self, node: Nodes.Node, source_code: str) -> PyiImport:
@@ -70,11 +67,9 @@ class Converter:
         return PyiImport(get_source(source_code, node))
 
     def convert_scope(self, visitor: ScopeVisitor, source_code: str) -> PyiScope:
-        """
-        Convert a ScopeVisitor to a PyiScope.
+        """Convert a ScopeVisitor to a PyiScope.
 
-        Combines assignments, functions, classes, and enums from the visitor
-        into a single scope representation.
+        Combined assignments, functions, classes, and enums from the visitor.
         """
         return PyiScope(
             assignments=[
@@ -97,6 +92,7 @@ class Converter:
         )
 
     def convert_class(self, class_visitor: ClassVisitor, source_code: str) -> PyiClass:
+        """Convert a ClassVisitor to a PyiClass."""
         if isinstance(class_visitor.node, Nodes.CClassDefNode):
             name: str = class_visitor.node.class_name  # type: ignore
         else:
@@ -118,6 +114,7 @@ class Converter:
     def convert_cdef_func(
         self, cdef_func: Nodes.CFuncDefNode, source_code: str
     ) -> PyiFunction:
+        """Convert a C function definition node to PyiFunction."""
         name: str = cdef_func.declarator.base.name  # type: ignore
         doc = docstring_to_string(cdef_func.doc) if cdef_func.doc else None  # type: ignore
         return PyiFunction(
@@ -129,6 +126,7 @@ class Converter:
         )
 
     def convert_py_func(self, node: Nodes.DefNode, source_code: str) -> PyiFunction:
+        """Convert a Python function definition node to PyiFunction."""
         name = node.name  # type: ignore
         doc = docstring_to_string(node.doc) if node.doc else None
         return PyiFunction(
@@ -142,6 +140,7 @@ class Converter:
     def convert_assignment(
         self, assignment: Nodes.AssignmentNode | Nodes.ExprStatNode, source_code: str
     ) -> PyiAssignment:
+        """Convert an assignment node to PyiAssignment, extracting type annotations."""
         if isinstance(assignment, Nodes.SingleAssignmentNode):
             expr = unparse_expr(assignment.rhs)
             name: str = assignment.lhs.name  # type: ignore
@@ -169,5 +168,6 @@ class Converter:
         return PyiAssignment(get_source(source_code, assignment))
 
     def convert_enum(self, node: Nodes.CEnumDefNode) -> PyiEnum:
+        """Convert a Cython enum definition to PyiEnum."""
         name: str | None = node.name  # type: ignore
         return PyiEnum(enum_name=name, names=get_enum_names(node))

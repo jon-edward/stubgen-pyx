@@ -1,6 +1,4 @@
-"""
-Provides utility functions for converting Cython AST nodes to PyiElements.
-"""
+"""Utility functions for converting Cython AST nodes."""
 
 from __future__ import annotations
 
@@ -10,7 +8,7 @@ from Cython.Compiler import Nodes, ExprNodes
 
 
 class _LinesCache:
-    """Cache for lines of source code."""
+    """Cache for source code lines to avoid repeated splits."""
 
     def __init__(self):
         self._source: str | None = None
@@ -32,9 +30,9 @@ _lines_cache = _LinesCache()
 
 
 def get_source(source: str, node: Nodes.Node) -> str:
-    """Gets the source code lines for a Cython AST node.
+    """Extract source code for a node, dedented and trimmed.
 
-    The calculated end_pos is often inaccurate.
+    Note: Node end_pos is often inaccurate; fallback to start position if needed.
     """
     _lines_cache.source = source
     lines = _lines_cache.lines
@@ -55,14 +53,14 @@ def get_decorators(
     | Nodes.CClassDefNode
     | Nodes.PyClassDefNode,
 ) -> list[str]:
-    """Gets the decorators for a Cython AST node."""
+    """Extract decorator expressions from a function or class node."""
     if node.decorators:
         return [get_source(source, node) for node in node.decorators]
     return []
 
 
 def get_bases(node: Nodes.CClassDefNode | Nodes.PyClassDefNode) -> list[str]:
-    """Gets the bases for a Cython AST node."""
+    """Extract base class names from a class node."""
     if not node.bases:  # type: ignore
         return []
     output = []
@@ -73,7 +71,7 @@ def get_bases(node: Nodes.CClassDefNode | Nodes.PyClassDefNode) -> list[str]:
 
 
 def get_metaclass(node: Nodes.PyClassDefNode | Nodes.CClassDefNode) -> str | None:
-    """Gets the metaclass for a Cython AST node."""
+    """Extract metaclass name from a Python class node, if present."""
     if not isinstance(node, Nodes.PyClassDefNode):
         return None
     if node.metaclass and isinstance(node.metaclass, ExprNodes.NameNode):
@@ -82,12 +80,12 @@ def get_metaclass(node: Nodes.PyClassDefNode | Nodes.CClassDefNode) -> str | Non
 
 
 def get_enum_names(node: Nodes.CEnumDefNode) -> list[str]:
-    """Gets the enum names for a Cython AST node."""
+    """Extract member names from an enum definition node."""
     return [item.name for item in node.items]  # type: ignore
 
 
 def docstring_to_string(docstring: str) -> str:
-    """Converts a Cython docstring to a Python docstring."""
+    """Convert a raw docstring to a Python string literal with triple quotes."""
     first_line, *rest = docstring.splitlines(keepends=True)
     rest_joined = textwrap.dedent("".join(rest))
     docstring = f"{first_line}{rest_joined}".replace('"""', r"\"\"\"")
@@ -95,7 +93,11 @@ def docstring_to_string(docstring: str) -> str:
 
 
 def unparse_expr(node: Nodes.Node | None) -> str | None:
-    """Unparse a default argument. Returns '...' for complex expressions that can't be unparsed."""
+    """Convert a default argument expression to source code string.
+
+    Simple literals are unparsed to their string form. Complex expressions
+    are replaced with '...'.
+    """
     if node is None:
         return None
 

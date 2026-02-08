@@ -1,16 +1,13 @@
-"""
-Normalizes the names in a Python .pyi AST.
-"""
+"""Normalizes Cython type names to Python equivalents in .pyi files."""
 
 from __future__ import annotations
 
 import ast
-from dataclasses import dataclass, field
-import itertools
+from dataclasses import dataclass
 
 
 def normalize_names(tree: ast.AST) -> ast.AST:
-    """Normalizes the names in a Python .pyi AST, returning the normalized tree and the collected names of the script."""
+    """Replace Cython type names with their Python equivalents in an AST."""
     return _NameNormalizer().visit(tree)
 
 
@@ -44,15 +41,20 @@ _CYTHON_COMPLEXES: tuple[str, ...] = (
 _CYTHON_TRANSLATIONS: dict[str, str] = {
     "bint": "bool",
     "unicode": "str",
-    **{int_type: "int" for int_type in _CYTHON_INTS},
-    **{float_type: "float" for float_type in _CYTHON_FLOATS},
-    **{complex_type: "complex" for complex_type in _CYTHON_COMPLEXES},
+    "void": "None",
 }
+
+for int_type in _CYTHON_INTS:
+    _CYTHON_TRANSLATIONS[int_type] = "int"
+for float_type in _CYTHON_FLOATS:
+    _CYTHON_TRANSLATIONS[float_type] = "float"
+for complex_type in _CYTHON_COMPLEXES:
+    _CYTHON_TRANSLATIONS[complex_type] = "complex"
 
 
 @dataclass
 class _NameNormalizer(ast.NodeTransformer):
-    """Visits and normalizes the names in a Python .pyi AST, replacing Cython names with Python names."""
+    """Transform Cython type names to Python equivalents."""
 
     def visit_Name(self, node: ast.Name) -> ast.Name:
         name = _CYTHON_TRANSLATIONS.get(node.id, node.id)

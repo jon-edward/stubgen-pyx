@@ -1,6 +1,4 @@
-"""
-Provides the epilog for a stub file.
-"""
+"""Generates a comment indicating the .pyi file was auto-generated."""
 
 from __future__ import annotations
 
@@ -10,7 +8,14 @@ from .._version import __version__
 
 
 def epilog(pyx_path: Path | None) -> str:
-    """Provides the epilog for a stub file"""
+    """Create an epilog comment for the .pyi file.
+
+    Args:
+        pyx_path: Optional source file path to include in the comment.
+
+    Returns:
+        A comment line with generation tool info.
+    """
     if pyx_path is not None:
         source_desc = f" from {pyx_path}"
     else:

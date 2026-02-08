@@ -175,8 +175,9 @@ tests/fixtures/*.pyd
 tests/fixtures/*.c
 tests/fixtures/*.so
 
-# pyarrow stress test
+# stress test packages
 /arrow
+/spaCy
 
 # profiling output
 *.prof

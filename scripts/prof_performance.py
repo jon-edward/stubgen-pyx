@@ -15,7 +15,7 @@ def main():
 
     with cProfile.Profile() as pr:
         StubgenPyx().convert_glob(args.file_pattern)
-    
+
     pr.print_stats(sort="cumulative")
 
 
