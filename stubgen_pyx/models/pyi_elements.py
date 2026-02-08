@@ -9,12 +9,12 @@ import re
 _IMPORT_RE = re.compile(r"\bcimport\b")
 
 
-@dataclass(slots=True)
+@dataclass
 class PyiElement:
     """Base class for all AST elements."""
 
 
-@dataclass(slots=True)
+@dataclass
 class PyiArgument(PyiElement):
     """Represents a function argument."""
 
@@ -23,7 +23,7 @@ class PyiArgument(PyiElement):
     annotation: str | None = None
 
 
-@dataclass(slots=True)
+@dataclass
 class PyiSignature(PyiElement):
     """Represents a function signature."""
 
@@ -35,7 +35,7 @@ class PyiSignature(PyiElement):
     num_kwonly_args: int = 0
 
 
-@dataclass(slots=True)
+@dataclass
 class PyiFunction(PyiElement):
     """Represents a function or method."""
 
@@ -46,19 +46,19 @@ class PyiFunction(PyiElement):
     decorators: list[str] = field(default_factory=list)
 
 
-@dataclass(slots=True)
+@dataclass
 class PyiStatement(PyiElement):
     """Represents a statement that should be included in the pyi file as-is."""
 
     statement: str
 
 
-@dataclass(slots=True)
+@dataclass
 class PyiAssignment(PyiStatement):
     """Represents an assignment statement that should be included in the pyi file as-is."""
 
 
-@dataclass(slots=True)
+@dataclass
 class PyiImport(PyiStatement):
     """Represents an import statement. The `cimport` keyword is replaced with `import`."""
 
@@ -66,7 +66,7 @@ class PyiImport(PyiStatement):
         self.statement = _IMPORT_RE.sub("import", self.statement)
 
 
-@dataclass(slots=True)
+@dataclass
 class PyiScope(PyiElement):
     """Represents a scope (module or class context)."""
 
@@ -76,7 +76,7 @@ class PyiScope(PyiElement):
     enums: list[PyiEnum] = field(default_factory=list)
 
 
-@dataclass(slots=True)
+@dataclass
 class PyiClass(PyiElement):
     """Represents a Python class."""
 
@@ -88,7 +88,7 @@ class PyiClass(PyiElement):
     scope: PyiScope = field(default_factory=PyiScope)
 
 
-@dataclass(slots=True)
+@dataclass
 class PyiEnum(PyiElement):
     """Represents a cdef enum."""
 
@@ -96,7 +96,7 @@ class PyiEnum(PyiElement):
     names: list[str] = field(default_factory=list)
 
 
-@dataclass(slots=True)
+@dataclass
 class PyiModule(PyiElement):
     """Represents a Python module."""
 
