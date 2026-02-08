@@ -86,6 +86,8 @@ def get_enum_names(node: Nodes.CEnumDefNode) -> list[str]:
 
 def docstring_to_string(docstring: str) -> str:
     """Convert a raw docstring to a Python string literal with triple quotes."""
+    if not docstring:
+        return '""" """'
     first_line, *rest = docstring.splitlines(keepends=True)
     rest_joined = textwrap.dedent("".join(rest))
     docstring = f"{first_line}{rest_joined}".replace('"""', r"\"\"\"")
