@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stubgen-pyx"
-version = "0.2.1"
+version = "0.2.2"
 description = "Generates `.pyi` files from Cython modules in a given package directory."
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -22,7 +22,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7.4.0"]
+test = ["pytest>=7.4.0", "coverage>=7.2.7"]
 
 [project.urls]
 Homepage = "https://github.com/jon-edward/stubgen-pyx"
