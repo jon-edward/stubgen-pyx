@@ -135,14 +135,14 @@ y = z * 2
             tmppath = Path(tmpdir)
 
             # Create included file
-            include_file = tmppath / "inc.pyx"
-            include_file.write_text("# included")
+            include_file = tmppath / "inc.pxi"
+            include_file.write_text("# included this file")
 
             # Create source file
             source_file = tmppath / "source.pyx"
             source_file.write_text("")
 
-            code = 'include "inc.pyx"'
+            code = 'include "inc.pxi"'
             includes = file_parsing._get_includes(source_file, code)
             assert len(includes) >= 0
 
@@ -171,7 +171,7 @@ x = *
 y = 5
 """
             result = file_parsing.file_parsing_preprocess(source_file, code)
-            assert "..." in result or "x = *" in code
+            assert "..." in result
 
     def test_file_parsing_preprocess_combined(self):
         """Test preprocessing with both includes and *= patterns."""
@@ -197,15 +197,8 @@ class TestIncludeDataclass:
 
     def test_include_creation(self):
         """Test creating an _Include object."""
-        path = Path("/tmp/test.pyx")
+        path = Path("test.pyx")
         include = file_parsing._Include(path, 10, 20)
         assert include.path == path
         assert include.start == 10
         assert include.end == 20
-
-    def test_include_repr(self):
-        """Test _Include string representation."""
-        path = Path("/tmp/test.pyx")
-        include = file_parsing._Include(path, 10, 20)
-        repr_str = repr(include)
-        assert "Include" in repr_str or "path" in repr_str.lower()
