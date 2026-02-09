@@ -6,7 +6,7 @@ from __future__ import annotations
 from stubgen_pyx.conversion import conversion_utils
 
 
-class TestLinesCachhe:
+class TestLinesCache:
     """Test the _LinesCache class."""
 
     def test_lines_cache_initialization(self):
