@@ -123,6 +123,8 @@ class Builder:
         Returns:
             Function signature with docstring and decorators.
         """
+        if not self.include_private and self._is_private(function.name):
+            return None
         output = "".join(f"{decorator}\n" for decorator in function.decorators)
         output += f"{'async ' if function.is_async else ''}def {function.name}{self.build_signature(function.signature)}: "
         if function.doc is not None:
@@ -177,8 +179,6 @@ class Builder:
             output += "\n"
 
         for element in scope.functions:
-            if not self.include_private and self._is_private(element.name):
-                continue
             function_content = self.build_function(element)
             if not function_content:
                 continue
