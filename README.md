@@ -1,5 +1,10 @@
 # stubgen-pyx
 
+[![codecov](https://codecov.io/github/jon-edward/stubgen-pyx/graph/badge.svg?token=8APMN9M6SQ)](https://codecov.io/github/jon-edward/stubgen-pyx)
+![PyPI - Version](https://img.shields.io/pypi/v/stubgen-pyx)
+[![CodeFactor](https://www.codefactor.io/repository/github/jon-edward/stubgen-pyx/badge)](https://www.codefactor.io/repository/github/jon-edward/stubgen-pyx)
+[![Test workflow](https://github.com/jon-edward/stubgen-pyx/actions/workflows/tests.yml/badge.svg)](https://github.com/jon-edward/stubgen-pyx/actions/workflows/tests.yml)
+
 **Generate Python stub files (.pyi) from Cython source code (.pyx/.pxd)**
 
 Automatic stub file generation for Cython extensions that enables full IDE support and type checking for Cython modules.
