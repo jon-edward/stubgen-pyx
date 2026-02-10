@@ -40,7 +40,7 @@ class ScopeVisitor(TreeVisitor):
 
     def visit_CEnumDefNode(self, node):
         """Collect public enums."""
-        if not node.create_wrapper:
+        if not node.name:
             return node
         self.enums.append(node)
         return node
@@ -87,6 +87,12 @@ class ScopeVisitor(TreeVisitor):
         if not node.declarator.overridable:
             return node
         self.cdef_functions.append(node)
+        return node
+
+    def visit_CTypeDefNode(self, node):
+        """Collect simple Cython type definitions."""
+        if isinstance(node.declarator, Nodes.CNameDeclaratorNode):
+            self.assignments.append(node)
         return node
 
 
