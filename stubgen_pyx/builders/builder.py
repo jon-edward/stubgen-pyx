@@ -212,12 +212,16 @@ class Builder:
         output += f"{self.build_scope(module.scope) or ''}" or ""
         return output
 
-    def build_enum(self, enum: PyiEnum) -> str | None:
+    def build_enum(self, enum: PyiEnum | PyiAssignment) -> str | None:
         """Build an enum definition.
 
         Named enums are converted to classes with int attributes.
         Unnamed enums are generated as bare int assignments.
         """
+
+        if isinstance(enum, PyiAssignment):
+            return enum.statement
+
         if not enum.names:
             return None
 
