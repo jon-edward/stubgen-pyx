@@ -21,6 +21,13 @@ def file_parsing_preprocess(source: Path, code: str) -> str:
     return code
 
 
+def _read_file_fallback(path: Path, fallback: str) -> str:
+    try:
+        return path.read_text()
+    except (UnicodeDecodeError, FileNotFoundError):
+        return fallback
+
+
 def _expand_includes(source: Path, code: str) -> str:
     """Expand includes in Cython code."""
     includes = _get_includes(source, code)
@@ -30,7 +37,7 @@ def _expand_includes(source: Path, code: str) -> str:
             code,
             include.start,
             include.end,
-            replace_with=include.path.read_text(),
+            replace_with=_read_file_fallback(include.path, "\n"),
         )
     return code
 
@@ -72,9 +79,6 @@ def _get_includes(source: Path, code: str) -> list[_Include]:
                 continue
 
             include_path = source.parent / include_str
-            if not include_path.is_file():
-                last_token = token
-                continue
 
             start = line_converter.line_col_to_offset(last_token.start)
             end = line_converter.line_col_to_offset(token.end)
