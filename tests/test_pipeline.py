@@ -64,7 +64,6 @@ def hello() -> None:
     transformed = _combined_import_transform(
         tree,
         trim_unused=True,
-        used_names={"hello", "str"},
         normalize=True,
         deduplicate=True,
     )
@@ -87,7 +86,6 @@ def hello():
     transformed = _combined_import_transform(
         tree,
         trim_unused=True,
-        used_names={"hello"},
         normalize=False,
         deduplicate=False,
     )

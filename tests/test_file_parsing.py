@@ -126,8 +126,8 @@ y = z * 2
 
             code = 'include "nonexistent.pyx"'
             result = file_parsing._expand_includes(source_file, code)
-            # Should remain unchanged since file doesn't exist
-            assert "include" in result
+            # Should still remove include if file doesn't exist
+            assert "include" not in result
 
     def test_get_includes_valid(self):
         """Test finding valid include directives."""
