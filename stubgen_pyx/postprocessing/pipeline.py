@@ -35,8 +35,6 @@ def postprocessing_pipeline(
     """
     pyi_ast = ast.parse(pyi_code)
 
-    used_names = collect_names(pyi_ast) if not config.no_trim_imports else None
-
     if (
         not config.no_deduplicate_imports
         or not config.no_trim_imports
@@ -45,7 +43,6 @@ def postprocessing_pipeline(
         pyi_ast = _combined_import_transform(
             pyi_ast,
             trim_unused=not config.no_trim_imports,
-            used_names=used_names,
             normalize=not config.no_normalize_names,
             deduplicate=not config.no_deduplicate_imports,
         )
@@ -67,7 +64,6 @@ def postprocessing_pipeline(
 def _combined_import_transform(
     tree: ast.AST,
     trim_unused: bool = True,
-    used_names: set[str] | None = None,
     normalize: bool = True,
     deduplicate: bool = True,
 ) -> ast.AST:
@@ -81,6 +77,10 @@ def _combined_import_transform(
 
     if normalize:
         tree = _NameNormalizer().visit(tree)
+
+    used_names = None
+    if trim_unused:
+        used_names = collect_names(tree)
 
     if trim_unused and used_names is not None:
         tree = _UnusedImportRemover(used_names).visit(tree)

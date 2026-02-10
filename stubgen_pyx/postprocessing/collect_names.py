@@ -74,6 +74,9 @@ class _NameCollector(ast.NodeVisitor):
             self._try_parsed_visit(str_constant)
         return self.generic_visit(node)
 
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> ast.ImportFrom:
+        return node
+
     def visit_Attribute(self, node: ast.Attribute) -> ast.Attribute:
         """Collect module names accessed via attribute chains (e.g., os.path)."""
         names = []
