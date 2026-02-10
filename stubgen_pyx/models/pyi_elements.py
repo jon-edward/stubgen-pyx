@@ -73,7 +73,7 @@ class PyiScope(PyiElement):
     assignments: list[PyiAssignment] = field(default_factory=list)
     functions: list[PyiFunction] = field(default_factory=list)
     classes: list[PyiClass] = field(default_factory=list)
-    enums: list[PyiEnum] = field(default_factory=list)
+    enums: list[PyiEnum | PyiAssignment] = field(default_factory=list)
 
 
 @dataclass
