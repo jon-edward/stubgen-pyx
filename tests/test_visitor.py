@@ -694,3 +694,15 @@ class C:
         assert len(first_visitor.scope.py_functions) == len(
             second_visitor.scope.py_functions
         )
+
+    def test_visitor_ctypedef(self):
+        """Test CtypedefVisitor."""
+        code = """
+ctypedef int MyInt
+ctypedef float MyFloat
+ctypedef np.ndarray MyArray
+"""
+        parsed = parse_pyx(code)
+        visitor = ModuleVisitor(parsed.source_ast)
+
+        assert len(visitor.scope.assignments) >= 3

@@ -377,3 +377,34 @@ async def fetch_results() -> Dict[str, List[int]]:
         assert len(result.imports) >= 1
         assert len(result.scope.functions) >= 2
         assert len(result.scope.classes) >= 1
+
+    def test_convert_ctypedef(self):
+        """Test converting typedef."""
+        code = """
+ctypedef int MyInt
+ctypedef float MyFloat
+ctypedef np.ndarray MyArray
+"""
+        parsed = parse_pyx(code)
+        visitor = ModuleVisitor(parsed.source_ast)
+
+        converter = Converter()
+        result = converter.convert_module(visitor, parsed.source)
+
+        assert len(result.scope.assignments) >= 3
+
+    def test_convert_enum(self):
+        """Test converting enum."""
+        code = """
+cpdef enum Color:
+    RED = 1
+    GREEN = 2
+    BLUE = 3
+"""
+        parsed = parse_pyx(code)
+        visitor = ModuleVisitor(parsed.source_ast)
+
+        converter = Converter()
+        result = converter.convert_module(visitor, parsed.source)
+
+        assert len(result.scope.enums) >= 1
