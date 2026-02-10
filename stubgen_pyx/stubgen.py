@@ -96,12 +96,15 @@ class StubgenPyx:
             extra_imports = pxd_module.imports
             extra_enums = pxd_module.scope.enums
             extra_classes = pxd_module.scope.classes
+            extra_assignments = pxd_module.scope.assignments
         else:
             extra_imports = []
             extra_enums = []
             extra_classes = []
+            extra_assignments = []
 
         module.scope.enums += extra_enums
+        module.scope.assignments += extra_assignments
         module.imports += extra_imports
 
         module_class_names = {
