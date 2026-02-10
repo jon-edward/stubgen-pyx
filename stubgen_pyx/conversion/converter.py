@@ -165,9 +165,28 @@ class Converter:
 
             return PyiAssignment(f"{name} = ...")
 
+        if isinstance(assignment, Nodes.CTypeDefNode):
+            name: str = assignment.declarator.name  # type: ignore
+            if isinstance(assignment.base_type, Nodes.CSimpleBaseTypeNode):  # type: ignore
+                node = assignment.base_type  # type: ignore
+            elif isinstance(assignment.base_type, Nodes.TemplatedTypeNode):  # type: ignore
+                node = assignment.base_type.base_type_node  # type: ignore
+            else:
+                return PyiAssignment(f"{name} = ...")
+
+            if not isinstance(node, Nodes.CSimpleBaseTypeNode):
+                return PyiAssignment(f"{name} = ...")
+
+            base_name: str = node.name  # type: ignore
+            type_name = ".".join(node.module_path + [base_name])
+            return PyiAssignment(f"{name} = {type_name}")
+
         return PyiAssignment(get_source(source_code, assignment))
 
-    def convert_enum(self, node: Nodes.CEnumDefNode) -> PyiEnum:
+    def convert_enum(self, node: Nodes.CEnumDefNode) -> PyiEnum | PyiAssignment:
         """Convert a Cython enum definition to PyiEnum."""
-        name: str | None = node.name  # type: ignore
-        return PyiEnum(enum_name=name, names=get_enum_names(node))
+        if node.create_wrapper:  # type: ignore
+            name: str | None = node.name  # type: ignore
+            return PyiEnum(enum_name=name, names=get_enum_names(node))
+        # Make it usable as an alias for int
+        return PyiAssignment(f"{node.name} = int")  # type: ignore

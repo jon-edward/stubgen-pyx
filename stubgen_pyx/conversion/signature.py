@@ -65,7 +65,8 @@ def _extract_type_from_base_type(base_type) -> str | None:
     """Extract type name from a base_type node, trying multiple approaches."""
     try:
         if base_type.name is not None:
-            return _decode_or_pass(base_type.name)
+            name = ".".join(base_type.module_path + [base_type.name])
+            return name
         if base_type.base_type_node is not None:
             name = ".".join(
                 base_type.base_type_node.module_path + [base_type.base_type_node.name]
