@@ -21,11 +21,13 @@ def _create_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s .                        # Convert all .pyx files in current directory
-  %(prog)s src/ --file "**/*.pyx"   # Convert all .pyx files in src/
-  %(prog)s . --output-dir stubs/    # Write stubs to stubs/ directory
-  %(prog)s . --dry-run              # Preview conversions without writing
-  %(prog)s . --verbose              # Show detailed processing information
+  %(prog)s .                         # Convert all .pyx files in current directory
+  %(prog)s src/ --file "**/*.pyx"    # Convert all .pyx files in src/
+  %(prog)s . --output-dir stubs/     # Write stubs to stubs/ directory
+  %(prog)s . --dry-run               # Preview conversions without writing
+  %(prog)s . --verbose               # Show detailed processing information
+  %(prog)s src/ --file in.pyx --output-file out/out.pyi  # Convert a single pyx
+                                                         # file to an output file
         """,
     )
 
@@ -54,6 +56,15 @@ Examples:
     parser.add_argument(
         "--output-dir",
         help="Directory to write .pyi files (default: same as source)",
+        type=Path,
+        default=None,
+    )
+
+    parser.add_argument(
+        "--output-file",
+        help="Path to a .pyi file. Use to generate a specific file. " \
+             "To use this option, the list of matching input files " \
+             "must contain a single file.",
         type=Path,
         default=None,
     )
