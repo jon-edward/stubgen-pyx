@@ -220,11 +220,13 @@ def main():
     results: list[ConversionResult]
     if args.output_file is None:
         # multi-files input
-        results = stubgen.convert_multiple_files(pyx_files, output_dir=output_dir)
+        results = stubgen.convert_multiple_files(pyx_files, output_dir=output_dir,
+                                                 dry_run=args.dry_run)
     else:
         # single-file input
         assert len(pyx_files) == 1
-        results = [stubgen.convert_single_file(pyx_files[0], args.output_file)]
+        results = [stubgen.convert_single_file(pyx_files[0], args.output_file,
+                                               dry_run=args.dry_run)]
 
     # Summary reporting
     successful_count = sum(1 for r in results if r.success)

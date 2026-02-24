@@ -148,23 +148,28 @@ class StubgenPyx:
         return (Path(p) for p in pyx_files)
 
     def convert_glob(self, pyx_file_pattern: str,
-                     output_dir: Path | None = None) \
-                     -> list[ConversionResult]:
+                     output_dir: Path | None = None,
+                     dry_run: bool = False,
+                     ) -> list[ConversionResult]:
         """Convert multiple .pyx files matching a glob pattern.
 
         Args:
             pyx_file_pattern: Glob pattern (e.g., "**/*.pyx", "src/*.pyx").
             output_dir: Optional output directory for .pyi files. If None,
                 .pyi files are placed next to their source files.
+            dry_run: If True, no files are actually created.
 
         Returns:
             List of ConversionResult objects with status for each file.
         """
         pyx_files = self.resolve_glob(pyx_file_pattern)
-        return self.convert_multiple_files(pyx_files, output_dir=output_dir)
+        return self.convert_multiple_files(pyx_files, output_dir=output_dir,
+                                           dry_run=dry_run)
 
     def convert_multiple_files(
-        self, pyx_file_paths: Iterable[Path], output_dir: Path | None = None
+            self, pyx_file_paths: Iterable[Path],
+            output_dir: Path | None = None,
+            dry_run: bool = False,
     ) -> list[ConversionResult]:
         """Convert multiple .pyx files, each possibly merging a companion .pxd file.
 
@@ -175,6 +180,7 @@ class StubgenPyx:
             pyx_file_paths: Paths to the input .pyx files.
             output_dir: Optional output directory for .pyi files. If None,
                 .pyi files are placed next to their source files.
+            dry_run: If True, no files are actually created.
 
         Returns:
             ConversionResult with success status and any error details.
@@ -185,7 +191,7 @@ class StubgenPyx:
             pyi_path = (
                 output_dir / pyx_path.with_suffix(".pyi").name if output_dir else None
             )
-            result = self.convert_single_file(pyx_path, pyi_path)
+            result = self.convert_single_file(pyx_path, pyi_path, dry_run)
             results.append(result)
 
             if self.config.verbose or not result.success:
@@ -195,7 +201,8 @@ class StubgenPyx:
 
 
     def convert_single_file(
-        self, pyx_file_path: Path, pyi_file_path: Path | None = None
+            self, pyx_file_path: Path, pyi_file_path: Path | None = None,
+            dry_run: bool = False,
     ) -> ConversionResult:
         """Convert a single .pyx file, optionally merging a companion .pxd file.
 
@@ -206,12 +213,14 @@ class StubgenPyx:
             pyx_file_path: Path to the input .pyx file.
             pyi_file_path: Path to write the output .pyi file. If None,
                 defaults to the same location as the .pyx file with .pyi extension.
+            dry_run: If True, no files are actually created.
 
         Returns:
             ConversionResult with success status and any error details.
         """
+        pyi_file_path = pyi_file_path or pyx_file_path.with_suffix(".pyi")
         try:
-            logger.debug(f"Converting {pyx_file_path}")
+            logger.debug(f"Converting '{pyx_file_path}' to '{pyi_file_path}'")
 
             try:
                 pyx_str = pyx_file_path.read_text(encoding="utf-8")
@@ -239,12 +248,14 @@ class StubgenPyx:
                 pyx_path=pyx_file_path,
             )
 
-            pyi_file_path = pyi_file_path or pyx_file_path.with_suffix(".pyi")
-            try:
-                pyi_file_path.write_text(pyi_content, encoding="utf-8")
-                logger.debug(f"Wrote pyi file: {pyi_file_path}")
-            except IOError as e:
-                raise IOError(f"Failed to write {pyi_file_path}: {e}") from e
+            if not dry_run:
+                try:
+                    pyi_file_path.write_text(pyi_content, encoding="utf-8")
+                    logger.debug(f"Wrote pyi file: {pyi_file_path}")
+                except IOError as e:
+                    raise IOError(f"Failed to write {pyi_file_path}: {e}") from e
+            else:
+                logger.info(f"Would create output file: {pyi_file_path}")
 
             return ConversionResult(
                 success=True,
@@ -263,6 +274,6 @@ class StubgenPyx:
             return ConversionResult(
                 success=False,
                 pyx_file=pyx_file_path,
-                pyi_file=pyx_file_path.with_suffix(".pyi"),
+                pyi_file=pyi_file_path,
                 error=e,
             )
