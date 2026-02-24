@@ -7,7 +7,7 @@ import logging
 import sys
 from pathlib import Path
 
-from .stubgen import StubgenPyx
+from .stubgen import ConversionResult, StubgenPyx
 from .config import StubgenPyxConfig
 from ._version import __version__
 
@@ -134,11 +134,35 @@ Examples:
 
     return parser
 
+def _check_args(args: argparse.Namespace) -> bool:
+    """Check the arguments passed to the cli.
+
+    Return True iff the arguments are correct.
+    """
+    if (args.output_dir is not None and args.output_file is not None):
+        logger.error("Error: options '--output-dir' and '--output-file' cannot be used together")
+        return False
+
+    return True
+
+def _create_dir(path: Path, dry_run: bool=False):
+    """Create given directory if not already existing.
+
+    dry_run controls the actual creation.
+    """
+    if not path.exists():
+        if dry_run:
+            logger.info(f"Would create output directory: {path}")
+        else:
+            path.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Created output directory: {path}")
 
 def main():
     """Main entry point for stubgen-pyx."""
     parser = _create_parser()
     args = parser.parse_args()
+    if not _check_args(args):
+        sys.exit(1)
 
     # Setup logging
     log_level = logging.DEBUG if args.verbose else logging.INFO
@@ -162,33 +186,44 @@ def main():
         verbose=args.verbose,
     )
 
-    # Validate output directory
-    output_dir = None
-    if args.output_dir:
-        output_dir = Path(args.output_dir)
-        if not output_dir.exists():
-            if args.dry_run:
-                logger.info(f"Would create output directory: {output_dir}")
-            else:
-                output_dir.mkdir(parents=True, exist_ok=True)
-                logger.info(f"Created output directory: {output_dir}")
-
     # Build file pattern
     source_dir = Path(args.dir) if args.dir else Path(".")
     if args.file:
         pyx_file_pattern = str(source_dir / args.file)
     else:
         pyx_file_pattern = str(source_dir / "**" / "*.pyx")
-
     logger.debug(f"Using pattern: {pyx_file_pattern}")
 
     # Create converter and run
     stubgen = StubgenPyx(config=config)
 
+    # Check single-file mode if requested
+    pyx_files = tuple(stubgen.resolve_glob(pyx_file_pattern))
+    if (args.output_file is not None
+          and (_num := len(pyx_files)) != 1):
+        logger.error(f"Option --output-file requires a single pyx file in input: {_num} found")
+        sys.exit(1)
+
+    # Validate output directory
+    output_dir = None
+    if args.output_dir:
+        output_dir = Path(args.output_dir)
+        _create_dir(output_dir, args.dry_run)
+    elif args.output_file:
+        output_dir = Path(args.output_file).parent
+        _create_dir(output_dir, args.dry_run)
+
     if args.dry_run:
         logger.info("DRY RUN MODE - no files will be written")
 
-    results = stubgen.convert_glob(pyx_file_pattern, output_dir=output_dir)
+    results: list[ConversionResult]
+    if args.output_file is None:
+        # multi-files input
+        results = stubgen.convert_multiple_files(pyx_files, output_dir=output_dir)
+    else:
+        # single-file input
+        assert len(pyx_files) == 1
+        results = [stubgen.convert_single_file(pyx_files[0], args.output_file)]
 
     # Summary reporting
     successful_count = sum(1 for r in results if r.success)
