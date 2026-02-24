@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import glob
 import logging
+from typing import Iterable
 from pathlib import Path
 
 from .config import StubgenPyxConfig
@@ -126,9 +127,29 @@ class StubgenPyx:
         content = self.builder.build_module(module)
         return postprocessing_pipeline(content, self.config, pyx_path).strip()
 
-    def convert_glob(
-        self, pyx_file_pattern: str, output_dir: Path | None = None
-    ) -> list[ConversionResult]:
+    def resolve_glob(self, pyx_file_pattern: str) -> Iterable[Path]:
+        """Resolve given glob pattern.
+
+        Args:
+            pyx_file_pattern: Glob pattern (e.g., "**/*.pyx", "src/*.pyx").
+
+        Returns:
+            Iterable of Path to the resolved file names
+        """
+
+        # Note: Path.glob is not suitable with patterns containing absolute
+        # paths, so glob is much better here
+        pyx_files = glob.glob(pyx_file_pattern, recursive=True)
+
+        if len(pyx_files) == 0:
+            logger.warning(f"No files matched pattern: {pyx_file_pattern}")
+        else:
+            logger.info(f"Found {len(pyx_files)} file(s) to convert")
+        return (Path(p) for p in pyx_files)
+
+    def convert_glob(self, pyx_file_pattern: str,
+                     output_dir: Path | None = None) \
+                     -> list[ConversionResult]:
         """Convert multiple .pyx files matching a glob pattern.
 
         Args:
@@ -139,20 +160,32 @@ class StubgenPyx:
         Returns:
             List of ConversionResult objects with status for each file.
         """
-        pyx_files = glob.glob(pyx_file_pattern, recursive=True)
+        pyx_files = self.resolve_glob(pyx_file_pattern)
+        return self.convert_multiple_files(pyx_files, output_dir=output_dir)
+
+    def convert_multiple_files(
+        self, pyx_file_paths: Iterable[Path], output_dir: Path | None = None
+    ) -> list[ConversionResult]:
+        """Convert multiple .pyx files, each possibly merging a companion .pxd file.
+
+        Reads the .pyx files and companions .pxd (if they exist), converts them,
+        and writes the resulting .pyi file.
+
+        Args:
+            pyx_file_paths: Paths to the input .pyx files.
+            output_dir: Optional output directory for .pyi files. If None,
+                .pyi files are placed next to their source files.
+
+        Returns:
+            ConversionResult with success status and any error details.
+        """
         results: list[ConversionResult] = []
 
-        if not pyx_files:
-            logger.warning(f"No files matched pattern: {pyx_file_pattern}")
-            return results
-
-        logger.info(f"Found {len(pyx_files)} file(s) to convert")
-
-        for pyx_path in (Path(_pyx_file) for _pyx_file in pyx_files):
+        for pyx_path in pyx_file_paths:
             pyi_path = (
                 output_dir / pyx_path.with_suffix(".pyi").name if output_dir else None
             )
-            result = self._convert_single_file(pyx_path, pyi_path)
+            result = self.convert_single_file(pyx_path, pyi_path)
             results.append(result)
 
             if self.config.verbose or not result.success:
@@ -160,7 +193,8 @@ class StubgenPyx:
 
         return results
 
-    def _convert_single_file(
+
+    def convert_single_file(
         self, pyx_file_path: Path, pyi_file_path: Path | None = None
     ) -> ConversionResult:
         """Convert a single .pyx file, optionally merging a companion .pxd file.
