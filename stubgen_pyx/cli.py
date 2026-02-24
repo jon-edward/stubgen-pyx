@@ -55,7 +55,8 @@ Examples:
 
     parser.add_argument(
         "--output-dir",
-        help="Directory to write .pyi files (default: same as source)",
+        help="Directory to write .pyi files (default: same as source). " \
+             "This options cannot be used with option '--output-file'.",
         type=Path,
         default=None,
     )
@@ -63,8 +64,9 @@ Examples:
     parser.add_argument(
         "--output-file",
         help="Path to a .pyi file. Use to generate a specific file. " \
-             "To use this option, the list of matching input files " \
-             "must contain a single file.",
+             "To use this option, the list of matching input pyx files " \
+             "must contain a single file. " \
+             "This options cannot be used with option '--output-file'.",
         type=Path,
         default=None,
     )
