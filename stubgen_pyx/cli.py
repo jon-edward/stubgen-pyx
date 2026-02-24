@@ -134,17 +134,6 @@ Examples:
 
     return parser
 
-def _check_args(args: argparse.Namespace) -> bool:
-    """Check the arguments passed to the cli.
-
-    Return True iff the arguments are correct.
-    """
-    if (args.output_dir is not None and args.output_file is not None):
-        logger.error("Error: options '--output-dir' and '--output-file' cannot be used together")
-        return False
-
-    return True
-
 def _create_dir(path: Path, dry_run: bool=False):
     """Create given directory if not already existing.
 
@@ -157,11 +146,22 @@ def _create_dir(path: Path, dry_run: bool=False):
             path.mkdir(parents=True, exist_ok=True)
             logger.info(f"Created output directory: {path}")
 
-def main():
-    """Main entry point for stubgen-pyx."""
+def _parse_args() -> argparse.Namespace | None:
     parser = _create_parser()
     args = parser.parse_args()
-    if not _check_args(args):
+
+    # check the arguments
+    if (args.output_dir is not None and args.output_file is not None):
+        logger.error("Error: options '--output-dir' and '--output-file' cannot be used together")
+        return None
+
+    return args
+
+def main():
+    """Main entry point for stubgen-pyx."""
+
+    args = _parse_args()
+    if args is None:
         sys.exit(1)
 
     # Setup logging
@@ -200,8 +200,9 @@ def main():
     # Check single-file mode if requested
     pyx_files = tuple(stubgen.resolve_glob(pyx_file_pattern))
     if (args.output_file is not None
-          and (_num := len(pyx_files)) != 1):
-        logger.error(f"Option --output-file requires a single pyx file in input: {_num} found")
+          and ((_num := len(pyx_files)) != 1)):
+        logger.error("Option --output-file requires a single input pyx file in "
+                     f"'{pyx_file_pattern}': {_num} found")
         sys.exit(1)
 
     # Validate output directory
