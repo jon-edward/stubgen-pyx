@@ -205,8 +205,3 @@ def main():
         sys.exit(1)
 
     sys.exit(0)
-
-
-# This helps to execute in the development env
-if "__main__" == __name__:
-    main()
