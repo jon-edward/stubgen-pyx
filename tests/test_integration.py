@@ -212,3 +212,93 @@ def test_convert_glob_multiple_files_in_output_dir(temp_dir, temp_outdir):
     for i in range(3):
         assert not (temp_dir / f"test{i}.pyi").exists()
         assert (temp_outdir / f"test{i}.pyi").exists()
+
+
+def test_convert_multiple_files(temp_dir):
+    """Test glob conversion with multiple files."""
+    pyx_files = [temp_dir / f"test{i}.pyx"
+                 for i in range(3)]
+
+    # prepare the input files
+    for i, pyx_file in enumerate(pyx_files):
+        pyx_file.write_text(f"def func{i}(): pass")
+
+    config = StubgenPyxConfig()
+    stubgen = StubgenPyx(config=config)
+
+    results = stubgen.convert_multiple_files(pyx_files)
+
+    assert len(results) == len(pyx_files)
+    assert all(r.success for r in results)
+
+    # Verify all .pyi files exist
+    for pyx_file in pyx_files:
+        assert pyx_file.with_suffix(".pyi").exists()
+
+
+def test_convert_multiple_files_in_output_dir(temp_dir, temp_outdir):
+    """Test glob conversion with multiple files."""
+    pyx_files = [temp_dir / f"test{i}.pyx"
+                 for i in range(3)]
+
+    # prepare the input files
+    for i, pyx_file in enumerate(pyx_files):
+        pyx_file.write_text(f"def func{i}(): pass")
+
+    config = StubgenPyxConfig()
+    stubgen = StubgenPyx(config=config)
+
+    results = stubgen.convert_multiple_files(pyx_files, output_dir=temp_outdir)
+
+    assert len(results) == len(pyx_files)
+    assert all(r.success for r in results)
+
+    pyi_files = [temp_outdir / pyx_file.with_suffix(".pyi").name
+                 for pyx_file in pyx_files]
+
+    # Verify all .pyi files exist in output dir and NOT in source dir
+    for pyx_file, pyi_file in zip(pyx_files, pyi_files):
+        assert pyi_file.exists()
+        assert not pyx_file.with_suffix(".pyi").exists()
+
+
+def test_convert_single_file(temp_dir):
+    """Test glob conversion with a single files."""
+
+    # prepare the input file
+    pyx_file = temp_dir / "test1.pyx"
+    pyx_file.write_text(f"def func1(): pass")
+
+    config = StubgenPyxConfig()
+    stubgen = StubgenPyx(config=config)
+
+    # No already existing .pyi file
+    assert not pyx_file.with_suffix(".pyi").exists()
+
+    result = stubgen.convert_single_file(pyx_file)
+    assert result.success
+
+    # Verify the .pyi file exist
+    assert pyx_file.with_suffix(".pyi").exists()
+
+
+def test_convert_single_file_in_output_dir(temp_dir, temp_outdir):
+    """Test glob conversion with a single files in output dir."""
+
+    # prepare the input file
+    pyx_file = temp_dir / "test1.pyx"
+    pyx_file.write_text(f"def func1(): pass")
+    pyi_file = temp_outdir / pyx_file.with_suffix(".pyi").name
+
+    config = StubgenPyxConfig()
+    stubgen = StubgenPyx(config=config)
+
+    # No already existing .pyi file
+    assert not pyi_file.exists()
+
+    result = stubgen.convert_single_file(pyx_file, pyi_file)
+    assert result.success
+
+    # Verify the .pyi file exist
+    assert not pyx_file.with_suffix(".pyi").exists()
+    assert pyi_file.exists()
