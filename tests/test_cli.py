@@ -44,6 +44,12 @@ class TestCreateParser:
         args = parser.parse_args([".", "--output-dir", "stubs/"])
         assert args.output_dir == Path("stubs/")
 
+    def test_parser_with_output_file(self):
+        """Test parser with --output-file."""
+        parser = cli._create_parser()
+        args = parser.parse_args([".", "--output-file", "stubs/output.pyi"])
+        assert args.output_file == Path("stubs/output.pyi")
+
     def test_parser_with_verbose_flag(self):
         """Test parser with --verbose flag."""
         parser = cli._create_parser()
@@ -110,7 +116,7 @@ class TestCreateParser:
         args = parser.parse_args([])
         assert args.dir == "."
 
-    def test_parser_all_flags_combined(self):
+    def test_parser_all_flags_combined_1(self):
         """Test parser with multiple flags."""
         parser = cli._create_parser()
         args = parser.parse_args(
@@ -136,6 +142,33 @@ class TestCreateParser:
         assert args.no_trim_imports is True
         assert args.continue_on_error is True
 
+    def test_parser_all_flags_combined_2(self):
+        """Test parser with multiple flags."""
+        parser = cli._create_parser()
+        args = parser.parse_args(
+            [
+                "src/",
+                "--file",
+                "**/*.pyx",
+                "--output-file",
+                "stubs/output.pyi",
+                "-v",
+                "--dry-run",
+                "--no-sort-imports",
+                "--no-trim-imports",
+                "--continue-on-error",
+            ]
+        )
+        assert args.dir == "src/"
+        assert args.file == "**/*.pyx"
+        assert args.output_dir is None
+        assert args.output_file == Path("stubs/output.pyi")
+        assert args.verbose is True
+        assert args.dry_run is True
+        assert args.no_sort_imports is True
+        assert args.no_trim_imports is True
+        assert args.continue_on_error is True
+
 
 class TestMain:
     """Test the main function."""
@@ -148,7 +181,7 @@ class TestMain:
         mock_stubgen_class.return_value = mock_stubgen
         mock_result = MagicMock()
         mock_result.success = True
-        mock_stubgen.convert_glob.return_value = [mock_result]
+        mock_stubgen.convert_multiple_files.return_value = [mock_result]
 
         with patch.object(sys, "argv", ["stubgen-pyx", "."]):
             with pytest.raises(SystemExit) as exc_info:
@@ -163,7 +196,7 @@ class TestMain:
         mock_stubgen_class.return_value = mock_stubgen
         mock_result = MagicMock()
         mock_result.success = True
-        mock_stubgen.convert_glob.return_value = [mock_result]
+        mock_stubgen.convert_multiple_files.return_value = [mock_result]
 
         with patch.object(sys, "argv", ["stubgen-pyx", ".", "-v"]):
             with pytest.raises(SystemExit) as exc_info:
@@ -183,7 +216,7 @@ class TestMain:
         mock_stubgen_class.return_value = mock_stubgen
         mock_result = MagicMock()
         mock_result.success = True
-        mock_stubgen.convert_glob.return_value = [mock_result]
+        mock_stubgen.convert_multiple_files.return_value = [mock_result]
 
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "new_stubs"
@@ -203,7 +236,7 @@ class TestMain:
         mock_stubgen_class.return_value = mock_stubgen
         mock_result = MagicMock()
         mock_result.success = True
-        mock_stubgen.convert_glob.return_value = [mock_result]
+        mock_stubgen.convert_multiple_files.return_value = [mock_result]
 
         with patch.object(sys, "argv", ["stubgen-pyx", ".", "--dry-run"]):
             with pytest.raises(SystemExit) as exc_info:
@@ -218,7 +251,7 @@ class TestMain:
         mock_stubgen_class.return_value = mock_stubgen
         mock_result = MagicMock()
         mock_result.success = False
-        mock_stubgen.convert_glob.return_value = [mock_result]
+        mock_stubgen.convert_multiple_files.return_value = [mock_result]
 
         with patch.object(sys, "argv", ["stubgen-pyx", "."]):
             with pytest.raises(SystemExit) as exc_info:
@@ -231,7 +264,7 @@ class TestMain:
         """Test main function when no files are found."""
         mock_stubgen = MagicMock()
         mock_stubgen_class.return_value = mock_stubgen
-        mock_stubgen.convert_glob.return_value = []
+        mock_stubgen.convert_multiple_files.return_value = []
 
         with patch.object(sys, "argv", ["stubgen-pyx", "."]):
             with pytest.raises(SystemExit) as exc_info:
@@ -248,7 +281,7 @@ class TestMain:
         mock_result1.success = True
         mock_result2 = MagicMock()
         mock_result2.success = False
-        mock_stubgen.convert_glob.return_value = [mock_result1, mock_result2]
+        mock_stubgen.convert_multiple_files.return_value = [mock_result1, mock_result2]
 
         with patch.object(sys, "argv", ["stubgen-pyx", "."]):
             with pytest.raises(SystemExit) as exc_info:
@@ -263,9 +296,99 @@ class TestMain:
         mock_stubgen_class.return_value = mock_stubgen
         mock_result = MagicMock()
         mock_result.success = True
-        mock_stubgen.convert_glob.return_value = [mock_result]
+        mock_stubgen.convert_multiple_files.return_value = [mock_result]
 
         with patch.object(sys, "argv", ["stubgen-pyx", "src/", "--file", "*.pyx"]):
             with pytest.raises(SystemExit) as exc_info:
                 cli.main()
             assert exc_info.value.code == 0
+
+    @patch("stubgen_pyx.cli.StubgenPyx")
+    @patch("stubgen_pyx.cli.logging.basicConfig")
+    def test_main_single_file_mode(self, mock_logging, mock_stubgen_class):
+        """Test main function with single input and single output mode."""
+        mock_stubgen = MagicMock()
+        mock_stubgen_class.return_value = mock_stubgen
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_stubgen.resolve_glob.return_value = [Path("input.pyx")]
+        mock_stubgen.convert_single_file.return_value = mock_result
+
+        with patch.object(
+            sys,
+            "argv",
+            ["stubgen-pyx", ".", "--file", "*.pyx", "--output-file", "out.pyi"],
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                cli.main()
+            assert exc_info.value.code == 0
+
+    @patch("stubgen_pyx.cli.StubgenPyx")
+    @patch("stubgen_pyx.cli.logging.basicConfig")
+    def test_main_single_file_mode_no_input_files(
+        self, mock_logging, mock_stubgen_class
+    ):
+        """Test main function with zero inputs and single output mode."""
+        mock_stubgen = MagicMock()
+        mock_stubgen_class.return_value = mock_stubgen
+        mock_result = MagicMock()
+        mock_result.success = False
+        mock_stubgen.resolve_glob.return_value = []
+        mock_stubgen.convert_single_file.return_value = mock_result
+
+        with patch.object(
+            sys,
+            "argv",
+            ["stubgen-pyx", ".", "--file", "*.pyx", "--output-file", "out.pyi"],
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                cli.main()
+            assert exc_info.value.code == 1
+
+    @patch("stubgen_pyx.cli.StubgenPyx")
+    @patch("stubgen_pyx.cli.logging.basicConfig")
+    def test_main_single_file_mode_too_many_input_files(
+        self, mock_logging, mock_stubgen_class
+    ):
+        """Test main function with multiple inputs and single output mode."""
+        mock_stubgen = MagicMock()
+        mock_stubgen_class.return_value = mock_stubgen
+        mock_result = MagicMock()
+        mock_result.success = False
+        mock_stubgen.resolve_glob.return_value = [
+            Path("input1.pyx"),
+            Path("input2.pyx"),
+        ]
+        mock_stubgen.convert_single_file.return_value = mock_result
+
+        with patch.object(
+            sys,
+            "argv",
+            ["stubgen-pyx", ".", "--file", "*.pyx", "--output-file", "out.pyi"],
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                cli.main()
+            assert exc_info.value.code == 1
+
+    @patch("stubgen_pyx.cli.StubgenPyx")
+    @patch("stubgen_pyx.cli.logging.basicConfig")
+    def test_main_output_dir_and_output_file(self, mock_logging, mock_stubgen_class):
+        """Test main function with output dir and output file."""
+        mock_stubgen = MagicMock()
+        mock_stubgen_class.return_value = mock_stubgen
+        mock_result = MagicMock()
+        mock_result.success = False
+        mock_stubgen.resolve_glob.return_value = [
+            Path("input1.pyx"),
+            Path("input2.pyx"),
+        ]
+        mock_stubgen.convert_single_file.return_value = mock_result
+
+        with patch.object(
+            sys,
+            "argv",
+            ["stubgen-pyx", ".", "--output-dir", "out", "--output-file", "out.pyi"],
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                cli.main()
+            assert exc_info.value.code == 1
