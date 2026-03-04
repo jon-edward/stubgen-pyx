@@ -216,8 +216,7 @@ def test_convert_glob_multiple_files_in_output_dir(temp_dir, temp_outdir):
 
 def test_convert_multiple_files(temp_dir):
     """Test glob conversion with multiple files."""
-    pyx_files = [temp_dir / f"test{i}.pyx"
-                 for i in range(3)]
+    pyx_files = [temp_dir / f"test{i}.pyx" for i in range(3)]
 
     # prepare the input files
     for i, pyx_file in enumerate(pyx_files):
@@ -238,8 +237,7 @@ def test_convert_multiple_files(temp_dir):
 
 def test_convert_multiple_files_in_output_dir(temp_dir, temp_outdir):
     """Test glob conversion with multiple files."""
-    pyx_files = [temp_dir / f"test{i}.pyx"
-                 for i in range(3)]
+    pyx_files = [temp_dir / f"test{i}.pyx" for i in range(3)]
 
     # prepare the input files
     for i, pyx_file in enumerate(pyx_files):
@@ -253,8 +251,9 @@ def test_convert_multiple_files_in_output_dir(temp_dir, temp_outdir):
     assert len(results) == len(pyx_files)
     assert all(r.success for r in results)
 
-    pyi_files = [temp_outdir / pyx_file.with_suffix(".pyi").name
-                 for pyx_file in pyx_files]
+    pyi_files = [
+        temp_outdir / pyx_file.with_suffix(".pyi").name for pyx_file in pyx_files
+    ]
 
     # Verify all .pyi files exist in output dir and NOT in source dir
     for pyx_file, pyi_file in zip(pyx_files, pyi_files):
@@ -267,7 +266,7 @@ def test_convert_single_file(temp_dir):
 
     # prepare the input file
     pyx_file = temp_dir / "test1.pyx"
-    pyx_file.write_text(f"def func1(): pass")
+    pyx_file.write_text("def func1(): pass")
 
     config = StubgenPyxConfig()
     stubgen = StubgenPyx(config=config)
@@ -287,7 +286,7 @@ def test_convert_single_file_in_output_dir(temp_dir, temp_outdir):
 
     # prepare the input file
     pyx_file = temp_dir / "test1.pyx"
-    pyx_file.write_text(f"def func1(): pass")
+    pyx_file.write_text("def func1(): pass")
     pyi_file = temp_outdir / pyx_file.with_suffix(".pyi").name
 
     config = StubgenPyxConfig()
@@ -307,8 +306,7 @@ def test_convert_single_file_in_output_dir(temp_dir, temp_outdir):
 # ----
 def test_convert_multiple_files_dry_run(temp_dir):
     """Test glob conversion with multiple files with dry run."""
-    pyx_files = [temp_dir / f"test{i}.pyx"
-                 for i in range(3)]
+    pyx_files = [temp_dir / f"test{i}.pyx" for i in range(3)]
 
     # prepare the input files
     for i, pyx_file in enumerate(pyx_files):
@@ -329,8 +327,7 @@ def test_convert_multiple_files_dry_run(temp_dir):
 
 def test_convert_multiple_files_in_output_dir_dry_run(temp_dir, temp_outdir):
     """Test glob conversion with multiple files with dry run."""
-    pyx_files = [temp_dir / f"test{i}.pyx"
-                 for i in range(3)]
+    pyx_files = [temp_dir / f"test{i}.pyx" for i in range(3)]
 
     # prepare the input files
     for i, pyx_file in enumerate(pyx_files):
@@ -340,13 +337,15 @@ def test_convert_multiple_files_in_output_dir_dry_run(temp_dir, temp_outdir):
     stubgen = StubgenPyx(config=config)
 
     results = stubgen.convert_multiple_files(
-        pyx_files, output_dir=temp_outdir, dry_run=True)
+        pyx_files, output_dir=temp_outdir, dry_run=True
+    )
 
     assert len(results) == len(pyx_files)
     assert all(r.success for r in results)
 
-    pyi_files = [temp_outdir / pyx_file.with_suffix(".pyi").name
-                 for pyx_file in pyx_files]
+    pyi_files = [
+        temp_outdir / pyx_file.with_suffix(".pyi").name for pyx_file in pyx_files
+    ]
 
     # Verify all .pyi files do not exist in output dir and NOT in source dir
     for pyx_file, pyi_file in zip(pyx_files, pyi_files):
@@ -359,7 +358,7 @@ def test_convert_single_file_dry_run(temp_dir):
 
     # prepare the input file
     pyx_file = temp_dir / "test1.pyx"
-    pyx_file.write_text(f"def func1(): pass")
+    pyx_file.write_text("def func1(): pass")
 
     config = StubgenPyxConfig()
     stubgen = StubgenPyx(config=config)
@@ -379,7 +378,7 @@ def test_convert_single_file_in_output_dir_dry_run(temp_dir, temp_outdir):
 
     # prepare the input file
     pyx_file = temp_dir / "test1.pyx"
-    pyx_file.write_text(f"def func1(): pass")
+    pyx_file.write_text("def func1(): pass")
     pyi_file = temp_outdir / pyx_file.with_suffix(".pyi").name
 
     config = StubgenPyxConfig()

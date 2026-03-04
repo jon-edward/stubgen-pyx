@@ -147,10 +147,12 @@ class StubgenPyx:
             logger.info(f"Found {len(pyx_files)} file(s) to convert")
         return (Path(p) for p in pyx_files)
 
-    def convert_glob(self, pyx_file_pattern: str,
-                     output_dir: Path | None = None,
-                     dry_run: bool = False,
-                     ) -> list[ConversionResult]:
+    def convert_glob(
+        self,
+        pyx_file_pattern: str,
+        output_dir: Path | None = None,
+        dry_run: bool = False,
+    ) -> list[ConversionResult]:
         """Convert multiple .pyx files matching a glob pattern.
 
         Args:
@@ -163,13 +165,15 @@ class StubgenPyx:
             List of ConversionResult objects with status for each file.
         """
         pyx_files = self.resolve_glob(pyx_file_pattern)
-        return self.convert_multiple_files(pyx_files, output_dir=output_dir,
-                                           dry_run=dry_run)
+        return self.convert_multiple_files(
+            pyx_files, output_dir=output_dir, dry_run=dry_run
+        )
 
     def convert_multiple_files(
-            self, pyx_file_paths: Iterable[Path],
-            output_dir: Path | None = None,
-            dry_run: bool = False,
+        self,
+        pyx_file_paths: Iterable[Path],
+        output_dir: Path | None = None,
+        dry_run: bool = False,
     ) -> list[ConversionResult]:
         """Convert multiple .pyx files, each possibly merging a companion .pxd file.
 
@@ -199,10 +203,11 @@ class StubgenPyx:
 
         return results
 
-
     def convert_single_file(
-            self, pyx_file_path: Path, pyi_file_path: Path | None = None,
-            dry_run: bool = False,
+        self,
+        pyx_file_path: Path,
+        pyi_file_path: Path | None = None,
+        dry_run: bool = False,
     ) -> ConversionResult:
         """Convert a single .pyx file, optionally merging a companion .pxd file.
 
