@@ -14,7 +14,7 @@ from .conversion.converter import Converter
 from .builders.builder import Builder
 from .parsing.parser import parse_pyx, path_to_module_name
 from .postprocessing.pipeline import postprocessing_pipeline
-from .models.pyi_elements import PyiImport
+from .models.pyi_elements import PyiImport, PyiModule
 
 
 logger = logging.getLogger(__name__)
@@ -77,6 +77,26 @@ class StubgenPyx:
         Raises:
             Various exceptions from parsing, conversion, or building.
         """
+        module = self.compile_str_to_module(pyx_str, pxd_str, pyx_path)
+        content = self.builder.build_module(module)
+        return postprocessing_pipeline(content, self.config, pyx_path).strip()
+
+    def compile_str_to_module(
+        self, pyx_str: str, pxd_str: str | None = None, pyx_path: Path | None = None
+    ) -> PyiModule:
+        """Compile Cython source strings into a PyiModule
+
+        Args:
+            pyx_str: The source Cython code.
+            pxd_str: Optional companion .pxd file content to merge.
+            pyx_path: Optional file path for context and error messages.
+
+        Returns:
+            PyiModule instance as the result of the compilation.
+
+        Raises:
+            Various exceptions from parsing, conversion, or building.
+        """
         self.builder.include_private = self.config.include_private
 
         module_name = path_to_module_name(pyx_path) if pyx_path else None
@@ -124,8 +144,7 @@ class StubgenPyx:
             )
         )
 
-        content = self.builder.build_module(module)
-        return postprocessing_pipeline(content, self.config, pyx_path).strip()
+        return module
 
     def resolve_glob(self, pyx_file_pattern: str) -> Iterable[Path]:
         """Resolve given glob pattern.
