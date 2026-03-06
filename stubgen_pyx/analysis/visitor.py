@@ -50,6 +50,16 @@ class ScopeVisitor(TreeVisitor):
         self.visitchildren(node)
         return node
 
+    def visit_CDefExternNode(self, node):
+        """Propagate visit from "cdef extern" nodes.
+
+        `cdef extern from "<header.h>"` allows for declaration of enumerations
+        to be wrapped when `cpdef enum` is used. Here visiting is propagated
+        down to the children to search for those enums.
+        """
+        self.visitchildren(node)
+        return node
+
     def visit_SingleAssignmentNode(self, node):
         """Collect non-import assignments."""
         if isinstance(node.rhs, ExprNodes.ImportNode):
