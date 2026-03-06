@@ -9,6 +9,7 @@ from stubgen_pyx.models.pyi_elements import (
     PyiClass,
     PyiFunction,
     PyiScope,
+    PyiEnum,
 )
 from stubgen_pyx.parsing.parser import parse_pyx
 from stubgen_pyx.analysis.visitor import ModuleVisitor
@@ -408,3 +409,24 @@ cpdef enum Color:
         result = converter.convert_module(visitor, parsed.source)
 
         assert len(result.scope.enums) >= 1
+
+    def test_convert_enum_in_extern(self):
+        """Test converting enum with extern."""
+        code = """
+cdef extern from "<header.h>":
+    cpdef enum my_extern_enum:
+        MY_ENUM_V1
+        MY_ENUM_V2
+        MY_ENUM_V3
+"""
+        parsed = parse_pyx(code)
+        visitor = ModuleVisitor(parsed.source_ast)
+
+        converter = Converter()
+        result = converter.convert_module(visitor, parsed.source)
+
+        assert len(result.scope.enums) == 1
+        _enum = result.scope.enums[0]
+        assert isinstance(_enum, PyiEnum)
+        assert "my_extern_enum" == _enum.enum_name
+        assert "MY_ENUM_V1" in _enum.names

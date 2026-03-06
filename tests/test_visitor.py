@@ -312,6 +312,46 @@ cdef enum Priority:
         # Should collect enums
         assert isinstance(visitor.enums, list)
 
+    def test_scope_visitor_multiple_enums_with_extern(self):
+        """Test collecting multiple enums, some extern"""
+        code = """
+cdef enum NotWrappedInternal:
+    V1 = 0
+    V2 = 1
+
+cpdef enum WrappedInternal:
+    V3 = 0
+    V4 = 1
+
+cdef extern from "<header.h>":
+    cdef enum NotWrappedExternal:
+        V5
+
+    cpdef enum WrappedExternal:
+        V6
+        V7
+"""
+        parsed = parse_pyx(code)
+        visitor = ScopeVisitor(parsed.source_ast)
+
+        # Should collect enums
+        assert isinstance(visitor.enums, list)
+        assert len(visitor.enums) == 4
+
+        assert all(e.name == exp_val
+                   for e, exp_val in zip(visitor.enums,
+                                         ["NotWrappedInternal", "WrappedInternal",
+                                          "NotWrappedExternal", "WrappedExternal"]))
+        for e, exp_val in zip(visitor.enums,
+                              ["private", "private",
+                               "extern", "extern"]):
+            assert e.visibility == exp_val
+
+        for e, exp_val in zip(visitor.enums,
+                              [False, True,
+                               False, True]):
+            assert e.create_wrapper == exp_val
+
 
 class TestImportVisitorBasics:
     """Test ImportVisitor with basic code."""
