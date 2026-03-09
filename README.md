@@ -88,9 +88,6 @@ stubgen-pyx . --file "**/*.pyx"
 **Advanced options:**
 
 ```bash
-# Write .pyi files to a custom directory
-stubgen-pyx . --output-dir stubs/
-
 # Preview changes without writing
 stubgen-pyx . --dry-run
 
@@ -99,9 +96,19 @@ stubgen-pyx . --verbose
 
 # Continue processing even if some files fail
 stubgen-pyx . --continue-on-error
+```
 
-# Customize postprocessing
-stubgen-pyx . --no-sort-imports --no-trim-imports
+**Output options:**
+
+```bash
+# Note: --output-dir and --output-file are mutually exclusive
+
+# Write all .pyi files to a custom directory
+stubgen-pyx . --output-dir stubs/
+
+# Convert a single .pyx file to a specific output path
+# (requires exactly one matching input file)
+stubgen-pyx . --file mymodule.pyx --output-file output/mymodule.pyi
 ```
 
 **Disable specific transformations:**
@@ -118,6 +125,9 @@ stubgen-pyx . --no-normalize-names
 
 # Exclude .pxd file contents
 stubgen-pyx . --no-pxd-to-stubs
+
+# Skip deduplicating imports
+stubgen-pyx . --no-deduplicate-imports
 
 # Skip epilog comment
 stubgen-pyx . --exclude-epilog
@@ -167,12 +177,14 @@ from stubgen_pyx import StubgenPyx
 from stubgen_pyx.config import StubgenPyxConfig
 
 config = StubgenPyxConfig(
-    no_trim_imports=False,      # Trim unused imports
-    no_normalize_names=False,   # Normalize Cython types
-    no_sort_imports=False,      # Sort imports
-    continue_on_error=True,     # Don't stop on first error
-    include_private=False,      # Exclude private functions
-    verbose=True,               # Detailed output
+    no_trim_imports=False,          # Trim unused imports
+    no_normalize_names=False,       # Normalize Cython types
+    no_sort_imports=False,          # Sort imports
+    no_deduplicate_imports=False,   # Deduplicate imports
+    exclude_epilog=False,           # Don't skip epilog comment
+    continue_on_error=True,         # Continue on errors
+    include_private=False,          # Exclude private functions
+    verbose=True,                   # Show details
 )
 
 stubgen = StubgenPyx(config=config)
@@ -236,9 +248,9 @@ All configuration is handled through the `StubgenPyxConfig` dataclass:
 | ------------------------ | ---- | ------- | --------------------------------------------------- |
 | `no_sort_imports`        | bool | False   | Skip sorting imports                                |
 | `no_trim_imports`        | bool | False   | Skip trimming unused imports                        |
+| `no_deduplicate_imports` | bool | False   | Skip deduplicating imports                          |
 | `no_pxd_to_stubs`        | bool | False   | Skip including .pxd file contents                   |
 | `no_normalize_names`     | bool | False   | Skip normalizing Cython types to Python equivalents |
-| `no_deduplicate_imports` | bool | False   | Skip deduplicating imports                          |
 | `exclude_epilog`         | bool | False   | Skip adding generation epilog comment               |
 | `continue_on_error`      | bool | False   | Continue processing even if a file fails            |
 | `include_private`        | bool | False   | Include private functions in the generated stub     |
