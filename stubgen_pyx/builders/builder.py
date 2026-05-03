@@ -107,6 +107,14 @@ class Builder:
         content = ""
         if class_.doc is not None:
             content += f"{textwrap.indent(class_.doc, '    ')}\n"
+        if len(class_.variables):
+            content += textwrap.indent(
+                str.join('\n', (
+                    f"{name}: {typ}"
+                    for typ, name in class_.variables
+                )),
+                "    "
+            ) + "\n"
         content += textwrap.indent(self.build_scope(class_.scope) or "", "    ")
         if content.rstrip():
             output += f"\n{content}"

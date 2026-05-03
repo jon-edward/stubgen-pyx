@@ -79,6 +79,17 @@ def get_metaclass(node: Nodes.PyClassDefNode | Nodes.CClassDefNode) -> str | Non
     return None
 
 
+def get_class_variables(nodes: list[Nodes.CVarDefNode]) -> list[tuple[str,str]] | None:
+    ret = []
+    for node_def in nodes:
+        type_ = node_def.base_type.name  # I hope
+        for declarator in node_def.declarators:
+            assert isinstance(declarator, Nodes.CNameDeclaratorNode)
+            name = declarator.name
+            ret.append((type_, name))
+    return ret
+
+
 def get_enum_names(node: Nodes.CEnumDefNode) -> list[str]:
     """Extract member names from an enum definition node."""
     return [item.name for item in node.items]  # type: ignore
