@@ -24,6 +24,7 @@ from .conversion_utils import (
     get_decorators,
     get_bases,
     get_metaclass,
+    get_class_variables,
     get_source,
     get_enum_names,
     unparse_expr,
@@ -109,6 +110,7 @@ class Converter:
             metaclass=get_metaclass(class_visitor.node),
             decorators=get_decorators(source_code, class_visitor.node),
             scope=self.convert_scope(class_visitor.scope, source_code),
+            variables=get_class_variables(class_visitor.scope.cdef_variables),
         )
 
     def convert_cdef_func(
