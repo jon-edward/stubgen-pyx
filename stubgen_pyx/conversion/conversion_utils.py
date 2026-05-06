@@ -40,7 +40,6 @@ def extract_type_from_base_type(base_type) -> str | None:
             name = ".".join(
                 base_type.base_type_node.module_path + [base_type.base_type_node.name]
             )
-            print("Called")
             return name
     except AttributeError:
         pass

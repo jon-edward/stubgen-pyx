@@ -763,7 +763,7 @@ cdef class CythonClass:
 
         assert len(visitor.scope.classes) == 1
 
-    def test_templated_type(self):
+    def test_templated_type_cdef_var(self):
         code = """
 cdef class CythonClass:
     cdef public list[int] value
@@ -772,4 +772,4 @@ cdef class CythonClass:
         visitor = ModuleVisitor(parsed.source_ast)
 
         assert len(visitor.scope.classes) == 1
-        assert len(visitor.scope.classes[0].scope.assignments) == 1
+        assert len(visitor.scope.classes[0].scope.cdef_variables) == 1
