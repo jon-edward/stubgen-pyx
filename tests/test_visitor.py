@@ -752,3 +752,13 @@ ctypedef np.ndarray MyArray
         visitor = ModuleVisitor(parsed.source_ast)
 
         assert len(visitor.scope.assignments) >= 3
+
+    def test_module_member_type(self):
+        code = """
+cdef class CythonClass:
+    cdef some_module.MyClass value
+"""
+        parsed = parse_pyx(code)
+        visitor = ModuleVisitor(parsed.source_ast)
+
+        assert len(visitor.scope.classes) == 1
