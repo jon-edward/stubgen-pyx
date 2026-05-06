@@ -212,6 +212,25 @@ class TestBuilder:
         result = builder.build_assignment(assignment)
         assert result == "x: int = 5"
 
+    def test_build_assignment_private_excluded(self):
+        """Test that private assignments are excluded by default."""
+        builder = Builder(include_private=False)
+        assert builder.build_assignment(PyiAssignment("_x: int = 5")) is None
+        assert builder.build_assignment(PyiAssignment("_data = {...}")) is None
+        assert builder.build_assignment(PyiAssignment("_count = 42")) is None
+
+    def test_build_assignment_private_included(self):
+        """Test that private assignments are included when specified."""
+        builder = Builder(include_private=True)
+        result = builder.build_assignment(PyiAssignment("_x: int = 5"))
+        assert result == "_x: int = 5"
+
+    def test_build_assignment_dunder_not_private(self):
+        """Test that dunder assignments are not treated as private."""
+        builder = Builder(include_private=False)
+        result = builder.build_assignment(PyiAssignment("__all__ = ['x']"))
+        assert result == "__all__ = ['x']"
+
     def test_build_import_simple(self):
         """Test building a simple import statement."""
         builder = Builder()
@@ -271,6 +290,20 @@ class TestBuilder:
         result = builder.build_class(cls)
         assert result
         assert "@dataclass" in result
+
+    def test_build_class_private_excluded(self):
+        """Test that private classes are excluded by default."""
+        builder = Builder(include_private=False)
+        cls = PyiClass(name="_PrivateClass", scope=PyiScope())
+        assert builder.build_class(cls) is None
+
+    def test_build_class_private_included(self):
+        """Test that private classes are included when specified."""
+        builder = Builder(include_private=True)
+        cls = PyiClass(name="_PrivateClass", scope=PyiScope())
+        result = builder.build_class(cls)
+        assert result
+        assert "class _PrivateClass" in result
 
     def test_build_scope_with_assignments(self):
         """Test building a scope with assignments."""

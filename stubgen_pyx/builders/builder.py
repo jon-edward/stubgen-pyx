@@ -92,6 +92,8 @@ class Builder:
         Returns:
             Class definition with docstring, decorators, bases, and body.
         """
+        if not self.include_private and self._is_private(class_.name):
+            return None
         output = "".join(f"{decorator}\n" for decorator in class_.decorators)
         output += f"class {class_.name}"
 
@@ -135,6 +137,10 @@ class Builder:
 
     def build_assignment(self, assignment: PyiAssignment) -> str | None:
         """Build an assignment statement string."""
+        if not self.include_private:
+            name = assignment.statement.partition("=")[0].partition(":")[0].strip()
+            if self._is_private(name):
+                return None
         return assignment.statement
 
     def build_import(self, import_statement: PyiImport) -> str | None:
