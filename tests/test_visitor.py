@@ -431,6 +431,30 @@ from cpython.mem cimport PyMem_Malloc
         # Should collect cimport statements
         assert isinstance(visitor.imports, list)
 
+    def test_import_visitor_cimports_are_filtered(self):
+        """`cimport`s reference C-level declarations from .pxd files and must
+        not appear in generated .pyi stubs. Verify they are filtered out and
+        that adjacent regular Python imports are still collected."""
+        code = """
+import os
+cimport cython
+from typing import List
+from cpython.mem cimport PyMem_Malloc, PyMem_Free
+from .other cimport SomeCType
+import sys
+"""
+        parsed = parse_pyx(code)
+        visitor = ImportVisitor(parsed.source_ast)
+
+        rendered = [getattr(n, "module_name", None) or repr(n) for n in visitor.imports]
+        for entry in rendered:
+            assert "cython" != entry
+            assert "cpython.mem" != entry
+            assert ".other" != entry
+
+        # The three regular Python imports must still be present.
+        assert len(visitor.imports) == 3
+
 
 class TestModuleVisitorBasics:
     """Test ModuleVisitor with basic code."""
@@ -670,8 +694,9 @@ cdef enum Status:
         parsed = parse_pyx(code)
         module_visitor = ModuleVisitor(parsed.source_ast)
 
-        # Test imports
-        assert len(module_visitor.import_visitor.imports) >= 3
+        # Test imports — `cimport cython` is filtered out, so only the two
+        # regular Python imports remain.
+        assert len(module_visitor.import_visitor.imports) >= 2
 
         # Test scope
         assert len(module_visitor.scope.py_functions) >= 2

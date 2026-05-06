@@ -129,15 +129,11 @@ class ImportVisitor(TreeVisitor):
         self.visitchildren(node)
         return node
 
-    def visit_CImportNode(self, node):
-        """Visits cimport nodes."""
-        self.imports.append(node)
-        return node
-
-    def visit_CImportStatNode(self, node):
-        """Visits cimport statement nodes."""
-        self.imports.append(node)
-        return node
+    # NOTE: Cython `cimport`s (CImportNode, CImportStatNode,
+    # FromCImportStatNode) are intentionally NOT collected: they reference
+    # C-level declarations from .pxd files (libc, libcpp, cpython, cydriver,
+    # etc.) that are not Python-importable and therefore must not appear in
+    # generated .pyi stubs.
 
     def visit_ImportNode(self, node):
         """Visits import nodes."""
@@ -151,11 +147,6 @@ class ImportVisitor(TreeVisitor):
 
     def visit_FromImportStatNode(self, node):
         """Visits from...import statement nodes."""
-        self.imports.append(node)
-        return node
-
-    def visit_FromCImportStatNode(self, node):
-        """Visits from...cimport statement nodes."""
         self.imports.append(node)
         return node
 
