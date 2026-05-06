@@ -86,8 +86,7 @@ class PyiClass(PyiElement):
     metaclass: str | None = None
     decorators: list[str] = field(default_factory=list)
     scope: PyiScope = field(default_factory=PyiScope)
-    # type->name
-    variables: list[tuple[str,str]] = field(default_factory=list)
+
 
 @dataclass
 class PyiEnum(PyiElement):
