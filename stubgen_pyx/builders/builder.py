@@ -92,6 +92,8 @@ class Builder:
         Returns:
             Class definition with docstring, decorators, bases, and body.
         """
+        if not self.include_private and self._is_private(class_.name):
+            return None
         output = "".join(f"{decorator}\n" for decorator in class_.decorators)
         output += f"class {class_.name}"
 

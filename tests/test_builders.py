@@ -291,6 +291,20 @@ class TestBuilder:
         assert result
         assert "@dataclass" in result
 
+    def test_build_class_private_excluded(self):
+        """Test that private classes are excluded by default."""
+        builder = Builder(include_private=False)
+        cls = PyiClass(name="_PrivateClass", scope=PyiScope())
+        assert builder.build_class(cls) is None
+
+    def test_build_class_private_included(self):
+        """Test that private classes are included when specified."""
+        builder = Builder(include_private=True)
+        cls = PyiClass(name="_PrivateClass", scope=PyiScope())
+        result = builder.build_class(cls)
+        assert result
+        assert "class _PrivateClass" in result
+
     def test_build_scope_with_assignments(self):
         """Test building a scope with assignments."""
         builder = Builder()
