@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import ast
 
+import pytest
+
 from stubgen_pyx.postprocessing import (
     collect_names,
     deduplicate_imports,
@@ -279,6 +281,19 @@ class TestNormalizeNames:
         result_str = ast.unparse(result)
         assert "MyClass" in result_str
         assert "int" in result_str
+
+    @pytest.mark.parametrize(
+        "cython_type",
+        normalize_names._CYTHON_INTS
+    )
+    def test_normalize_cython_int_types(self, cython_type):
+        """Cython integer-like type names normalize to ``int``."""
+        code = f"def func(x: {cython_type}) -> {cython_type}: pass"
+        tree = ast.parse(code)
+        result = normalize_names.normalize_names(tree)
+        result_str = ast.unparse(result)
+        assert cython_type not in result_str
+        assert "def func(x: int) -> int" in result_str
 
 
 class TestSortImports:
