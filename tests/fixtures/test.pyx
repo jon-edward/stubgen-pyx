@@ -26,6 +26,8 @@ def func() -> ImportedClass:
 
 
 cdef class TestClass2:
+    cdef public int a
+
     def __init__(self):
         """
         A docstring for __init__

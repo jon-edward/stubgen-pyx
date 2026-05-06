@@ -338,18 +338,24 @@ cdef extern from "<header.h>":
         assert isinstance(visitor.enums, list)
         assert len(visitor.enums) == 4
 
-        assert all(e.name == exp_val
-                   for e, exp_val in zip(visitor.enums,
-                                         ["NotWrappedInternal", "WrappedInternal",
-                                          "NotWrappedExternal", "WrappedExternal"]))
-        for e, exp_val in zip(visitor.enums,
-                              ["private", "private",
-                               "extern", "extern"]):
+        assert all(
+            e.name == exp_val
+            for e, exp_val in zip(
+                visitor.enums,
+                [
+                    "NotWrappedInternal",
+                    "WrappedInternal",
+                    "NotWrappedExternal",
+                    "WrappedExternal",
+                ],
+            )
+        )
+        for e, exp_val in zip(
+            visitor.enums, ["private", "private", "extern", "extern"]
+        ):
             assert e.visibility == exp_val
 
-        for e, exp_val in zip(visitor.enums,
-                              [False, True,
-                               False, True]):
+        for e, exp_val in zip(visitor.enums, [False, True, False, True]):
             assert e.create_wrapper == exp_val
 
 
