@@ -40,17 +40,18 @@ cdef class TestClass:
     """
 
     a: int
-    cdef public TestClass2 _test_class_2
+    cdef public TestClass2 test_class_2
+    cdef public list[int] test_list
 
     def __init__(self):
         """
         A docstring for __init__
         """
         self.a = imported_func()
-        self._test_class_2 = TestClass2()
+        self.test_class_2 = TestClass2()
 
     def test_class_2(self) -> TestClass2:
-        return self._test_class_2
+        return self.test_class_2
 
     cpdef b(self):
         """

@@ -762,3 +762,14 @@ cdef class CythonClass:
         visitor = ModuleVisitor(parsed.source_ast)
 
         assert len(visitor.scope.classes) == 1
+
+    def test_templated_type(self):
+        code = """
+cdef class CythonClass:
+    cdef public list[int] value
+"""
+        parsed = parse_pyx(code)
+        visitor = ModuleVisitor(parsed.source_ast)
+
+        assert len(visitor.scope.classes) == 1
+        assert len(visitor.scope.classes[0].scope.assignments) == 1

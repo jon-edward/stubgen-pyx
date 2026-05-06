@@ -40,6 +40,7 @@ def extract_type_from_base_type(base_type) -> str | None:
             name = ".".join(
                 base_type.base_type_node.module_path + [base_type.base_type_node.name]
             )
+            print("Called")
             return name
     except AttributeError:
         pass
@@ -98,18 +99,13 @@ def get_metaclass(node: Nodes.PyClassDefNode | Nodes.CClassDefNode) -> str | Non
 
 def get_cdef_variable(node: Nodes.CVarDefNode) -> tuple[str, str] | None:
     """Extract variable name from a class variable node."""
-    if not isinstance(node, Nodes.CVarDefNode):
-        return None
     base_type = extract_type_from_base_type(node.base_type)  # type: ignore
-    if base_type is None:
-        return None
-
     declarators: list[Nodes.CNameDeclaratorNode] = node.declarators  # type: ignore
     if not declarators:
         return None
 
     name = declarators[0].name
-    return name, base_type
+    return name, base_type or ""
 
 
 def get_enum_names(node: Nodes.CEnumDefNode) -> list[str]:
