@@ -24,9 +24,9 @@ from .conversion_utils import (
     get_decorators,
     get_bases,
     get_metaclass,
-    get_class_variables,
     get_source,
     get_enum_names,
+    get_cdef_variable,
     unparse_expr,
     docstring_to_string,
 )
@@ -72,11 +72,20 @@ class Converter:
 
         Combined assignments, functions, classes, and enums from the visitor.
         """
+        cdef_variables = visitor.cdef_variables
+        cdef_assignments: list[PyiAssignment] = []
+        for cdef_variable in cdef_variables:
+            assignment = get_cdef_variable(cdef_variable)
+            if assignment:
+                name, base_type = assignment
+                cdef_assignments.append(PyiAssignment(f"{name}: {base_type}"))
+
         return PyiScope(
             assignments=[
                 self.convert_assignment(assignment, source_code)
                 for assignment in visitor.assignments
-            ],
+            ]
+            + cdef_assignments,
             functions=[
                 self.convert_cdef_func(cdef_func, source_code)
                 for cdef_func in visitor.cdef_functions
@@ -110,7 +119,6 @@ class Converter:
             metaclass=get_metaclass(class_visitor.node),
             decorators=get_decorators(source_code, class_visitor.node),
             scope=self.convert_scope(class_visitor.scope, source_code),
-            variables=get_class_variables(class_visitor.scope.cdef_variables),
         )
 
     def convert_cdef_func(

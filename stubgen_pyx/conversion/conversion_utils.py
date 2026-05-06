@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import textwrap
 
+
 from Cython.Compiler import Nodes, ExprNodes
 
 
@@ -27,6 +28,22 @@ class _LinesCache:
 
 
 _lines_cache = _LinesCache()
+
+
+def extract_type_from_base_type(base_type) -> str | None:
+    """Extract type name from a base_type node, trying multiple approaches."""
+    try:
+        if base_type.name is not None:
+            name = ".".join(base_type.module_path + [base_type.name])
+            return name
+        if base_type.base_type_node is not None:
+            name = ".".join(
+                base_type.base_type_node.module_path + [base_type.base_type_node.name]
+            )
+            return name
+    except AttributeError:
+        pass
+    return None
 
 
 def get_source(source: str, node: Nodes.Node) -> str:
@@ -79,15 +96,20 @@ def get_metaclass(node: Nodes.PyClassDefNode | Nodes.CClassDefNode) -> str | Non
     return None
 
 
-def get_class_variables(nodes: list[Nodes.CVarDefNode]) -> list[tuple[str,str]] | None:
-    ret = []
-    for node_def in nodes:
-        type_ = node_def.base_type.name  # I hope
-        for declarator in node_def.declarators:
-            assert isinstance(declarator, Nodes.CNameDeclaratorNode)
-            name = declarator.name
-            ret.append((type_, name))
-    return ret
+def get_cdef_variable(node: Nodes.CVarDefNode) -> tuple[str, str] | None:
+    """Extract variable name from a class variable node."""
+    if not isinstance(node, Nodes.CVarDefNode):
+        return None
+    base_type = extract_type_from_base_type(node.base_type)  # type: ignore
+    if base_type is None:
+        return None
+
+    declarators: list[Nodes.CNameDeclaratorNode] = node.declarators  # type: ignore
+    if not declarators:
+        return None
+
+    name = declarators[0].name
+    return name, base_type
 
 
 def get_enum_names(node: Nodes.CEnumDefNode) -> list[str]:

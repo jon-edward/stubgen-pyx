@@ -6,7 +6,7 @@ import logging
 
 from Cython.Compiler import Nodes
 
-from .conversion_utils import unparse_expr
+from .conversion_utils import unparse_expr, extract_type_from_base_type
 from ..models.pyi_elements import PyiArgument, PyiSignature
 
 
@@ -61,28 +61,12 @@ def _decode_or_pass(value: str | bytes) -> str:
     raise TypeError(f"Expected str or bytes, got {type(value)}")
 
 
-def _extract_type_from_base_type(base_type) -> str | None:
-    """Extract type name from a base_type node, trying multiple approaches."""
-    try:
-        if base_type.name is not None:
-            name = ".".join(base_type.module_path + [base_type.name])
-            return name
-        if base_type.base_type_node is not None:
-            name = ".".join(
-                base_type.base_type_node.module_path + [base_type.base_type_node.name]
-            )
-            return name
-    except AttributeError:
-        pass
-    return None
-
-
 def _get_annotation(arg: Nodes.CArgDeclNode) -> str | None:
     """Extract type annotation from a function argument node."""
     try:
         if arg.annotation is not None:
             return _decode_or_pass(arg.annotation.string.value)
-        return _extract_type_from_base_type(arg.base_type)
+        return extract_type_from_base_type(arg.base_type)
     except AttributeError:
         pass
     return None
@@ -95,7 +79,7 @@ def _get_return_type_annotation(node: Nodes.CFuncDefNode | Nodes.DefNode) -> str
 
     try:
         base_type = node.base_type  # type: ignore
-        return _extract_type_from_base_type(base_type)
+        return extract_type_from_base_type(base_type)
     except AttributeError:
         pass
     return None
