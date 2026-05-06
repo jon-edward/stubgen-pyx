@@ -3,10 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import re
-
-
-_IMPORT_RE = re.compile(r"\bcimport\b")
 
 
 @dataclass
@@ -60,10 +56,11 @@ class PyiAssignment(PyiStatement):
 
 @dataclass
 class PyiImport(PyiStatement):
-    """Represents an import statement. The `cimport` keyword is replaced with `import`."""
+    """Represents a Python import statement.
 
-    def __post_init__(self):
-        self.statement = _IMPORT_RE.sub("import", self.statement)
+    `cimport` statements are filtered upstream in the analysis visitor and
+    never reach this class.
+    """
 
 
 @dataclass
