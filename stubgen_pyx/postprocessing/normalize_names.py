@@ -23,12 +23,16 @@ _CYTHON_INTS: tuple[str, ...] = (
     "size_t",
     "ssize_t",
     "ptrdiff_t",
-    "int64_t",
-    "int32_t",
+    "intptr_t",
+    "uintptr_t",
+    "int8_t",
     "int16_t",
-    "uint64_t",
-    "uint32_t",
+    "int32_t",
+    "int64_t",
+    "uint8_t",
     "uint16_t",
+    "uint32_t",
+    "uint64_t",
 )
 
 _CYTHON_FLOATS: tuple[str, ...] = (
