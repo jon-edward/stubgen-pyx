@@ -135,6 +135,10 @@ class Builder:
 
     def build_assignment(self, assignment: PyiAssignment) -> str | None:
         """Build an assignment statement string."""
+        if not self.include_private:
+            name = assignment.statement.partition("=")[0].partition(":")[0].strip()
+            if self._is_private(name):
+                return None
         return assignment.statement
 
     def build_import(self, import_statement: PyiImport) -> str | None:
