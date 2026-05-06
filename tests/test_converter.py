@@ -430,3 +430,23 @@ cdef extern from "<header.h>":
         assert isinstance(_enum, PyiEnum)
         assert "my_extern_enum" == _enum.enum_name
         assert "MY_ENUM_V1" in _enum.names
+
+    def test_cdef_public_class_vars(self):
+        """Test converting cdef public class variables."""
+        code = """
+cdef public int module_global_not_a_class_var = -1  # not a class var, should be ignored
+
+cdef class MyClass:
+    cdef public int value = 1
+    cdef int other = -1
+"""
+        parsed = parse_pyx(code)
+        visitor = ModuleVisitor(parsed.source_ast)
+
+        converter = Converter()
+        result = converter.convert_module(visitor, parsed.source)
+
+        assert len(result.scope.classes) == 1
+        cls = result.scope.classes[0]
+        assert len(cls.scope.assignments) == 1
+        assert len(result.scope.assignments) == 0

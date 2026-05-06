@@ -22,6 +22,7 @@ class ScopeVisitor(TreeVisitor):
     """
 
     node: Nodes.Node
+    in_class: bool = False
     assignments: list[Nodes.SingleAssignmentNode] = field(
         default_factory=list, init=False
     )
@@ -29,6 +30,7 @@ class ScopeVisitor(TreeVisitor):
     cdef_functions: list[Nodes.CFuncDefNode] = field(default_factory=list, init=False)
     classes: list[ClassVisitor] = field(default_factory=list, init=False)
     enums: list[Nodes.CEnumDefNode] = field(default_factory=list, init=False)
+    cdef_variables: list[Nodes.CVarDefNode] = field(default_factory=list, init=False)
 
     def __post_init__(self):
         super().__init__()
@@ -104,6 +106,12 @@ class ScopeVisitor(TreeVisitor):
         if isinstance(node.declarator, Nodes.CNameDeclaratorNode):
             self.assignments.append(node)
         return node
+
+    def visit_CVarDefNode(self, node: Nodes.CVarDefNode):
+        """Collect C variable/constance definitions"""
+        visibility: str = node.visibility  # type: ignore
+        if self.in_class and visibility == "public":
+            self.cdef_variables.append(node)
 
 
 @dataclass
@@ -207,7 +215,7 @@ class ClassVisitor:
     """A visitor for collecting scope nodes."""
 
     def __post_init__(self):
-        self.scope = ScopeVisitor(node=self.node)
+        self.scope = ScopeVisitor(node=self.node, in_class=True)
 
 
 def _collect_attribute(node) -> str:
