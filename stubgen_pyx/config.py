@@ -17,7 +17,7 @@ class StubgenPyxConfig:
         no_pxd_to_stubs: Skip merging .pxd file contents.
         no_normalize_names: Skip normalizing Cython type names.
         no_deduplicate_imports: Skip deduplicating imports.
-        exclude_epilog: Skip adding generation epilog comment.
+        exclude_attribution: Skip adding generation attribution comment.
         continue_on_error: Continue processing files that failed.
         include_private: Include private members.
         verbose: Enable verbose logging.
@@ -28,7 +28,7 @@ class StubgenPyxConfig:
     no_pxd_to_stubs: bool = False
     no_normalize_names: bool = False
     no_deduplicate_imports: bool = False
-    exclude_epilog: bool = False
+    exclude_attribution: bool = False
     continue_on_error: bool = False
     include_private: bool = False
     verbose: bool = False

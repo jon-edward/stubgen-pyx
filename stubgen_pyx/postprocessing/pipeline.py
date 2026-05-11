@@ -13,7 +13,7 @@ from ..config import StubgenPyxConfig
 from .collect_names import collect_names
 from .normalize_names import normalize_names
 from .sort_imports import sort_imports
-from .epilog import epilog
+from .attribution import stubgen_attribution
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ def postprocessing_pipeline(
     Args:
         pyi_code: Generated .pyi code to postprocess.
         config: Configuration options for processing.
-        pyx_path: Optional source file path for epilog comments.
+        pyx_path: Optional source file path for stubgen attribution comments.
 
     Returns:
         Processed .pyi code after all enabled transformations.
@@ -55,8 +55,8 @@ def postprocessing_pipeline(
     if not config.no_sort_imports:
         pyi_code = sort_imports(pyi_code)
 
-    if not config.exclude_epilog:
-        pyi_code = f"{pyi_code}\n\n{epilog(pyx_path)}"
+    if not config.exclude_attribution:
+        pyi_code = f"{stubgen_attribution(pyx_path)}\n{pyi_code}"
 
     return pyi_code
 

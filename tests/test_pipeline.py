@@ -33,16 +33,16 @@ def hello() -> None:
 
     result = postprocessing_pipeline(pyi_code, config)
 
-    # Should still include epilog
+    # Should still include attribution
     assert "from __future__ import annotations" in result
     assert "stubgen-pyx" in result
 
 
-def test_pipeline_excludes_epilog():
-    """Test that epilog can be excluded."""
+def test_pipeline_excludes_attribution():
+    """Test that attribution can be excluded."""
     pyi_code = "def hello(): pass"
 
-    config = StubgenPyxConfig(exclude_epilog=True, no_sort_imports=True)
+    config = StubgenPyxConfig(exclude_attribution=True, no_sort_imports=True)
     result = postprocessing_pipeline(pyi_code, config)
 
     assert "stubgen-pyx" not in result

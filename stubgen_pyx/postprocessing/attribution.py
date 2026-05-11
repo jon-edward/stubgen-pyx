@@ -7,8 +7,8 @@ from pathlib import Path
 from .._version import __version__
 
 
-def epilog(pyx_path: Path | None) -> str:
-    """Create an epilog comment for the .pyi file.
+def stubgen_attribution(pyx_path: Path | None) -> str:
+    """Create an attribution comment line.
 
     Args:
         pyx_path: Optional source file path to include in the comment.

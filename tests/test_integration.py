@@ -39,7 +39,7 @@ def test_convert_empty_pyx_file(temp_dir):
 
     assert isinstance(result, str)
     assert "from __future__ import annotations" in result
-    assert "stubgen-pyx" in result  # Epilog
+    assert "stubgen-pyx" in result  # Stubgen attribution
 
 
 def test_convert_with_function(temp_dir):
@@ -399,14 +399,10 @@ def quux():
     stubgen = StubgenPyx()
     result = stubgen.convert_str(pyx_file.read_text(), pyx_path=pyx_file)
 
-    isub_line = next(
-        line for line in result.splitlines() if "def __isub__" in line
-    )
+    isub_line = next(line for line in result.splitlines() if "def __isub__" in line)
     assert "# type: ignore[]" in isub_line
 
-    iadd_line = next(
-        line for line in result.splitlines() if "def __iadd__" in line
-    )
+    iadd_line = next(line for line in result.splitlines() if "def __iadd__" in line)
     assert "# type: ignore[misc, override]" in iadd_line
 
     bar_line = next(line for line in result.splitlines() if "def bar" in line)
@@ -441,9 +437,7 @@ def shifted(it: AbstractSet[Any]) -> Any:  # type: ignore[override,misc]
     stubgen = StubgenPyx()
     result = stubgen.convert_str(pyx_file.read_text(), pyx_path=pyx_file)
 
-    shifted_line = next(
-        line for line in result.splitlines() if "def shifted" in line
-    )
+    shifted_line = next(line for line in result.splitlines() if "def shifted" in line)
     assert "# type: ignore[override,misc]" in shifted_line
 
 
@@ -470,9 +464,7 @@ def tagged(): # type: ignore[no-untyped-def]
     stubgen = StubgenPyx()
     result = stubgen.convert_str(pyx_file.read_text(), pyx_path=pyx_file)
 
-    tagged_line = next(
-        line for line in result.splitlines() if "def tagged" in line
-    )
+    tagged_line = next(line for line in result.splitlines() if "def tagged" in line)
     assert "# type: ignore[no-untyped-def]" in tagged_line
 
 

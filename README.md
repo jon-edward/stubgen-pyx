@@ -129,8 +129,8 @@ stubgen-pyx . --no-pxd-to-stubs
 # Skip deduplicating imports
 stubgen-pyx . --no-deduplicate-imports
 
-# Skip epilog comment
-stubgen-pyx . --exclude-epilog
+# Skip adding stubgen-pyx attribution comment
+stubgen-pyx . --exclude-attribution
 
 # Include private functions in the stub
 stubgen-pyx . --include-private
@@ -181,7 +181,7 @@ config = StubgenPyxConfig(
     no_normalize_names=False,       # Normalize Cython types
     no_sort_imports=False,          # Sort imports
     no_deduplicate_imports=False,   # Deduplicate imports
-    exclude_epilog=False,           # Don't skip epilog comment
+    exclude_attribution=False,      # Don't skip stubgen-pyx attribution comment
     continue_on_error=True,         # Continue on errors
     include_private=False,          # Exclude private functions
     verbose=True,                   # Show details
@@ -251,7 +251,7 @@ All configuration is handled through the `StubgenPyxConfig` dataclass:
 | `no_deduplicate_imports` | bool | False   | Skip deduplicating imports                          |
 | `no_pxd_to_stubs`        | bool | False   | Skip including .pxd file contents                   |
 | `no_normalize_names`     | bool | False   | Skip normalizing Cython types to Python equivalents |
-| `exclude_epilog`         | bool | False   | Skip adding generation epilog comment               |
+| `exclude_attribution`    | bool | False   | Skip adding stubgen-pyx attribution comment         |
 | `continue_on_error`      | bool | False   | Continue processing even if a file fails            |
 | `include_private`        | bool | False   | Include private functions in the generated stub     |
 | `verbose`                | bool | False   | Enable verbose logging output                       |

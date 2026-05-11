@@ -15,7 +15,7 @@ def test_config_defaults():
     assert config.no_pxd_to_stubs is False
     assert config.no_normalize_names is False
     assert config.no_deduplicate_imports is False
-    assert config.exclude_epilog is False
+    assert config.exclude_attribution is False
     assert config.continue_on_error is False
     assert config.verbose is False
 

@@ -115,8 +115,8 @@ Examples:
     )
 
     parser.add_argument(
-        "--exclude-epilog",
-        help="Disable inclusion of epilog comment",
+        "--exclude-attribution",
+        help="Exclude stubgen-pyx attribution comment from the output stub",
         action="store_true",
     )
 
@@ -184,7 +184,7 @@ def main():
         no_trim_imports=args.no_trim_imports,
         no_normalize_names=args.no_normalize_names,
         no_pxd_to_stubs=args.no_pxd_to_stubs,
-        exclude_epilog=args.exclude_epilog,
+        exclude_attribution=args.exclude_attribution,
         no_deduplicate_imports=args.no_deduplicate_imports,
         continue_on_error=args.continue_on_error,
         include_private=args.include_private,

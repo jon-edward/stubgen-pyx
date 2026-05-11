@@ -92,11 +92,11 @@ class TestCreateParser:
         args = parser.parse_args([".", "--no-deduplicate-imports"])
         assert args.no_deduplicate_imports is True
 
-    def test_parser_with_exclude_epilog(self):
-        """Test parser with --exclude-epilog flag."""
+    def test_parser_with_exclude_attribution(self):
+        """Test parser with --exclude-attribution flag."""
         parser = cli._create_parser()
-        args = parser.parse_args([".", "--exclude-epilog"])
-        assert args.exclude_epilog is True
+        args = parser.parse_args([".", "--exclude-attribution"])
+        assert args.exclude_attribution is True
 
     def test_parser_with_continue_on_error(self):
         """Test parser with --continue-on-error flag."""
