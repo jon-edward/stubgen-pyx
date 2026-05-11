@@ -94,7 +94,7 @@ def _to_argument(arg: Nodes.CArgDeclNode) -> PyiArgument:
         name = _decode_or_pass(declarator.name)  # type: ignore
     if not name:
         name = arg.base_type.name  # type: ignore
-        annotation = None
+        annotation = _get_annotation(arg) if arg.annotation is not None else None
     else:
         annotation = _get_annotation(arg)
 
