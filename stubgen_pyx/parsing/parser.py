@@ -18,8 +18,7 @@ from .file_parsing import file_parsing_preprocess
 from .preprocess import (
     preprocess,
     extract_type_comments,
-    remove_contained_newlines,
-    replace_tabs_with_spaces,
+    get_lines_with_newlines_in_brackets,
 )
 
 Errors.init_thread()
@@ -73,13 +72,19 @@ def _parse_str(source: str, module_name: str) -> ParsedSource:
     """Internal: parse preprocessed source with Cython compiler."""
     context = StringParseContext(module_name, cpp=True)
 
-    # Extract type comments from a source where bracketed multi-line
-    # expressions have been flattened. This keeps comment line numbers
-    # aligned with AST node positions, which the full `preprocess` pass
-    # would otherwise shift relative to the original source.
-    type_comments = extract_type_comments(
-        remove_contained_newlines(replace_tabs_with_spaces(source))
-    )
+    # Extract type comments from the original source, then translate
+    # original line numbers to post-preprocess line numbers by subtracting
+    # the count of in-bracket newlines that `preprocess` will collapse.
+    # We can't run that flattening up-front: comments inside a bracketed
+    # block are terminated by their newline, so removing the newline would
+    # merge the comment with following code and break tokenization.
+    type_comments_orig = extract_type_comments(source)
+    collapsed_lines = sorted(get_lines_with_newlines_in_brackets(source))
+    type_comments: dict[int, str] = {}
+    for orig_line, comment in type_comments_orig.items():
+        shift = sum(1 for line in collapsed_lines if line < orig_line)
+        type_comments[orig_line - shift] = comment
+
     source = preprocess(source)
 
     ast = parse_from_strings(module_name, source, context=context)

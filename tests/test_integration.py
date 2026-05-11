@@ -447,6 +447,35 @@ def shifted(it: AbstractSet[Any]) -> Any:  # type: ignore[override,misc]
     assert "# type: ignore[override,misc]" in shifted_line
 
 
+def test_conversion_succeeds_with_comments_inside_brackets(temp_dir):
+    """A `#` comment inside a bracketed expression is terminated by its
+    newline. Stub generation must not collapse that newline away, or the
+    comment swallows the following dict entries and tokenization fails."""
+    pyx_file = temp_dir / "test.pyx"
+    pyx_file.write_text(
+        """
+def make_map():
+    return {
+        1: 'one',     # leading
+        2: 'two',     # the comment ends here, dict continues
+        3: 'three',
+    }
+
+
+def tagged(): # type: ignore[no-untyped-def]
+    pass
+"""
+    )
+
+    stubgen = StubgenPyx()
+    result = stubgen.convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+
+    tagged_line = next(
+        line for line in result.splitlines() if "def tagged" in line
+    )
+    assert "# type: ignore[no-untyped-def]" in tagged_line
+
+
 def test_convert_single_file_in_output_dir_dry_run(temp_dir, temp_outdir):
     """Test glob conversion with a single files in output dir with dry run."""
 

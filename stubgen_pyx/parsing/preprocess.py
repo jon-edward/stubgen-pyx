@@ -212,6 +212,25 @@ def _get_newline_indices_in_brackets(code: str) -> list[int]:
     return results
 
 
+def get_lines_with_newlines_in_brackets(code: str) -> list[int]:
+    """1-based line numbers whose terminating newline sits inside a bracket
+    pair. These lines are joined with the following line by
+    `remove_contained_newlines`."""
+    results: list[int] = []
+    bracket_stack: list[str] = []
+
+    for token in tokenize_py(code):
+        token_str = token.string
+        if token_str in _BRACKET_PAIRS and token.type == tokenize.OP:
+            bracket_stack.append(token_str)
+        elif bracket_stack and token_str == _BRACKET_PAIRS[bracket_stack[-1]]:
+            bracket_stack.pop()
+        elif token.type == tokenize.NL and bracket_stack:
+            results.append(token.start[0])
+
+    return results
+
+
 def _get_colon_line_col_before_block(code: str) -> list[tuple[int, int]]:
     """Get (line, col) positions of colons that start code blocks (reversed)."""
     results = []
