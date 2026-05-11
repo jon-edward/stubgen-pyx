@@ -5,7 +5,7 @@ Converts Cython AST nodes to PyiElements.
 from __future__ import annotations
 import ast
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from Cython.Compiler import Nodes
 
@@ -39,6 +39,11 @@ class Converter:
     Transforms Cython Compiler AST nodes (as collected by visitors) into
     intermediate PyiElement representations for building .pyi stub files.
     """
+
+    type_comments: dict[int, str] = field(default_factory=dict)
+
+    def _type_comment_for(self, node: Nodes.Node) -> str | None:
+        return self.type_comments.get(node.pos[1])
 
     def convert_module(self, visitor: ModuleVisitor, source_code: str) -> PyiModule:
         """Convert a ModuleVisitor to a PyiModule.
@@ -133,6 +138,7 @@ class Converter:
             doc=doc,
             decorators=get_decorators(source_code, cdef_func),
             signature=get_signature(cdef_func),
+            type_comment=self._type_comment_for(cdef_func),
         )
 
     def convert_py_func(self, node: Nodes.DefNode, source_code: str) -> PyiFunction:
@@ -145,6 +151,7 @@ class Converter:
             doc=doc,
             decorators=get_decorators(source_code, node),
             signature=get_signature(node),
+            type_comment=self._type_comment_for(node),
         )
 
     def convert_assignment(

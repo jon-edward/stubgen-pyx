@@ -33,7 +33,7 @@ def postprocessing_pipeline(
     Returns:
         Processed .pyi code after all enabled transformations.
     """
-    pyi_ast = ast.parse(pyi_code)
+    pyi_ast = ast.parse(pyi_code, type_comments=True)
 
     if (
         not config.no_deduplicate_imports

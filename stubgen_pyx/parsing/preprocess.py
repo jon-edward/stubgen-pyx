@@ -16,6 +16,7 @@ _PreprocessTransform = Callable[[str], str]
 _TAB_PATTERN = re.compile(r"^(\t+)", flags=re.MULTILINE)
 _LINE_INDENT_PATTERN = re.compile(r"^(\s*)")
 _LINE_CONTINUATION_PATTERN = re.compile(r"\\\n\s*")
+_TYPE_COMMENT_PATTERN = re.compile(r"^#\s*type:\s")
 _BRACKET_PAIRS = {
     "(": ")",
     "[": "]",
@@ -158,6 +159,20 @@ def _get_line_indentation(line: str) -> str:
 def tokenize_py(code: str) -> Generator[tokenize.TokenInfo, None, None]:
     """Tokenize Python/Cython code."""
     return tokenize.generate_tokens(io.StringIO(code).readline)
+
+
+def extract_type_comments(code: str) -> dict[int, str]:
+    """Map line number → `# type: ...` comment text.
+
+    Matches any PEP 484 style type comment (e.g. `# type: ignore[...]`,
+    `# type: int`, `# type: () -> int`). Run before `remove_comments` so
+    the comments are still present.
+    """
+    results: dict[int, str] = {}
+    for token in tokenize_py(code):
+        if token.type == tokenize.COMMENT and _TYPE_COMMENT_PATTERN.match(token.string):
+            results[token.start[0]] = token.string
+    return results
 
 
 def _get_comment_span_indices(code: str) -> list[tuple[int, int]]:
