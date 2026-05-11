@@ -103,6 +103,7 @@ class StubgenPyx:
         parse_result = parse_pyx(pyx_str, module_name=module_name, pyx_path=pyx_path)
 
         module_visitor = ModuleVisitor(node=parse_result.source_ast)
+        self.converter.type_comments = parse_result.type_comments
         module = self.converter.convert_module(module_visitor, parse_result.source)
 
         if pxd_str and not self.config.no_pxd_to_stubs:
@@ -110,6 +111,7 @@ class StubgenPyx:
                 pxd_str, module_name=module_name, pyx_path=pyx_path
             )
             pxd_visitor = ModuleVisitor(node=pxd_parse_result.source_ast)
+            self.converter.type_comments = pxd_parse_result.type_comments
             pxd_module = self.converter.convert_module(
                 pxd_visitor, pxd_parse_result.source
             )

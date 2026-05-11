@@ -16,6 +16,7 @@ _PreprocessTransform = Callable[[str], str]
 _TAB_PATTERN = re.compile(r"^(\t+)", flags=re.MULTILINE)
 _LINE_INDENT_PATTERN = re.compile(r"^(\s*)")
 _LINE_CONTINUATION_PATTERN = re.compile(r"\\\n\s*")
+_TYPE_COMMENT_PATTERN = re.compile(r"^#\s*type:\s")
 _BRACKET_PAIRS = {
     "(": ")",
     "[": "]",
@@ -160,6 +161,20 @@ def tokenize_py(code: str) -> Generator[tokenize.TokenInfo, None, None]:
     return tokenize.generate_tokens(io.StringIO(code).readline)
 
 
+def extract_type_comments(code: str) -> dict[int, str]:
+    """Map line number → `# type: ...` comment text.
+
+    Matches any PEP 484 style type comment (e.g. `# type: ignore[...]`,
+    `# type: int`, `# type: () -> int`). Run before `remove_comments` so
+    the comments are still present.
+    """
+    results: dict[int, str] = {}
+    for token in tokenize_py(code):
+        if token.type == tokenize.COMMENT and _TYPE_COMMENT_PATTERN.match(token.string):
+            results[token.start[0]] = token.string
+    return results
+
+
 def _get_comment_span_indices(code: str) -> list[tuple[int, int]]:
     """Get character spans of all comments (reversed for safe removal)."""
     results = []
@@ -194,6 +209,25 @@ def _get_newline_indices_in_brackets(code: str) -> list[int]:
             results.append(line_converter.line_col_to_offset(token.start))
 
     results.sort(reverse=True)
+    return results
+
+
+def get_lines_with_newlines_in_brackets(code: str) -> list[int]:
+    """1-based line numbers whose terminating newline sits inside a bracket
+    pair. These lines are joined with the following line by
+    `remove_contained_newlines`."""
+    results: list[int] = []
+    bracket_stack: list[str] = []
+
+    for token in tokenize_py(code):
+        token_str = token.string
+        if token_str in _BRACKET_PAIRS and token.type == tokenize.OP:
+            bracket_stack.append(token_str)
+        elif bracket_stack and token_str == _BRACKET_PAIRS[bracket_stack[-1]]:
+            bracket_stack.pop()
+        elif token.type == tokenize.NL and bracket_stack:
+            results.append(token.start[0])
+
     return results
 
 

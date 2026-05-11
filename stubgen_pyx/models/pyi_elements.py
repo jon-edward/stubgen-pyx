@@ -44,6 +44,7 @@ class PyiFunction(PyiElement):
     doc: str | None = None
     signature: PyiSignature = field(default_factory=PyiSignature)
     decorators: list[str] = field(default_factory=list)
+    type_comment: str | None = None
 
 
 @dataclass

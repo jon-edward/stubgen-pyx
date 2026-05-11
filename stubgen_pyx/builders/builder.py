@@ -128,11 +128,15 @@ class Builder:
         if not self.include_private and self._is_private(function.name):
             return None
         output = "".join(f"{decorator}\n" for decorator in function.decorators)
-        output += f"{'async ' if function.is_async else ''}def {function.name}{self.build_signature(function.signature)}: "
+        output += f"{'async ' if function.is_async else ''}def {function.name}{self.build_signature(function.signature)}:"
+        if function.type_comment:
+            output += f"  {function.type_comment}"
         if function.doc is not None:
             output += f"\n{textwrap.indent(function.doc, '    ')}"
+        elif function.type_comment:
+            output += "\n    ..."
         else:
-            output += "..."
+            output += " ..."
         return output
 
     def build_assignment(self, assignment: PyiAssignment) -> str | None:

@@ -373,6 +373,109 @@ def test_convert_single_file_dry_run(temp_dir):
     assert not pyx_file.with_suffix(".pyi").exists()
 
 
+def test_type_comment_propagates(temp_dir):
+    """`# type: ...` comments on def lines must propagate into the .pyi."""
+    pyx_file = temp_dir / "test.pyx"
+    pyx_file.write_text(
+        """
+class Foo:
+    def __isub__(self): # type: ignore[]
+        return self
+
+    def __iadd__(self, other):  # type: ignore[misc, override]
+        return self
+
+def bar(): # type: ignore[no-untyped-def]
+    pass
+
+def baz(x): # type: (int) -> int
+    return x
+
+def quux():
+    pass
+"""
+    )
+
+    stubgen = StubgenPyx()
+    result = stubgen.convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+
+    isub_line = next(
+        line for line in result.splitlines() if "def __isub__" in line
+    )
+    assert "# type: ignore[]" in isub_line
+
+    iadd_line = next(
+        line for line in result.splitlines() if "def __iadd__" in line
+    )
+    assert "# type: ignore[misc, override]" in iadd_line
+
+    bar_line = next(line for line in result.splitlines() if "def bar" in line)
+    assert "# type: ignore[no-untyped-def]" in bar_line
+
+    baz_line = next(line for line in result.splitlines() if "def baz" in line)
+    assert "# type: (int) -> int" in baz_line
+
+    quux_line = next(line for line in result.splitlines() if "def quux" in line)
+    assert "type:" not in quux_line
+
+
+def test_type_comment_propagates_after_bracketed_import(temp_dir):
+    """A multi-line bracketed import shifts AST line numbers relative to the
+    original source. The `# type:` comment lookup must use post-flattening
+    line numbers so the comment still attaches to the right def."""
+    pyx_file = temp_dir / "test.pyx"
+    pyx_file.write_text(
+        """
+from collections.abc import (
+    MutableSet,
+    Set as AbstractSet,
+)
+from typing import Any
+
+
+def shifted(it: AbstractSet[Any]) -> Any:  # type: ignore[override,misc]
+    return it
+"""
+    )
+
+    stubgen = StubgenPyx()
+    result = stubgen.convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+
+    shifted_line = next(
+        line for line in result.splitlines() if "def shifted" in line
+    )
+    assert "# type: ignore[override,misc]" in shifted_line
+
+
+def test_conversion_succeeds_with_comments_inside_brackets(temp_dir):
+    """A `#` comment inside a bracketed expression is terminated by its
+    newline. Stub generation must not collapse that newline away, or the
+    comment swallows the following dict entries and tokenization fails."""
+    pyx_file = temp_dir / "test.pyx"
+    pyx_file.write_text(
+        """
+def make_map():
+    return {
+        1: 'one',     # leading
+        2: 'two',     # the comment ends here, dict continues
+        3: 'three',
+    }
+
+
+def tagged(): # type: ignore[no-untyped-def]
+    pass
+"""
+    )
+
+    stubgen = StubgenPyx()
+    result = stubgen.convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+
+    tagged_line = next(
+        line for line in result.splitlines() if "def tagged" in line
+    )
+    assert "# type: ignore[no-untyped-def]" in tagged_line
+
+
 def test_convert_single_file_in_output_dir_dry_run(temp_dir, temp_outdir):
     """Test glob conversion with a single files in output dir with dry run."""
 
