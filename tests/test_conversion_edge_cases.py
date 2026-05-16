@@ -5,6 +5,8 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from stubgen_pyx.models.pyi_elements import (
     PyiArgument,
     PyiSignature,
@@ -16,6 +18,7 @@ from stubgen_pyx.models.pyi_elements import (
     PyiEnum,
 )
 from stubgen_pyx.builders.builder import Builder
+from stubgen_pyx.parsing.file_parsing import MaxIncludeDepthError
 
 
 class TestBuilderEdgeCases:
@@ -285,3 +288,23 @@ cdef class Processor:
             stubgen = StubgenPyx()
             result = stubgen.convert_str(pyx_file.read_text(), pyx_path=pyx_file)
             assert len(result) > 0
+
+    def test_circular_include(self):
+        """Test circular includes."""
+        from stubgen_pyx.stubgen import StubgenPyx
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pyx_file_1 = Path(tmpdir) / "pyx_file_1.pyx"
+            pyx_file_1.write_text("""
+include "pyx_file_2.pyx"
+""")
+
+            pyx_file_2 = Path(tmpdir) / "pyx_file_2.pyx"
+            pyx_file_2.write_text("""
+include "pyx_file_1.pyx"
+""")
+
+            stubgen = StubgenPyx()
+
+            with pytest.raises(MaxIncludeDepthError):
+                stubgen.convert_str(pyx_file_1.read_text(), pyx_path=pyx_file_1)

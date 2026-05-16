@@ -58,7 +58,8 @@ class Converter:
         doc = docstring_to_string(visitor.node.doc) if visitor.node.doc else None
         return PyiModule(
             doc=doc,
-            imports=self.convert_imports(visitor.import_visitor, source_code),
+            imports=self.convert_imports(visitor.import_visitor, source_code)
+            + [PyiImport("from typing import Any as _Any")],
             scope=self.convert_scope(visitor.scope, source_code),
         )
 
@@ -83,6 +84,7 @@ class Converter:
             assignment = get_cdef_variable(cdef_variable)
             if assignment:
                 name, base_type = assignment
+                base_type = base_type if base_type else "_Any"
                 cdef_assignments.append(PyiAssignment(f"{name}: {base_type}"))
 
         return PyiScope(

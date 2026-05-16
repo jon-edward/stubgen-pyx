@@ -6,19 +6,40 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import tokenize
 
 from .preprocess import remove_indices, tokenize_py, LineColConverter
+
+_STUBGEN_MAX_INCLUDE_DEPTH = int(
+    os.environ.get("STUBGEN_MAX_INCLUDE_DEPTH", 100)
+)  # arbitrary to prevent infinite recursion
+
+
+class MaxIncludeDepthError(ValueError):
+    pass
 
 
 def file_parsing_preprocess(source: Path, code: str) -> str:
     """
     Preprocess Cython code before parsing it.
     """
-    code = _expand_includes(source, code)
-    code = _replace_equals_star(code)
-    return code
+    # Start expansion from the provided code. Repeatedly expand includes
+    # until no more changes occur or a maximum depth is reached.
+    expanded = code
+    num_expands = 0
+    while True:
+        next_expanded = _expand_includes(source, expanded)
+        if next_expanded == expanded:
+            break
+        expanded = next_expanded
+        num_expands += 1
+        if num_expands > _STUBGEN_MAX_INCLUDE_DEPTH:
+            raise MaxIncludeDepthError(
+                f"Too many includes in source file (>{_STUBGEN_MAX_INCLUDE_DEPTH}). Possible circular include? Increase `STUBGEN_MAX_INCLUDE_DEPTH` environment variable."
+            )
+    return _replace_equals_star(expanded)
 
 
 def _read_file_fallback(path: Path, fallback: str) -> str:
