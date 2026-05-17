@@ -450,3 +450,21 @@ cdef class MyClass:
         cls = result.scope.classes[0]
         assert len(cls.scope.assignments) == 1
         assert len(result.scope.assignments) == 0
+
+    def test_char_ptr_type(self):
+        """Test converting char pointer type."""
+        code = """
+cpdef str get(char* path):
+    return NULL
+"""
+        parsed = parse_pyx(code)
+        visitor = ModuleVisitor(parsed.source_ast)
+
+        converter = Converter()
+        result = converter.convert_module(visitor, parsed.source)
+
+        assert len(result.scope.functions) == 1
+        func = result.scope.functions[0]
+        assert len(func.signature.args) == 1
+        arg = func.signature.args[0]
+        assert arg.annotation == "str"
