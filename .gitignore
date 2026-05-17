@@ -178,6 +178,7 @@ tests/fixtures/*.so
 # stress test packages
 /arrow
 /spaCy
+/h5py
 
 # profiling output
 *.prof
