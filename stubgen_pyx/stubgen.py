@@ -155,18 +155,31 @@ class StubgenPyx:
             pyx_file_pattern: Glob pattern (e.g., "**/*.pyx", "src/*.pyx").
 
         Returns:
-            Iterable of Path to the resolved file names
+            Iterable of Path to the resolved file names.
+
+        When matching .pyx patterns, standalone .pxd files are also included if
+        there is no corresponding .pyx file with the same stem.
         """
 
         # Note: Path.glob is not suitable with patterns containing absolute
         # paths, so glob is much better here
-        pyx_files = glob.glob(pyx_file_pattern, recursive=True)
+        file_paths = list(glob.glob(pyx_file_pattern, recursive=True))
 
-        if len(pyx_files) == 0:
+        if pyx_file_pattern.lower().endswith(".pyx"):
+            pxd_pattern = pyx_file_pattern[:-4] + ".pxd"
+            pxd_files = glob.glob(pxd_pattern, recursive=True)
+            pyx_stems = {Path(p).with_suffix("") for p in file_paths}
+            for pxd_path in pxd_files:
+                if Path(pxd_path).with_suffix("") not in pyx_stems:
+                    file_paths.append(pxd_path)
+
+        if len(file_paths) == 0:
             logger.warning(f"No files matched pattern: {pyx_file_pattern}")
         else:
-            logger.info(f"Found {len(pyx_files)} file(s) to convert")
-        return (Path(p) for p in pyx_files)
+            logger.info(f"Found {len(file_paths)} file(s) to convert")
+
+        unique_paths = list(dict.fromkeys(file_paths))
+        return (Path(p) for p in unique_paths)
 
     def convert_glob(
         self,
