@@ -14,6 +14,7 @@ from .collect_names import collect_names
 from .normalize_names import normalize_names
 from .sort_imports import sort_imports
 from .attribution import stubgen_attribution
+from .remove_identity_assignment import remove_identity_assignment
 
 logger = logging.getLogger(__name__)
 
@@ -85,4 +86,5 @@ def _combined_import_transform(
     if trim_unused and used_names is not None:
         tree = _UnusedImportRemover(used_names).visit(tree)
 
+    tree = remove_identity_assignment(tree)
     return tree

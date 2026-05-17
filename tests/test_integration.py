@@ -126,6 +126,20 @@ def test_convert_glob_with_pxd_file(temp_dir):
     assert results[0].success is True
 
 
+def test_convert_glob_with_standalone_pxd_file(temp_dir):
+    """Test glob conversion of a standalone .pxd file when no .pyx exists."""
+    pxd_file = temp_dir / "test.pxd"
+    pxd_file.write_text("cdef extern from 'test.h': void c_func()")
+
+    stubgen = StubgenPyx()
+    results = stubgen.convert_glob(str(temp_dir / "*.pyx"))
+
+    assert len(results) == 1
+    assert results[0].success is True
+    assert results[0].pyx_file == pxd_file
+    assert (temp_dir / "test.pyi").exists()
+
+
 def test_convert_glob_continue_on_error(temp_dir):
     """Test glob conversion with error handling."""
     # Valid file
