@@ -30,17 +30,24 @@ class _LinesCache:
 _lines_cache = _LinesCache()
 
 
-def extract_type_from_base_type(base_type) -> str | None:
+def extract_type_from_base_type(node) -> str | None:
     """Extract type name from a base_type node, trying multiple approaches."""
+    base_type = node.base_type
     try:
-        if base_type.name is not None:
+        name = None
+        if hasattr(base_type, "name") and base_type.name is not None:
             name = ".".join(base_type.module_path + [base_type.name])
-            return name
-        if base_type.base_type_node is not None:
+        if (
+            hasattr(base_type, "base_type_node")
+            and base_type.base_type_node is not None
+        ):
             name = ".".join(
                 base_type.base_type_node.module_path + [base_type.base_type_node.name]
             )
-            return name
+        if name == "char" and isinstance(node.declarator, Nodes.CPtrDeclaratorNode):
+            # char * -> str, too complex to handle with name substitution
+            return "str"
+        return name
     except AttributeError:
         pass
     return None
@@ -98,7 +105,7 @@ def get_metaclass(node: Nodes.PyClassDefNode | Nodes.CClassDefNode) -> str | Non
 
 def get_cdef_variable(node: Nodes.CVarDefNode) -> tuple[str, str] | None:
     """Extract variable name from a class variable node."""
-    base_type = extract_type_from_base_type(node.base_type)  # type: ignore
+    base_type = extract_type_from_base_type(node)  # type: ignore
     declarators: list[Nodes.CNameDeclaratorNode] = node.declarators  # type: ignore
     if not declarators:
         return None

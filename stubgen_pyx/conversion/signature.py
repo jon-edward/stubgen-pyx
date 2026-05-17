@@ -66,7 +66,7 @@ def _get_annotation(arg: Nodes.CArgDeclNode) -> str | None:
     try:
         if arg.annotation is not None:
             return _decode_or_pass(arg.annotation.string.value)
-        return extract_type_from_base_type(arg.base_type)
+        return extract_type_from_base_type(arg)
     except AttributeError:
         pass
     return None
@@ -78,8 +78,7 @@ def _get_return_type_annotation(node: Nodes.CFuncDefNode | Nodes.DefNode) -> str
         return _decode_or_pass(node.return_type_annotation.string.value)
 
     try:
-        base_type = node.base_type  # type: ignore
-        return extract_type_from_base_type(base_type)
+        return extract_type_from_base_type(node)
     except AttributeError:
         pass
     return None
