@@ -128,17 +128,9 @@ class StubgenPyx:
 
         module.scope.enums += extra_enums
         module.scope.assignments += extra_assignments
+        module.scope.deduplicate_assignments()
+        module.scope.merge_classes(extra_classes)
         module.imports += extra_imports
-
-        module_class_names = {
-            class_element.name for class_element in module.scope.classes
-        }
-
-        module.scope.classes += [
-            extra_class
-            for extra_class in extra_classes
-            if extra_class.name not in module_class_names
-        ]
 
         module.imports.append(
             PyiImport(

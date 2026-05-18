@@ -126,6 +126,63 @@ def test_convert_glob_with_pxd_file(temp_dir):
     assert results[0].success is True
 
 
+def test_compile_str_to_module_deduplicates_pxd_assignments(temp_dir):
+    """Test that assignments from .pxd and .pyx are merged without duplicates."""
+    pyx_file = temp_dir / "test.pyx"
+    pyx_file.write_text("x = 1\n")
+
+    pxd_content = "x: int = 1\n"
+    stubgen = StubgenPyx()
+
+    module = stubgen.compile_str_to_module(
+        pyx_file.read_text(),
+        pxd_str=pxd_content,
+        pyx_path=pyx_file,
+    )
+
+    assert len(module.scope.assignments) == 1
+    assert module.scope.assignments[0].statement.startswith("x")
+
+
+def test_compile_str_to_module_merges_pxd_class_declarations(temp_dir):
+    """Test that pxd class declarations are merged into existing pyx classes."""
+    pyx_file = temp_dir / "test.pyx"
+    pyx_file.write_text(
+        """
+class Config:
+    python_attribute: int = 1
+
+    def pyx_method(self):
+        pass
+"""
+    )
+
+    pxd_content = """
+cdef class Config:
+    cdef public int pxd_value
+"""
+    stubgen = StubgenPyx()
+
+    module = stubgen.compile_str_to_module(
+        pyx_file.read_text(),
+        pxd_str=pxd_content,
+        pyx_path=pyx_file,
+    )
+
+    config_cls = next(cls for cls in module.scope.classes if cls.name == "Config")
+    assert len(module.scope.classes) == 1
+
+    assert any(func.name == "pyx_method" for func in config_cls.scope.functions)
+    assert any(
+        assign.statement.startswith("pxd_value")
+        for assign in config_cls.scope.assignments
+    )
+    assert any(
+        assign.statement.startswith("python_attribute")
+        for assign in config_cls.scope.assignments
+    )
+
+
 def test_convert_glob_with_standalone_pxd_file(temp_dir):
     """Test glob conversion of a standalone .pxd file when no .pyx exists."""
     pxd_file = temp_dir / "test.pxd"
