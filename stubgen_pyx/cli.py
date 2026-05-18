@@ -115,6 +115,12 @@ Examples:
     )
 
     parser.add_argument(
+        "--no-trim-not-defined",
+        help="Do not replace names that are not builtin and not defined with `...`",
+        action="store_true",
+    )
+
+    parser.add_argument(
         "--exclude-attribution",
         help="Exclude stubgen-pyx attribution comment from the output stub",
         action="store_true",
@@ -186,6 +192,7 @@ def main():
         no_pxd_to_stubs=args.no_pxd_to_stubs,
         exclude_attribution=args.exclude_attribution,
         no_deduplicate_imports=args.no_deduplicate_imports,
+        no_trim_not_defined=args.no_trim_not_defined,
         continue_on_error=args.continue_on_error,
         include_private=args.include_private,
         verbose=args.verbose,

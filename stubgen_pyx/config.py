@@ -28,6 +28,7 @@ class StubgenPyxConfig:
     no_pxd_to_stubs: bool = False
     no_normalize_names: bool = False
     no_deduplicate_imports: bool = False
+    no_trim_not_defined: bool = False
     exclude_attribution: bool = False
     continue_on_error: bool = False
     include_private: bool = False

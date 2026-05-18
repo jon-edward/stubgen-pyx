@@ -34,6 +34,7 @@ Automatic stub file generation for Cython extensions that enables full IDE suppo
 
 - Automatic import trimming and deduplication
 - Cython type normalization (e.g., `bint` → `bool`, `unicode` → `str`)
+- Undefined name elimination from type hints and defaults
 - Proper handling of positional-only and keyword-only arguments
 - Preserves decorators and class metadata
 
@@ -128,6 +129,9 @@ stubgen-pyx . --no-pxd-to-stubs
 
 # Skip deduplicating imports
 stubgen-pyx . --no-deduplicate-imports
+
+# Skip trimming undefined names from annotations and defaults
+stubgen-pyx . --no-trim-not-defined
 
 # Skip adding stubgen-pyx attribution comment
 stubgen-pyx . --exclude-attribution
@@ -249,6 +253,7 @@ All configuration is handled through the `StubgenPyxConfig` dataclass:
 | `no_sort_imports`        | bool | False   | Skip sorting imports                                |
 | `no_trim_imports`        | bool | False   | Skip trimming unused imports                        |
 | `no_deduplicate_imports` | bool | False   | Skip deduplicating imports                          |
+| `no_trim_not_defined`    | bool | False   | Skip trimming undefined names from annotations      |
 | `no_pxd_to_stubs`        | bool | False   | Skip including .pxd file contents                   |
 | `no_normalize_names`     | bool | False   | Skip normalizing Cython types to Python equivalents |
 | `exclude_attribution`    | bool | False   | Skip adding stubgen-pyx attribution comment         |

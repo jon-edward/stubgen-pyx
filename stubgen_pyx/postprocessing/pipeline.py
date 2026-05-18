@@ -40,12 +40,14 @@ def postprocessing_pipeline(
         not config.no_deduplicate_imports
         or not config.no_trim_imports
         or not config.no_normalize_names
+        or not config.no_trim_not_defined
     ):
         pyi_ast = _combined_import_transform(
             pyi_ast,
             trim_unused=not config.no_trim_imports,
             normalize=not config.no_normalize_names,
             deduplicate=not config.no_deduplicate_imports,
+            remove_not_defined=not config.no_trim_not_defined,
         )
     else:
         if not config.no_normalize_names:
@@ -67,17 +69,22 @@ def _combined_import_transform(
     trim_unused: bool = True,
     normalize: bool = True,
     deduplicate: bool = True,
+    remove_not_defined: bool = True,
 ) -> ast.AST:
     """Combine import transformations into a single AST pass for efficiency."""
     from .normalize_names import _NameNormalizer
     from .trim_imports import _UnusedImportRemover
     from .deduplicate_imports import _DuplicateImportRemover
+    from .trim_not_defined import trim_not_defined
 
     if deduplicate:
         tree = _DuplicateImportRemover().visit(tree)
 
     if normalize:
         tree = _NameNormalizer().visit(tree)
+
+    if remove_not_defined:
+        tree = trim_not_defined(tree)
 
     used_names = None
     if trim_unused:
