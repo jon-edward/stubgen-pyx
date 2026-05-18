@@ -15,8 +15,6 @@ from stubgen_pyx.config import StubgenPyxConfig
 def test_pipeline_with_all_disabled():
     """Test pipeline when all postprocessing is disabled."""
     pyi_code = """
-from __future__ import annotations
-
 import os
 import sys
 
@@ -34,7 +32,6 @@ def hello() -> None:
     result = postprocessing_pipeline(pyi_code, config)
 
     # Should still include attribution
-    assert "from __future__ import annotations" in result
     assert "stubgen-pyx" in result
 
 

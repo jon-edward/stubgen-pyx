@@ -38,7 +38,6 @@ def test_convert_empty_pyx_file(temp_dir):
     result = stubgen.convert_str(pyx_file.read_text(), pyx_path=pyx_file)
 
     assert isinstance(result, str)
-    assert "from __future__ import annotations" in result
     assert "stubgen-pyx" in result  # Stubgen attribution
 
 

@@ -14,7 +14,7 @@ from .conversion.converter import Converter
 from .builders.builder import Builder
 from .parsing.parser import parse_pyx, path_to_module_name
 from .postprocessing.pipeline import postprocessing_pipeline
-from .models.pyi_elements import PyiImport, PyiModule
+from .models.pyi_elements import PyiModule
 
 
 logger = logging.getLogger(__name__)
@@ -131,12 +131,6 @@ class StubgenPyx:
         module.scope.deduplicate_assignments()
         module.scope.merge_classes(extra_classes)
         module.imports += extra_imports
-
-        module.imports.append(
-            PyiImport(
-                statement="from __future__ import annotations",
-            )
-        )
 
         return module
 

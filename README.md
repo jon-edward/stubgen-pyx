@@ -300,8 +300,6 @@ def matrix_product(Matrix a, Matrix b) -> Matrix:
 
 """Mathematical utilities for scientific computing."""
 
-from __future__ import annotations
-
 class Matrix:
     """A simple matrix class."""
 
