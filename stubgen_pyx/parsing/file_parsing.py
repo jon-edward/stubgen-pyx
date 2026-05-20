@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
+import logging
 import os
 from pathlib import Path
 import tokenize
@@ -15,6 +16,8 @@ from .preprocess import remove_indices, tokenize_py, LineColConverter
 _STUBGEN_MAX_INCLUDE_DEPTH = int(
     os.environ.get("STUBGEN_MAX_INCLUDE_DEPTH", 100)
 )  # arbitrary to prevent infinite recursion
+
+logger = logging.getLogger(__name__)
 
 
 class MaxIncludeDepthError(ValueError):
@@ -46,6 +49,7 @@ def _read_file_fallback(path: Path, fallback: str) -> str:
     try:
         return path.read_text()
     except (UnicodeDecodeError, FileNotFoundError):
+        logger.warning(f"Could not read file: {path}")
         return fallback
 
 
