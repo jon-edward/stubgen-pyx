@@ -58,8 +58,8 @@ def trim_not_defined(tree: ast.AST) -> ast.AST:
     remover = _RecordingNotDefinedRemover(definitions)
     tree = remover.visit(tree)
 
-    for name, location in remover.replaced:
-        logger.warning("Replaced undefined name %r with '...' at %s", name, location)
+    for name in remover.replaced:
+        logger.warning("Replaced undefined name %r with '...'", name)
     return tree
 
 
@@ -205,7 +205,7 @@ class _RecordingNotDefinedRemover(_NotDefinedRemover):
 
     def __init__(self, defined_names: set[str]):
         super().__init__(defined_names)
-        self.replaced: list[tuple[str, str]] = []
+        self.replaced: list[str] = []
 
     def _replace_if_undefined(self, node: ast.expr) -> ast.expr:
         if node is None:
@@ -214,8 +214,7 @@ class _RecordingNotDefinedRemover(_NotDefinedRemover):
         _CollectNames(used_names).visit(node)
         undefined = used_names - self.defined_names
         if undefined:
-            location = f"line {getattr(node, 'lineno', '?')}"
             for name in sorted(undefined):
-                self.replaced.append((name, location))
+                self.replaced.append(name)
             return ast.Constant(...)
         return node
