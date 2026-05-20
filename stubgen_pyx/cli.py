@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -26,8 +28,10 @@ Examples:
   %(prog)s . --output-dir stubs/     # Write stubs to stubs/ directory
   %(prog)s . --dry-run               # Preview conversions without writing
   %(prog)s . --verbose               # Show detailed processing information
-  %(prog)s src/ --file in.pyx --output-file out/out.pyi  # Convert a single pyx
-                                                         # file to an output file
+  %(prog)s src/ --cwd src/           # Convert all .pyx files in src/ directory
+                                        # with specified current working directory
+  %(prog)s src/ --file in.pyx --output-file out/out.pyi  # Convert a single pyx file
+                                                            # to an output file
         """,
     )
 
@@ -138,6 +142,13 @@ Examples:
         action="store_true",
     )
 
+    parser.add_argument(
+        "--cwd",
+        help="Use the given directory as the current working directory",
+        type=Path,
+        default=None,
+    )
+
     return parser
 
 
@@ -164,12 +175,8 @@ def _parse_args() -> argparse.Namespace | None:
     return args
 
 
-def main():
-    """Main entry point for stubgen-pyx."""
-
-    args = _parse_args()
-    if args is None:
-        sys.exit(1)
+def _main_impl(args: argparse.Namespace) -> int:
+    """Implementation for main entry point for stubgen-pyx. Returns exit code."""
 
     log_level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(
@@ -207,14 +214,14 @@ def main():
     # Validate no-files before single-file check to give clearer error messages
     if not pyx_files:
         logger.error(f"No .pyx files found matching pattern: {pyx_file_pattern}")
-        sys.exit(1)
+        return 1
 
     if args.output_file is not None and ((_num := len(pyx_files)) != 1):
         logger.error(
             "Option --output-file requires a single input pyx file in "
             f"'{pyx_file_pattern}': {_num} found"
         )
-        sys.exit(1)
+        return 1
 
     output_dir = None
     if args.output_dir:
@@ -246,6 +253,30 @@ def main():
     failed_count = sum(1 for r in results if not r.success)
     if failed_count > 0:
         logger.error(f"{failed_count} file(s) failed to convert")
+        return 1
+
+    return 0
+
+
+@contextlib.contextmanager
+def _chdir(path: Path):
+    cwd = Path.cwd()
+    try:
+        os.chdir(path)
+        yield
+    finally:
+        os.chdir(cwd)
+
+
+def main():
+    """Main entry point for stubgen-pyx."""
+
+    args = _parse_args()
+    if args is None:
         sys.exit(1)
 
-    sys.exit(0)
+    result: int = 1
+    with _chdir(args.cwd or Path(".")):
+        result = _main_impl(args)
+
+    sys.exit(result)
