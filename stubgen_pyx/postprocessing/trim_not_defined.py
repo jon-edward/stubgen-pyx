@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import ast
 import builtins
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 
 
@@ -55,7 +55,7 @@ def trim_not_defined(tree: ast.AST) -> ast.AST:
     collector = _DefinedCollector(definitions)
     collector.visit(tree)
     definitions = definitions | _BUILTIN_NAMES
-    remover = _RecordingNotDefinedRemover(definitions)
+    remover = _NotDefinedRemover(definitions)
     tree = remover.visit(tree)
 
     for name in remover.replaced:
@@ -131,21 +131,26 @@ class _NotDefinedRemover(ast.NodeTransformer):
 
     Processes type annotations, default values, and return type annotations,
     replacing any expression containing undefined names with ``...``.
+
+    Warns if any undefined names are replaced.
     """
 
     defined_names: set[str]
+    replaced: list[str] = field(default_factory=list, init=False)
 
     def _should_remove(self, used_names: set[str]) -> bool:
         """Check if any used names are undefined."""
         return not used_names.issubset(self.defined_names)
 
     def _replace_if_undefined(self, node: ast.expr) -> ast.expr:
-        """Replace node with Ellipsis if it contains undefined names."""
         if node is None:
             return None
         used_names: set[str] = set()
         _CollectNames(used_names).visit(node)
-        if self._should_remove(used_names):
+        undefined = used_names - self.defined_names
+        if undefined:
+            for name in sorted(undefined):
+                self.replaced.append(name)
             return ast.Constant(...)
         return node
 
@@ -198,23 +203,3 @@ class _NotDefinedRemover(ast.NodeTransformer):
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
         """Process async function definition."""
         return self._process_function(node)
-
-
-class _RecordingNotDefinedRemover(_NotDefinedRemover):
-    """Extends _NotDefinedRemover to record which names were replaced."""
-
-    def __init__(self, defined_names: set[str]):
-        super().__init__(defined_names)
-        self.replaced: list[str] = []
-
-    def _replace_if_undefined(self, node: ast.expr) -> ast.expr:
-        if node is None:
-            return None
-        used_names: set[str] = set()
-        _CollectNames(used_names).visit(node)
-        undefined = used_names - self.defined_names
-        if undefined:
-            for name in sorted(undefined):
-                self.replaced.append(name)
-            return ast.Constant(...)
-        return node
