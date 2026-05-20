@@ -33,6 +33,17 @@ _BUILTIN_NAMES = {
     name for name in dir(builtins) if not name.startswith("_")
 }  # Built-in names that should never be trimmed
 
+_BUILTIN_NAMES.update(
+    {
+        "__name__",
+        "__doc__",
+        "__file__",
+        "__package__",
+        "__loader__",
+        "__spec__",
+    }  # Names that are usually defined but not in builtins
+)
+
 
 def trim_not_defined(tree: ast.AST) -> ast.AST:
     """Remove undefined names from annotations and defaults in an AST.
@@ -55,12 +66,32 @@ def trim_not_defined(tree: ast.AST) -> ast.AST:
     collector = _DefinedCollector(definitions)
     collector.visit(tree)
     definitions = definitions | _BUILTIN_NAMES
-    remover = _NotDefinedRemover(definitions)
+    remover = _NotDefinedRemover(definitions, _contains_star_import(tree))
     tree = remover.visit(tree)
 
     for name in remover.replaced:
         logger.warning("Replaced undefined name %r with '...'", name)
     return tree
+
+
+class _FoundStarImport(Exception):
+    """Exception raised when a star import is encountered."""
+
+
+class _SearchStarImports(ast.NodeVisitor):
+    """Search for star imports, exiting early if found."""
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        if node.names[0].name == "*":
+            raise _FoundStarImport
+
+
+def _contains_star_import(tree: ast.AST) -> bool:
+    try:
+        _SearchStarImports().visit(tree)
+        return False
+    except _FoundStarImport:
+        return True
 
 
 @dataclass
@@ -138,15 +169,19 @@ class _NotDefinedRemover(ast.NodeTransformer):
     """
 
     defined_names: set[str]
+    contains_star_import: bool = False
     replaced: list[str] = field(default_factory=list, init=False)
 
     def _should_remove(self, used_names: set[str]) -> bool:
         """Check if any used names are undefined."""
         return not used_names.issubset(self.defined_names)
 
-    def _replace_if_undefined(self, node: ast.expr) -> ast.expr:
-        if node is None:
-            return None
+    def _replace_if_undefined(
+        self, node: ast.expr, annotation: bool = False
+    ) -> ast.expr:
+        if annotation and self.contains_star_import:
+            # Do not replace names in type annotations if a star import is present
+            return node
         used_names: set[str] = set()
         _CollectNames(used_names).visit(node)
         undefined = used_names - self.defined_names
@@ -163,7 +198,7 @@ class _NotDefinedRemover(ast.NodeTransformer):
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> ast.AnnAssign:
         """Process annotated assignment annotation and value."""
-        node.annotation = self._replace_if_undefined(node.annotation)
+        node.annotation = self._replace_if_undefined(node.annotation, annotation=True)
         if node.value is not None:
             node.value = self._replace_if_undefined(node.value)
         return node
@@ -172,7 +207,9 @@ class _NotDefinedRemover(ast.NodeTransformer):
         """Process function argument annotations and defaults."""
         for arg in node.args + node.posonlyargs + node.kwonlyargs:
             if arg.annotation:
-                arg.annotation = self._replace_if_undefined(arg.annotation)
+                arg.annotation = self._replace_if_undefined(
+                    arg.annotation, annotation=True
+                )
 
         node.defaults = [
             self._replace_if_undefined(default) for default in node.defaults
@@ -184,9 +221,13 @@ class _NotDefinedRemover(ast.NodeTransformer):
         ]
 
         if node.vararg and node.vararg.annotation:
-            node.vararg.annotation = self._replace_if_undefined(node.vararg.annotation)
+            node.vararg.annotation = self._replace_if_undefined(
+                node.vararg.annotation, annotation=True
+            )
         if node.kwarg and node.kwarg.annotation:
-            node.kwarg.annotation = self._replace_if_undefined(node.kwarg.annotation)
+            node.kwarg.annotation = self._replace_if_undefined(
+                node.kwarg.annotation, annotation=True
+            )
 
         return node
 
