@@ -132,7 +132,9 @@ class _NotDefinedRemover(ast.NodeTransformer):
     Processes type annotations, default values, and return type annotations,
     replacing any expression containing undefined names with ``...``.
 
-    Warns if any undefined names are replaced.
+    Attributes:
+        defined_names: Names defined in the module (not including builtins).
+        replaced: Names that were replaced with Ellipsis.
     """
 
     defined_names: set[str]
