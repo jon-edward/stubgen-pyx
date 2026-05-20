@@ -377,3 +377,23 @@ x: Dict[str, int] = {}
         result_str = ast.unparse(result)
         assert "Dict" in result_str
         assert "List" not in result_str
+
+
+class TestMergeLogicInStubgen:
+    """Merge and dedup logic moved from PyiScope/PyiClass to stubgen.py free functions."""
+
+    def test_pxd_merge_deduplicates_assignments(self):
+        """pxd declarations that duplicate pyx declarations are removed."""
+        from stubgen_pyx import StubgenPyx
+        from stubgen_pyx.config import StubgenPyxConfig
+
+        s = StubgenPyx(
+            config=StubgenPyxConfig(exclude_attribution=True, sort_imports=False)
+        )
+        pyx = "cdef class Foo:\n    y: int\n"
+        pxd = "cdef class Foo:\n    cdef public int x\n"
+        result = s.convert_str(pyx, pxd_str=pxd)
+        # x should appear exactly once
+        assert result.count("x: int") == 1
+        # y should appear exactly once
+        assert result.count("y: int") == 1

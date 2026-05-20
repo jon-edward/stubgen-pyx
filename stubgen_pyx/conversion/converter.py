@@ -4,8 +4,9 @@ Converts Cython AST nodes to PyiElements.
 
 from __future__ import annotations
 import ast
+import re
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from Cython.Compiler import Nodes
 
@@ -26,10 +27,12 @@ from .conversion_utils import (
     get_metaclass,
     get_source,
     get_enum_names,
-    get_cdef_variable,
+    get_cdef_variables,
     unparse_expr,
     docstring_to_string,
 )
+
+_CIMPORT_RE = re.compile(r"\bcimport\b")
 
 
 @dataclass
@@ -40,27 +43,34 @@ class Converter:
     intermediate PyiElement representations for building .pyi stub files.
     """
 
-    type_comments: dict[int, str] = field(default_factory=dict)
+    def _type_comment_for(
+        self, node: Nodes.Node, type_comments: dict[int, str]
+    ) -> str | None:
+        return type_comments.get(node.pos[1])
 
-    def _type_comment_for(self, node: Nodes.Node) -> str | None:
-        return self.type_comments.get(node.pos[1])
-
-    def convert_module(self, visitor: ModuleVisitor, source_code: str) -> PyiModule:
+    def convert_module(
+        self,
+        visitor: ModuleVisitor,
+        source_code: str,
+        type_comments: dict[int, str] | None = None,
+    ) -> PyiModule:
         """Convert a ModuleVisitor to a PyiModule.
 
         Args:
             visitor: Module visitor containing AST information.
             source_code: The original source code text.
+            type_comments: Map of line number to type comment strings.
 
         Returns:
             PyiModule representation with imports and scope.
         """
+        tc = type_comments or {}
         doc = docstring_to_string(visitor.node.doc) if visitor.node.doc else None
         return PyiModule(
             doc=doc,
             imports=self.convert_imports(visitor.import_visitor, source_code)
-            + [PyiImport("from typing import Any as _Any")],
-            scope=self.convert_scope(visitor.scope, source_code),
+            + [PyiImport("from typing import Any as _Any, TypeAlias as _TypeAlias")],
+            scope=self.convert_scope(visitor.scope, source_code, tc),
         )
 
     def convert_imports(
@@ -70,22 +80,40 @@ class Converter:
         return [self.convert_import(node, source_code) for node in visitor.imports]
 
     def convert_import(self, node: Nodes.Node, source_code: str) -> PyiImport:
-        """Convert a single import node to PyiImport."""
-        return PyiImport(get_source(source_code, node))
+        """Convert a single import node to PyiImport, rewriting cimport -> import."""
+        raw = get_source(source_code, node)
+        return PyiImport(_CIMPORT_RE.sub("import", raw))
 
-    def convert_scope(self, visitor: ScopeVisitor, source_code: str) -> PyiScope:
+    def convert_scope(
+        self,
+        visitor: ScopeVisitor,
+        source_code: str,
+        type_comments: dict[int, str] | None = None,
+    ) -> PyiScope:
         """Convert a ScopeVisitor to a PyiScope.
 
-        Combined assignments, functions, classes, and enums from the visitor.
+        Preserves source order by interleaving cdef and def functions by their
+        line position, rather than emitting all cdef functions first.
         """
-        cdef_variables = visitor.cdef_variables
+        tc = type_comments or {}
+
         cdef_assignments: list[PyiAssignment] = []
-        for cdef_variable in cdef_variables:
-            assignment = get_cdef_variable(cdef_variable)
-            if assignment:
-                name, base_type = assignment
-                base_type = base_type if base_type else "_Any"
-                cdef_assignments.append(PyiAssignment(f"{name}: {base_type}"))
+        for cdef_variable in visitor.cdef_variables:
+            for name, base_type in get_cdef_variables(cdef_variable):
+                resolved_type = base_type if base_type else "_Any"
+                cdef_assignments.append(PyiAssignment(f"{name}: {resolved_type}"))
+
+        # Preserve source order across cdef and def functions
+        cdef_funcs = [
+            (node.pos[1], self.convert_cdef_func(node, source_code, tc))
+            for node in visitor.cdef_functions
+        ]
+        py_funcs = [
+            (node.pos[1], self.convert_py_func(node, source_code, tc))
+            for node in visitor.py_functions
+        ]
+        all_funcs_sorted = sorted(cdef_funcs + py_funcs, key=lambda t: t[0])
+        functions = [f for _, f in all_funcs_sorted]
 
         return PyiScope(
             assignments=[
@@ -93,23 +121,22 @@ class Converter:
                 for assignment in visitor.assignments
             ]
             + cdef_assignments,
-            functions=[
-                self.convert_cdef_func(cdef_func, source_code)
-                for cdef_func in visitor.cdef_functions
-            ]
-            + [
-                self.convert_py_func(py_func, source_code)
-                for py_func in visitor.py_functions
-            ],
+            functions=functions,
             classes=[
-                self.convert_class(class_visitor, source_code)
+                self.convert_class(class_visitor, source_code, tc)
                 for class_visitor in visitor.classes
             ],
             enums=[self.convert_enum(enum) for enum in visitor.enums],
         )
 
-    def convert_class(self, class_visitor: ClassVisitor, source_code: str) -> PyiClass:
+    def convert_class(
+        self,
+        class_visitor: ClassVisitor,
+        source_code: str,
+        type_comments: dict[int, str] | None = None,
+    ) -> PyiClass:
         """Convert a ClassVisitor to a PyiClass."""
+        tc = type_comments or {}
         if isinstance(class_visitor.node, Nodes.CClassDefNode):
             name: str = class_visitor.node.class_name  # type: ignore
         else:
@@ -125,13 +152,17 @@ class Converter:
             bases=get_bases(class_visitor.node),
             metaclass=get_metaclass(class_visitor.node),
             decorators=get_decorators(source_code, class_visitor.node),
-            scope=self.convert_scope(class_visitor.scope, source_code),
+            scope=self.convert_scope(class_visitor.scope, source_code, tc),
         )
 
     def convert_cdef_func(
-        self, cdef_func: Nodes.CFuncDefNode, source_code: str
+        self,
+        cdef_func: Nodes.CFuncDefNode,
+        source_code: str,
+        type_comments: dict[int, str] | None = None,
     ) -> PyiFunction:
         """Convert a C function definition node to PyiFunction."""
+        tc = type_comments or {}
         name: str = cdef_func.declarator.base.name  # type: ignore
         doc = docstring_to_string(cdef_func.doc) if cdef_func.doc else None  # type: ignore
         return PyiFunction(
@@ -140,11 +171,17 @@ class Converter:
             doc=doc,
             decorators=get_decorators(source_code, cdef_func),
             signature=get_signature(cdef_func),
-            type_comment=self._type_comment_for(cdef_func),
+            type_comment=self._type_comment_for(cdef_func, tc),
         )
 
-    def convert_py_func(self, node: Nodes.DefNode, source_code: str) -> PyiFunction:
+    def convert_py_func(
+        self,
+        node: Nodes.DefNode,
+        source_code: str,
+        type_comments: dict[int, str] | None = None,
+    ) -> PyiFunction:
         """Convert a Python function definition node to PyiFunction."""
+        tc = type_comments or {}
         name = node.name  # type: ignore
         doc = docstring_to_string(node.doc) if node.doc else None
         return PyiFunction(
@@ -153,7 +190,7 @@ class Converter:
             doc=doc,
             decorators=get_decorators(source_code, node),
             signature=get_signature(node),
-            type_comment=self._type_comment_for(node),
+            type_comment=self._type_comment_for(node, tc),
         )
 
     def convert_assignment(
@@ -198,7 +235,7 @@ class Converter:
 
             base_name: str = node.name  # type: ignore
             type_name = ".".join(node.module_path + [base_name])
-            return PyiAssignment(f"{name} = {type_name}")
+            return PyiAssignment(f"{name}: _TypeAlias = {type_name}")
 
         return PyiAssignment(get_source(source_code, assignment))
 
@@ -208,4 +245,4 @@ class Converter:
             name: str | None = node.name  # type: ignore
             return PyiEnum(enum_name=name, names=get_enum_names(node))
         # Make it usable as an alias for int
-        return PyiAssignment(f"{node.name} = int")  # type: ignore
+        return PyiAssignment(f"{node.name}: _TypeAlias = int")  # type: ignore

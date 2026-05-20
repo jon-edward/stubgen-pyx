@@ -265,7 +265,27 @@ class Parser:
         tree = ast.parse(code)
         result = trim_not_defined(tree)
         result_str = ast.unparse(result)
-        # Config should be replaced
-        # But Optional and Dict should remain
-        assert "Config" not in result_str or "..." in result_str
-        assert "Optional" in result_str or "..." not in result_str
+        # Config is not imported and not defined at module level; must be replaced
+        assert "Config" not in result_str
+        # Optional and Dict are imported; must be preserved
+        assert "Optional" in result_str
+
+    def test_class_scoped_names_do_not_leak_to_module(self):
+        """Names defined inside a class body must not prevent trimming at module level.
+
+        A previous bug caused _DefinedCollector to descend into class bodies, which
+        meant a class attribute 'x' would add 'x' to the module-level defined set,
+        preventing it from being trimmed elsewhere.
+        """
+        code = """
+class Foo:
+    x: int
+
+def bar(y: x) -> int:  # x is NOT defined at module level
+    pass
+"""
+        tree = ast.parse(code)
+        result = trim_not_defined(tree)
+        result_str = ast.unparse(result)
+        # 'x' from Foo's body must not protect 'x' in bar's annotation
+        assert "def bar(y: ...)" in result_str or "y: ..." in result_str

@@ -181,6 +181,7 @@ class TestMain:
         mock_stubgen_class.return_value = mock_stubgen
         mock_result = MagicMock()
         mock_result.success = True
+        mock_stubgen.resolve_glob.return_value = [Path("test.pyx")]
         mock_stubgen.convert_multiple_files.return_value = [mock_result]
 
         with patch.object(sys, "argv", ["stubgen-pyx", "."]):
@@ -196,6 +197,7 @@ class TestMain:
         mock_stubgen_class.return_value = mock_stubgen
         mock_result = MagicMock()
         mock_result.success = True
+        mock_stubgen.resolve_glob.return_value = [Path("test.pyx")]
         mock_stubgen.convert_multiple_files.return_value = [mock_result]
 
         with patch.object(sys, "argv", ["stubgen-pyx", ".", "-v"]):
@@ -216,6 +218,7 @@ class TestMain:
         mock_stubgen_class.return_value = mock_stubgen
         mock_result = MagicMock()
         mock_result.success = True
+        mock_stubgen.resolve_glob.return_value = [Path("test.pyx")]
         mock_stubgen.convert_multiple_files.return_value = [mock_result]
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -236,6 +239,7 @@ class TestMain:
         mock_stubgen_class.return_value = mock_stubgen
         mock_result = MagicMock()
         mock_result.success = True
+        mock_stubgen.resolve_glob.return_value = [Path("test.pyx")]
         mock_stubgen.convert_multiple_files.return_value = [mock_result]
 
         with patch.object(sys, "argv", ["stubgen-pyx", ".", "--dry-run"]):
@@ -251,6 +255,8 @@ class TestMain:
         mock_stubgen_class.return_value = mock_stubgen
         mock_result = MagicMock()
         mock_result.success = False
+        mock_stubgen.resolve_glob.return_value = [Path("test.pyx")]
+        mock_stubgen.resolve_glob.return_value = [Path("test.pyx")]
         mock_stubgen.convert_multiple_files.return_value = [mock_result]
 
         with patch.object(sys, "argv", ["stubgen-pyx", "."]):
@@ -264,6 +270,7 @@ class TestMain:
         """Test main function when no files are found."""
         mock_stubgen = MagicMock()
         mock_stubgen_class.return_value = mock_stubgen
+        mock_stubgen.resolve_glob.return_value = []
         mock_stubgen.convert_multiple_files.return_value = []
 
         with patch.object(sys, "argv", ["stubgen-pyx", "."]):
@@ -281,6 +288,7 @@ class TestMain:
         mock_result1.success = True
         mock_result2 = MagicMock()
         mock_result2.success = False
+        mock_stubgen.resolve_glob.return_value = [Path("a.pyx"), Path("b.pyx")]
         mock_stubgen.convert_multiple_files.return_value = [mock_result1, mock_result2]
 
         with patch.object(sys, "argv", ["stubgen-pyx", "."]):
@@ -296,6 +304,7 @@ class TestMain:
         mock_stubgen_class.return_value = mock_stubgen
         mock_result = MagicMock()
         mock_result.success = True
+        mock_stubgen.resolve_glob.return_value = [Path("test.pyx")]
         mock_stubgen.convert_multiple_files.return_value = [mock_result]
 
         with patch.object(sys, "argv", ["stubgen-pyx", "src/", "--file", "*.pyx"]):

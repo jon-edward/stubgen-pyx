@@ -468,3 +468,91 @@ cpdef str get(char* path):
         assert len(func.signature.args) == 1
         arg = func.signature.args[0]
         assert arg.annotation == "str"
+
+
+class TestFunctionSourceOrder:
+    """Test that functions appear in source order, not cdef-before-def."""
+
+    def test_cpdef_before_def_in_source(self):
+        """cpdef appearing before def must come first in output."""
+        from stubgen_pyx import StubgenPyx
+        from stubgen_pyx.config import StubgenPyxConfig
+
+        s = StubgenPyx(
+            config=StubgenPyxConfig(exclude_attribution=True, sort_imports=False)
+        )
+        result = s.convert_str("""
+cpdef int first(int x): pass
+def second(): pass
+""")
+        assert result.index("def first") < result.index("def second")
+
+    def test_def_before_cpdef_in_source(self):
+        """def appearing before cpdef must come first in output."""
+        from stubgen_pyx import StubgenPyx
+        from stubgen_pyx.config import StubgenPyxConfig
+
+        s = StubgenPyx(
+            config=StubgenPyxConfig(exclude_attribution=True, sort_imports=False)
+        )
+        result = s.convert_str("""
+def first(): pass
+cpdef int second(int x): pass
+def third(): pass
+""")
+        assert result.index("def first") < result.index("def second")
+        assert result.index("def second") < result.index("def third")
+
+    def test_interleaved_functions_preserve_order(self):
+        """Interleaved def and cpdef functions preserve source order."""
+        from stubgen_pyx import StubgenPyx
+        from stubgen_pyx.config import StubgenPyxConfig
+
+        s = StubgenPyx(
+            config=StubgenPyxConfig(exclude_attribution=True, sort_imports=False)
+        )
+        result = s.convert_str("""
+def a(): pass
+cpdef int b(int x): pass
+def c(): pass
+cpdef int d(int y): pass
+""")
+        assert result.index("def a") < result.index("def b")
+        assert result.index("def b") < result.index("def c")
+        assert result.index("def c") < result.index("def d")
+
+
+class TestConverterStateless:
+    """Converter should carry no session state between convert_module calls."""
+
+    def test_converter_reusable_across_calls(self):
+        """A single Converter instance must be safely reusable."""
+        from stubgen_pyx.conversion.converter import Converter
+        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
+
+        converter = Converter()
+
+        for src in ("def foo(): pass", "def bar(x: int) -> str: pass"):
+            pr = parse_pyx(src)
+            mv = ModuleVisitor(pr.source_ast)
+            module = converter.convert_module(mv, pr.source, pr.type_comments)
+            assert len(module.scope.functions) == 1
+
+    def test_type_comments_not_shared_between_calls(self):
+        """type_comments from one parse must not affect a second call."""
+        from stubgen_pyx.conversion.converter import Converter
+        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
+
+        converter = Converter()
+
+        pr1 = parse_pyx("def foo(x): pass  # type: (int) -> None")
+        mv1 = ModuleVisitor(pr1.source_ast)
+        converter.convert_module(mv1, pr1.source, pr1.type_comments)
+
+        # Second call with no type comments: must not inherit from first
+        pr2 = parse_pyx("def bar(y): pass")
+        mv2 = ModuleVisitor(pr2.source_ast)
+        module2 = converter.convert_module(mv2, pr2.source, {})
+        assert module2.scope.functions[0].type_comment is None

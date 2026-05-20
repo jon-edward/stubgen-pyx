@@ -46,12 +46,12 @@ class Builder:
         Returns:
             String like "x", "x: int", or "x: int = 5".
         """
-        output = argument.name
+        parts = [argument.name]
         if argument.annotation is not None:
-            output += f": {argument.annotation}"
+            parts.append(f": {argument.annotation}")
         if argument.default is not None:
-            output += f" = {argument.default}"
-        return output
+            parts.append(f" = {argument.default}")
+        return "".join(parts)
 
     def build_signature(self, signature: PyiSignature) -> str:
         """Build a function signature string.
@@ -78,10 +78,10 @@ class Builder:
             arg_strings.insert(-signature.num_kwonly_args, "*")
         if signature.kw_arg is not None:
             arg_strings.append(f"**{signature.kw_arg.name}")
-        output = f"({', '.join(arg_strings)})"
+        sig = f"({', '.join(arg_strings)})"
         if signature.return_type is not None:
-            output += f" -> {signature.return_type}"
-        return output
+            sig += f" -> {signature.return_type}"
+        return sig
 
     def build_class(self, class_: PyiClass) -> str | None:
         """Build a class definition string.
@@ -94,27 +94,25 @@ class Builder:
         """
         if not self.include_private and self._is_private(class_.name):
             return None
-        output = "".join(f"{decorator}\n" for decorator in class_.decorators)
-        output += f"class {class_.name}"
+        parts = ["".join(f"{d}\n" for d in class_.decorators)]
+        parts.append(f"class {class_.name}")
 
         if class_.bases or class_.metaclass is not None:
-            output += "("
-            for base in class_.bases:
-                output += f"{base}, "
+            inheritance_parts = list(class_.bases)
             if class_.metaclass is not None:
-                output += f"metaclass={class_.metaclass}"
-            output += ")"
+                inheritance_parts.append(f"metaclass={class_.metaclass}")
+            parts.append(f"({', '.join(inheritance_parts)})")
 
-        output += ": "
+        parts.append(": ")
         content = ""
         if class_.doc is not None:
             content += f"{textwrap.indent(class_.doc, '    ')}\n"
         content += textwrap.indent(self.build_scope(class_.scope) or "", "    ")
         if content.rstrip():
-            output += f"\n{content}"
+            parts.append(f"\n{content}")
         else:
-            output += "..."
-        return output
+            parts.append("...")
+        return "".join(parts)
 
     def build_function(self, function: PyiFunction) -> str | None:
         """Build a function definition string.
@@ -127,17 +125,20 @@ class Builder:
         """
         if not self.include_private and self._is_private(function.name):
             return None
-        output = "".join(f"{decorator}\n" for decorator in function.decorators)
-        output += f"{'async ' if function.is_async else ''}def {function.name}{self.build_signature(function.signature)}:"
+        parts = ["".join(f"{d}\n" for d in function.decorators)]
+        async_prefix = "async " if function.is_async else ""
+        parts.append(
+            f"{async_prefix}def {function.name}{self.build_signature(function.signature)}:"
+        )
         if function.type_comment:
-            output += f"  {function.type_comment}"
+            parts.append(f"  {function.type_comment}")
         if function.doc is not None:
-            output += f"\n{textwrap.indent(function.doc, '    ')}"
+            parts.append(f"\n{textwrap.indent(function.doc, '    ')}")
         elif function.type_comment:
-            output += "\n    ..."
+            parts.append("\n    ...")
         else:
-            output += " ..."
-        return output
+            parts.append(" ...")
+        return "".join(parts)
 
     def build_assignment(self, assignment: PyiAssignment) -> str | None:
         """Build an assignment statement string."""
@@ -162,40 +163,41 @@ class Builder:
         Returns:
             Formatted scope contents, or None if empty.
         """
-        output = ""
+        chunks: list[str] = []
 
+        enum_lines: list[str] = []
         for element in scope.enums:
             enum_content = self.build_enum(element)
-            if not enum_content:
-                continue
-            output += f"{enum_content}\n\n"
-        if scope.enums:
-            output += "\n"
+            if enum_content:
+                enum_lines.append(f"{enum_content}\n\n")
+        if enum_lines:
+            chunks.append("".join(enum_lines) + "\n")
 
+        class_lines: list[str] = []
         for element in scope.classes:
             class_content = self.build_class(element)
-            if not class_content:
-                continue
-            output += f"{class_content}\n\n"
-        if scope.classes:
-            output += "\n"
+            if class_content:
+                class_lines.append(f"{class_content}\n\n")
+        if class_lines:
+            chunks.append("".join(class_lines) + "\n")
 
+        assignment_lines: list[str] = []
         for element in scope.assignments:
             assignment_content = self.build_assignment(element)
-            if not assignment_content:
-                continue
-            output += f"{assignment_content}\n"
-        if scope.assignments:
-            output += "\n"
+            if assignment_content:
+                assignment_lines.append(f"{assignment_content}\n")
+        if assignment_lines:
+            chunks.append("".join(assignment_lines) + "\n")
 
+        function_lines: list[str] = []
         for element in scope.functions:
             function_content = self.build_function(element)
-            if not function_content:
-                continue
-            output += f"\n{function_content}\n"
-        if scope.functions:
-            output += "\n"
+            if function_content:
+                function_lines.append(f"\n{function_content}\n")
+        if function_lines:
+            chunks.append("".join(function_lines) + "\n")
 
+        output = "".join(chunks)
         return output or None
 
     def build_module(self, module: PyiModule) -> str:
@@ -209,18 +211,20 @@ class Builder:
         Returns:
             Complete .pyi file content.
         """
-        output = module.doc + "\n\n" if module.doc else ""
+        parts: list[str] = []
+        if module.doc:
+            parts.append(f"{module.doc}\n\n")
 
-        for import_statement in module.imports:
-            import_content = self.build_import(import_statement)
-            if not import_content:
-                continue
-            output += f"{self.build_import(import_statement)}\n"
-        if module.imports:
-            output += "\n"
+        import_lines = [
+            f"{self.build_import(imp)}\n"
+            for imp in module.imports
+            if self.build_import(imp)
+        ]
+        if import_lines:
+            parts.append("".join(import_lines) + "\n")
 
-        output += f"{self.build_scope(module.scope) or ''}" or ""
-        return output
+        parts.append(self.build_scope(module.scope) or "")
+        return "".join(parts)
 
     def build_enum(self, enum: PyiEnum | PyiAssignment) -> str | None:
         """Build an enum definition.

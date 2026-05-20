@@ -4,11 +4,7 @@ from __future__ import annotations
 
 import ast
 
-
-from stubgen_pyx.postprocessing.pipeline import (
-    postprocessing_pipeline,
-    _combined_import_transform,
-)
+from stubgen_pyx.postprocessing.pipeline import postprocessing_pipeline, _ast_transforms
 from stubgen_pyx.config import StubgenPyxConfig
 
 
@@ -23,10 +19,11 @@ def hello() -> None:
 """
 
     config = StubgenPyxConfig(
-        no_sort_imports=True,
-        no_trim_imports=True,
-        no_normalize_names=True,
-        no_deduplicate_imports=True,
+        sort_imports=False,
+        trim_imports=False,
+        normalize_names=False,
+        deduplicate_imports=False,
+        trim_not_defined=False,
     )
 
     result = postprocessing_pipeline(pyi_code, config)
@@ -39,14 +36,14 @@ def test_pipeline_excludes_attribution():
     """Test that attribution can be excluded."""
     pyi_code = "def hello(): pass"
 
-    config = StubgenPyxConfig(exclude_attribution=True, no_sort_imports=True)
+    config = StubgenPyxConfig(exclude_attribution=True, sort_imports=False)
     result = postprocessing_pipeline(pyi_code, config)
 
     assert "stubgen-pyx" not in result
 
 
-def test_combined_import_transform_all_operations():
-    """Test combined import transformation with all operations enabled."""
+def test_ast_transforms_all_operations():
+    """Test AST transforms with all operations enabled."""
     code = """
 import sys
 import os
@@ -58,19 +55,14 @@ def hello() -> None:
 """
 
     tree = ast.parse(code)
-    transformed = _combined_import_transform(
-        tree,
-        trim_unused=True,
-        normalize=True,
-        deduplicate=True,
-    )
+    config = StubgenPyxConfig()
+    transformed = _ast_transforms(tree, config)
 
-    # Tree should still be valid
     assert isinstance(transformed, ast.Module)
 
 
-def test_combined_import_transform_trim_only():
-    """Test combined import transformation with only trimming."""
+def test_ast_transforms_trim_only():
+    """Test AST transforms with only trimming."""
     code = """
 import sys
 import os
@@ -80,34 +72,34 @@ def hello():
 """
 
     tree = ast.parse(code)
-    transformed = _combined_import_transform(
-        tree,
-        trim_unused=True,
-        normalize=False,
-        deduplicate=False,
+    config = StubgenPyxConfig(
+        trim_imports=True,
+        normalize_names=False,
+        deduplicate_imports=False,
+        trim_not_defined=False,
     )
+    transformed = _ast_transforms(tree, config)
 
-    # Unused imports should be removed
     imports = [node for node in ast.walk(transformed) if isinstance(node, ast.Import)]
     assert len(imports) == 0  # Both sys and os are unused
 
 
-def test_combined_import_transform_normalize_only():
-    """Test combined import transformation with only normalization."""
+def test_ast_transforms_normalize_only():
+    """Test AST transforms with only normalization."""
     code = """
 def hello(x: bint) -> unicode:
     pass
 """
 
     tree = ast.parse(code)
-    transformed = _combined_import_transform(
-        tree,
-        trim_unused=False,
-        normalize=True,
-        deduplicate=False,
+    config = StubgenPyxConfig(
+        trim_imports=False,
+        normalize_names=True,
+        deduplicate_imports=False,
+        trim_not_defined=False,
     )
+    transformed = _ast_transforms(tree, config)
 
-    # Check that normalization happened
     result = ast.unparse(transformed)
     assert "bool" in result
     assert "str" in result
@@ -124,12 +116,12 @@ def process_data(filename: str) -> str:
     return filename
 """
 
-    config = StubgenPyxConfig(no_trim_imports=False)
+    config = StubgenPyxConfig(trim_imports=True)
     result = postprocessing_pipeline(pyi_code, config)
 
-    # json should be trimmed since it's unused
-    # os and sys should also be trimmed
-    assert "import os" not in result or "import sys" not in result
+    assert "import os" not in result
+    assert "import sys" not in result
+    assert "import json" not in result
 
 
 def test_pipeline_with_sort_imports():
@@ -141,10 +133,9 @@ import a_module
 def hello(): pass
 """
 
-    config = StubgenPyxConfig(no_sort_imports=False, no_trim_imports=True)
+    config = StubgenPyxConfig(sort_imports=True, trim_imports=False)
     result = postprocessing_pipeline(pyi_code, config)
 
-    # After sorting, a_module should come before z_module
     a_idx = result.find("a_module")
     z_idx = result.find("z_module")
     assert a_idx < z_idx
@@ -157,11 +148,10 @@ def func(x: bint, y: unicode) -> long: pass
 """
 
     config = StubgenPyxConfig(
-        no_normalize_names=False, no_sort_imports=True, no_trim_imports=True
+        normalize_names=True, sort_imports=False, trim_imports=False
     )
     result = postprocessing_pipeline(pyi_code, config)
 
-    # Cython types should be replaced
     assert "bool" in result
     assert "str" in result
     assert "int" in result
@@ -185,3 +175,73 @@ class MyClass:
     assert "def greet" in result
     assert "class MyClass" in result
     assert "def method" in result
+
+
+def test_pipeline_trim_not_defined_replaces_unknown():
+    """Test that undefined names in annotations are replaced with ..."""
+    pyi_code = "def foo(x: UndefinedType) -> int: ..."
+
+    config = StubgenPyxConfig(
+        trim_not_defined=True,
+        trim_imports=False,
+        sort_imports=False,
+    )
+    result = postprocessing_pipeline(pyi_code, config)
+
+    assert "UndefinedType" not in result
+
+
+def test_pipeline_trim_not_defined_warns(caplog):
+    """Test that replacing undefined names emits a warning."""
+    import logging
+
+    pyi_code = "def foo(x: MysteryType) -> int: ..."
+
+    config = StubgenPyxConfig(
+        trim_not_defined=True,
+        trim_imports=False,
+        sort_imports=False,
+        exclude_attribution=True,
+    )
+    with caplog.at_level(logging.WARNING):
+        postprocessing_pipeline(pyi_code, config)
+
+    assert "MysteryType" in caplog.text
+
+
+def test_pipeline_trim_not_defined_disabled_preserves():
+    """Test that trim_not_defined=False leaves unknown names alone."""
+    pyi_code = "def foo(x: UndefinedType) -> int: ..."
+
+    config = StubgenPyxConfig(
+        trim_not_defined=False,
+        trim_imports=False,
+        sort_imports=False,
+        exclude_attribution=True,
+    )
+    result = postprocessing_pipeline(pyi_code, config)
+
+    assert "UndefinedType" in result
+
+
+def test_pipeline_transform_order_trim_before_trim_not_defined():
+    """trim_imports must run before trim_not_defined so imports define what's available."""
+    # SomeType is imported; trim_imports must not remove it before trim_not_defined
+    # sees that SomeType is used as an annotation.
+    pyi_code = """
+from mylib import SomeType
+
+def foo(x: SomeType) -> int: ...
+"""
+
+    config = StubgenPyxConfig(
+        trim_imports=True,
+        trim_not_defined=True,
+        sort_imports=False,
+        exclude_attribution=True,
+    )
+    result = postprocessing_pipeline(pyi_code, config)
+
+    # SomeType annotation should still be present (kept by trim_not_defined because
+    # import still defines it when trim_not_defined runs)
+    assert "SomeType" in result

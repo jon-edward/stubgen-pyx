@@ -6,39 +6,38 @@ from __future__ import annotations
 from stubgen_pyx.conversion import conversion_utils
 
 
-class TestLinesCache:
-    """Test the _LinesCache class."""
+class TestGetCdefVariables:
+    """Test the get_cdef_variables function."""
 
-    def test_lines_cache_initialization(self):
-        """Test creating a cache."""
-        cache = conversion_utils._LinesCache()
-        assert cache.source is None
-        assert cache.lines == []
+    def test_multi_declarator_cdef_returns_all(self):
+        """cdef public int x, y, z should yield three variables."""
+        from stubgen_pyx import StubgenPyx
+        from stubgen_pyx.config import StubgenPyxConfig
 
-    def test_lines_cache_set_source(self):
-        """Test setting source in the cache."""
-        cache = conversion_utils._LinesCache()
-        code = "line1\nline2\nline3"
-        cache.source = code
-        assert cache.source == code
-        assert len(cache.lines) >= 3
+        s = StubgenPyx(
+            config=StubgenPyxConfig(exclude_attribution=True, sort_imports=False)
+        )
+        result = s.convert_str("""
+cdef class Foo:
+    cdef public int x, y, z
+""")
+        assert "x: int" in result
+        assert "y: int" in result
+        assert "z: int" in result
 
-    def test_lines_cache_reuse_same_source(self):
-        """Test that same source doesn't trigger resplit."""
-        cache = conversion_utils._LinesCache()
-        code = "line1\nline2"
-        cache.source = code
-        old_lines = cache.lines
-        cache.source = code
-        assert cache.lines == old_lines or len(cache.lines) > 0
+    def test_single_declarator_cdef(self):
+        """cdef public int x should yield one variable."""
+        from stubgen_pyx import StubgenPyx
+        from stubgen_pyx.config import StubgenPyxConfig
 
-    def test_lines_cache_different_source(self):
-        """Test that different source causes resplit."""
-        cache = conversion_utils._LinesCache()
-        cache.source = "line1\nline2"
-        first_count = len(cache.lines)
-        cache.source = "line1\nline2\nline3\nline4"
-        assert len(cache.lines) > first_count
+        s = StubgenPyx(
+            config=StubgenPyxConfig(exclude_attribution=True, sort_imports=False)
+        )
+        result = s.convert_str("""
+cdef class Foo:
+    cdef public int x
+""")
+        assert "x: int" in result
 
 
 class TestDocstringToString:

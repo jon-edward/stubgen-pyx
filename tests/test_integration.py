@@ -116,7 +116,7 @@ def test_convert_glob_with_pxd_file(temp_dir):
     pxd_file = temp_dir / "test.pxd"
     pxd_file.write_text("cdef extern from 'test.h': void c_func()")
 
-    config = StubgenPyxConfig(no_pxd_to_stubs=False)
+    config = StubgenPyxConfig(pxd_to_stubs=True)
     stubgen = StubgenPyx(config=config)
 
     results = stubgen.convert_glob(str(temp_dir / "*.pyx"))
@@ -248,14 +248,14 @@ def hello():
 """)
 
     # With trim imports disabled, all imports should be present
-    config_no_trim = StubgenPyxConfig(no_trim_imports=True)
+    config_no_trim = StubgenPyxConfig(trim_imports=False)
     stubgen_no_trim = StubgenPyx(config=config_no_trim)
     result_no_trim = stubgen_no_trim.convert_str(
         pyx_file.read_text(), pyx_path=pyx_file
     )
 
     # With trim imports enabled, unused imports should be removed
-    config_trim = StubgenPyxConfig(no_trim_imports=False)
+    config_trim = StubgenPyxConfig(trim_imports=True)
     stubgen_trim = StubgenPyx(config=config_trim)
     result_trim = stubgen_trim.convert_str(pyx_file.read_text(), pyx_path=pyx_file)
 

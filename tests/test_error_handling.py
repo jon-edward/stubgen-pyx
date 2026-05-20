@@ -114,7 +114,7 @@ class TestStubgenErrorHandling:
             pxd_file = tmppath / "test.pxd"
             pxd_file.write_bytes(b"\x80\x81\x82")
 
-            config = StubgenPyxConfig(continue_on_error=True, no_pxd_to_stubs=False)
+            config = StubgenPyxConfig(continue_on_error=True, pxd_to_stubs=True)
             stubgen = StubgenPyx(config=config)
 
             result = stubgen.convert_glob(str(tmppath / "*.pyx"))
@@ -132,11 +132,11 @@ class TestStubgenErrorHandling:
     def test_stubgen_initialization_with_config(self):
         """Test StubgenPyx initialization with custom config."""
         config = StubgenPyxConfig(
-            verbose=True, no_sort_imports=True, include_private=True
+            verbose=True, sort_imports=False, include_private=True
         )
         stubgen = StubgenPyx(config=config)
         assert stubgen.config.verbose is True
-        assert stubgen.config.no_sort_imports is True
+        assert stubgen.config.sort_imports is False
         assert stubgen.config.include_private is True
 
     def test_stubgen_default_config(self):

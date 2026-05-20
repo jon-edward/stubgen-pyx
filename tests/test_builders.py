@@ -332,8 +332,8 @@ class TestBuilder:
             ]
         )
         result = builder.build_scope(scope)
-        assert result
-        assert "_private" not in result
+        # All content was private, so build_scope returns None
+        assert result is None
 
     def test_build_scope_with_private_function_included(self):
         """Test that private functions are included when specified."""
@@ -408,3 +408,43 @@ class TestBuilder:
         result = builder.build_module(module)
         assert "test module" in result
         assert "import" in result or "Dict" in result
+
+
+class TestBuilderClassBases:
+    """Test that class bases are formatted correctly (no trailing comma)."""
+
+    def test_single_base_no_trailing_comma(self):
+        """class Foo(Bar) must not have a trailing comma."""
+        builder = Builder()
+        cls = PyiClass(name="Foo", bases=["Bar"])
+        result = builder.build_class(cls)
+        assert result is not None
+        assert "(Bar)" in result
+        assert "(Bar,)" not in result
+
+    def test_multiple_bases_no_trailing_comma(self):
+        """class Foo(Bar, Baz) must not have a trailing comma."""
+        builder = Builder()
+        cls = PyiClass(name="Foo", bases=["Bar", "Baz"])
+        result = builder.build_class(cls)
+        assert result is not None
+        assert "(Bar, Baz)" in result
+        assert "Baz," not in result
+
+    def test_metaclass_with_bases_no_trailing_comma(self):
+        """class Foo(Bar, metaclass=Meta) must have no spurious comma before metaclass."""
+        builder = Builder()
+        cls = PyiClass(name="Foo", bases=["Bar"], metaclass="Meta")
+        result = builder.build_class(cls)
+        assert result is not None
+        assert "(Bar, metaclass=Meta)" in result
+        assert ",)" not in result
+
+    def test_metaclass_only_no_trailing_comma(self):
+        """class Foo(metaclass=Meta) must have no trailing comma."""
+        builder = Builder()
+        cls = PyiClass(name="Foo", metaclass="Meta")
+        result = builder.build_class(cls)
+        assert result is not None
+        assert "(metaclass=Meta)" in result
+        assert ",)" not in result
