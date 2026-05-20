@@ -8,28 +8,6 @@ import textwrap
 from Cython.Compiler import Nodes, ExprNodes
 
 
-class _LinesCache:
-    """Cache for source code lines to avoid repeated splits."""
-
-    def __init__(self):
-        self._source: str | None = None
-        self.lines: list[str] = []
-
-    @property
-    def source(self) -> str | None:
-        return self._source
-
-    @source.setter
-    def source(self, value: str) -> None:
-        if value == self._source:
-            return
-        self._source = value
-        self.lines = value.splitlines(keepends=True)
-
-
-_lines_cache = _LinesCache()
-
-
 def extract_type_from_base_type(node) -> str | None:
     """Extract type name from a base_type node, trying multiple approaches."""
     base_type = node.base_type
@@ -58,15 +36,12 @@ def get_source(source: str, node: Nodes.Node) -> str:
 
     Note: Node end_pos is often inaccurate; fallback to start position if needed.
     """
-    _lines_cache.source = source
-    lines = _lines_cache.lines
+    lines = source.splitlines(keepends=True)
 
     end_pos = node.end_pos()
     if end_pos is None:
         end_pos = node.pos
-    output = ""
-    for i in range(node.pos[1], end_pos[1] + 1):
-        output += lines[i - 1]
+    output = "".join(lines[i - 1] for i in range(node.pos[1], end_pos[1] + 1))
     return textwrap.dedent(output).rstrip()
 
 
@@ -103,15 +78,16 @@ def get_metaclass(node: Nodes.PyClassDefNode | Nodes.CClassDefNode) -> str | Non
     return None
 
 
-def get_cdef_variable(node: Nodes.CVarDefNode) -> tuple[str, str] | None:
-    """Extract variable name from a class variable node."""
+def get_cdef_variables(node: Nodes.CVarDefNode) -> list[tuple[str, str | None]]:
+    """Extract all variable names from a cdef variable node.
+
+    A single ``cdef public int x, y, z`` node has multiple declarators.
+    Returns a list of (name, type) pairs, one per declarator.
+    The type may be None if it cannot be determined.
+    """
     base_type = extract_type_from_base_type(node)  # type: ignore
     declarators: list[Nodes.CNameDeclaratorNode] = node.declarators  # type: ignore
-    if not declarators:
-        return None
-
-    name = declarators[0].name
-    return name, base_type or ""
+    return [(d.name, base_type) for d in declarators if d.name]
 
 
 def get_enum_names(node: Nodes.CEnumDefNode) -> list[str]:

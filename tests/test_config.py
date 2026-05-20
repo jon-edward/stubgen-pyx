@@ -10,38 +10,26 @@ from stubgen_pyx.config import StubgenPyxConfig
 def test_config_defaults():
     """Test that default configuration values are correct."""
     config = StubgenPyxConfig()
-    assert config.no_sort_imports is False
-    assert config.no_trim_imports is False
-    assert config.no_pxd_to_stubs is False
-    assert config.no_normalize_names is False
-    assert config.no_deduplicate_imports is False
+    assert config.sort_imports is True
+    assert config.trim_imports is True
+    assert config.pxd_to_stubs is True
+    assert config.normalize_names is True
+    assert config.deduplicate_imports is True
+    assert config.trim_not_defined is True
     assert config.exclude_attribution is False
     assert config.continue_on_error is False
     assert config.verbose is False
-
-
-def test_config_custom_values():
-    """Test that custom configuration values are set correctly."""
-    config = StubgenPyxConfig(
-        no_sort_imports=True,
-        no_trim_imports=True,
-        continue_on_error=True,
-        verbose=True,
-    )
-    assert config.no_sort_imports is True
-    assert config.no_trim_imports is True
-    assert config.continue_on_error is True
-    assert config.verbose is True
 
 
 def test_config_post_init_warning_all_disabled(caplog):
     """Test that warning is logged when all postprocessing is disabled."""
     with caplog.at_level(logging.WARNING):
         StubgenPyxConfig(
-            no_sort_imports=True,
-            no_trim_imports=True,
-            no_normalize_names=True,
-            no_deduplicate_imports=True,
+            sort_imports=False,
+            trim_imports=False,
+            normalize_names=False,
+            deduplicate_imports=False,
+            trim_not_defined=False,
         )
     assert "All postprocessing steps are disabled" in caplog.text
 

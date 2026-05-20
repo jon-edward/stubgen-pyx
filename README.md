@@ -34,6 +34,7 @@ Automatic stub file generation for Cython extensions that enables full IDE suppo
 
 - Automatic import trimming and deduplication
 - Cython type normalization (e.g., `bint` → `bool`, `unicode` → `str`)
+- Undefined name elimination from type hints and defaults
 - Proper handling of positional-only and keyword-only arguments
 - Preserves decorators and class metadata
 
@@ -129,6 +130,9 @@ stubgen-pyx . --no-pxd-to-stubs
 # Skip deduplicating imports
 stubgen-pyx . --no-deduplicate-imports
 
+# Skip trimming undefined names from annotations and defaults
+stubgen-pyx . --no-trim-not-defined
+
 # Skip adding stubgen-pyx attribution comment
 stubgen-pyx . --exclude-attribution
 
@@ -177,10 +181,10 @@ from stubgen_pyx import StubgenPyx
 from stubgen_pyx.config import StubgenPyxConfig
 
 config = StubgenPyxConfig(
-    no_trim_imports=False,          # Trim unused imports
-    no_normalize_names=False,       # Normalize Cython types
-    no_sort_imports=False,          # Sort imports
-    no_deduplicate_imports=False,   # Deduplicate imports
+    trim_imports=False,             # Don't trim unused imports
+    normalize_names=False,          # Don't normalize Cython types
+    sort_imports=False,             # Don't sort imports
+    deduplicate_imports=False,      # Don't deduplicate imports
     exclude_attribution=False,      # Don't skip stubgen-pyx attribution comment
     continue_on_error=True,         # Continue on errors
     include_private=False,          # Exclude private functions
@@ -244,17 +248,18 @@ While mypy's `stubgen` can generate stubs for compiled extension modules through
 
 All configuration is handled through the `StubgenPyxConfig` dataclass:
 
-| Option                   | Type | Default | Description                                         |
-| ------------------------ | ---- | ------- | --------------------------------------------------- |
-| `no_sort_imports`        | bool | False   | Skip sorting imports                                |
-| `no_trim_imports`        | bool | False   | Skip trimming unused imports                        |
-| `no_deduplicate_imports` | bool | False   | Skip deduplicating imports                          |
-| `no_pxd_to_stubs`        | bool | False   | Skip including .pxd file contents                   |
-| `no_normalize_names`     | bool | False   | Skip normalizing Cython types to Python equivalents |
-| `exclude_attribution`    | bool | False   | Skip adding stubgen-pyx attribution comment         |
-| `continue_on_error`      | bool | False   | Continue processing even if a file fails            |
-| `include_private`        | bool | False   | Include private functions in the generated stub     |
-| `verbose`                | bool | False   | Enable verbose logging output                       |
+| Option                | Type | Default | Description                                     |
+| --------------------- | ---- | ------- | ----------------------------------------------- |
+| `sort_imports`        | bool | True    | Sort imports                                    |
+| `trim_imports`        | bool | True    | Trim unused imports                             |
+| `deduplicate_imports` | bool | True    | Deduplicate imports for the same name           |
+| `trim_not_defined`    | bool | True    | Trim undefined names from annotations           |
+| `pxd_to_stubs`        | bool | True    | Include .pxd file contents                      |
+| `normalize_names`     | bool | True    | Normalize Cython types to Python equivalents    |
+| `exclude_attribution` | bool | False   | Skip adding stubgen-pyx attribution comment     |
+| `continue_on_error`   | bool | False   | Continue processing even if a file fails        |
+| `include_private`     | bool | False   | Include private functions in the generated stub |
+| `verbose`             | bool | False   | Enable verbose logging output                   |
 
 ## Example
 

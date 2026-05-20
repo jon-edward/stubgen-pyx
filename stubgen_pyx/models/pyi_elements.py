@@ -3,10 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import re
-
-
-_IMPORT_RE = re.compile(r"\bcimport\b")
 
 
 @dataclass
@@ -61,10 +57,7 @@ class PyiAssignment(PyiStatement):
 
 @dataclass
 class PyiImport(PyiStatement):
-    """Represents an import statement. The `cimport` keyword is replaced with `import`."""
-
-    def __post_init__(self):
-        self.statement = _IMPORT_RE.sub("import", self.statement)
+    """Represents an import statement."""
 
 
 @dataclass
@@ -75,27 +68,6 @@ class PyiScope(PyiElement):
     functions: list[PyiFunction] = field(default_factory=list)
     classes: list[PyiClass] = field(default_factory=list)
     enums: list[PyiEnum | PyiAssignment] = field(default_factory=list)
-
-    def deduplicate_assignments(self) -> None:
-        """Remove duplicate assignments from the scope while preserving order."""
-        seen: set[str] = set()
-        unique_assignments: list[PyiAssignment] = []
-        for assignment in self.assignments:
-            name = assignment.statement.partition("=")[0].partition(":")[0].strip()
-            if not name or name not in seen:
-                if name:
-                    seen.add(name)
-                unique_assignments.append(assignment)
-        self.assignments = unique_assignments
-
-    def merge_classes(self, extra_classes: list[PyiClass]) -> None:
-        """Merge classes with the same name and preserve unique declarations."""
-        existing_classes: dict[str, PyiClass] = {cls.name: cls for cls in self.classes}
-        for extra_class in extra_classes:
-            if extra_class.name in existing_classes:
-                existing_classes[extra_class.name].merge_with(extra_class)
-            else:
-                self.classes.append(extra_class)
 
 
 @dataclass
@@ -108,24 +80,6 @@ class PyiClass(PyiElement):
     metaclass: str | None = None
     decorators: list[str] = field(default_factory=list)
     scope: PyiScope = field(default_factory=PyiScope)
-
-    def merge_with(self, other: PyiClass) -> None:
-        """Merge another class declaration into this class."""
-        if self.doc is None:
-            self.doc = other.doc
-
-        self.bases = [*dict.fromkeys(self.bases + other.bases)]
-        if self.metaclass is None:
-            self.metaclass = other.metaclass
-
-        self.decorators = [*dict.fromkeys(self.decorators + other.decorators)]
-
-        self.scope.assignments += other.scope.assignments
-        self.scope.deduplicate_assignments()
-
-        self.scope.functions += other.scope.functions
-        self.scope.merge_classes(other.scope.classes)
-        self.scope.enums += other.scope.enums
 
 
 @dataclass

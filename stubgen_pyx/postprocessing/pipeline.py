@@ -11,7 +11,10 @@ from pathlib import Path
 
 from ..config import StubgenPyxConfig
 from .collect_names import collect_names
-from .normalize_names import normalize_names
+from .normalize_names import _NameNormalizer
+from .trim_imports import _UnusedImportRemover
+from .deduplicate_imports import _DuplicateImportRemover
+from .trim_not_defined import trim_not_defined
 from .sort_imports import sort_imports
 from .attribution import stubgen_attribution
 from .remove_identity_assignment import remove_identity_assignment
@@ -24,8 +27,6 @@ def postprocessing_pipeline(
 ) -> str:
     """Apply post-processing transformations to .pyi code.
 
-    Optimizes by combining multiple AST passes where possible.
-
     Args:
         pyi_code: Generated .pyi code to postprocess.
         config: Configuration options for processing.
@@ -35,25 +36,10 @@ def postprocessing_pipeline(
         Processed .pyi code after all enabled transformations.
     """
     pyi_ast = ast.parse(pyi_code, type_comments=True)
-
-    if (
-        not config.no_deduplicate_imports
-        or not config.no_trim_imports
-        or not config.no_normalize_names
-    ):
-        pyi_ast = _combined_import_transform(
-            pyi_ast,
-            trim_unused=not config.no_trim_imports,
-            normalize=not config.no_normalize_names,
-            deduplicate=not config.no_deduplicate_imports,
-        )
-    else:
-        if not config.no_normalize_names:
-            pyi_ast = normalize_names(pyi_ast)
-
+    pyi_ast = _ast_transforms(pyi_ast, config)
     pyi_code = ast.unparse(pyi_ast)
 
-    if not config.no_sort_imports:
+    if config.sort_imports:
         pyi_code = sort_imports(pyi_code)
 
     if not config.exclude_attribution:
@@ -62,29 +48,20 @@ def postprocessing_pipeline(
     return pyi_code
 
 
-def _combined_import_transform(
-    tree: ast.AST,
-    trim_unused: bool = True,
-    normalize: bool = True,
-    deduplicate: bool = True,
-) -> ast.AST:
-    """Combine import transformations into a single AST pass for efficiency."""
-    from .normalize_names import _NameNormalizer
-    from .trim_imports import _UnusedImportRemover
-    from .deduplicate_imports import _DuplicateImportRemover
-
-    if deduplicate:
+def _ast_transforms(tree: ast.AST, config: StubgenPyxConfig) -> ast.AST:
+    """Apply all enabled AST-level transforms in the correct order."""
+    if config.deduplicate_imports:
         tree = _DuplicateImportRemover().visit(tree)
 
-    if normalize:
+    if config.normalize_names:
         tree = _NameNormalizer().visit(tree)
 
-    used_names = None
-    if trim_unused:
+    if config.trim_imports:
         used_names = collect_names(tree)
-
-    if trim_unused and used_names is not None:
         tree = _UnusedImportRemover(used_names).visit(tree)
+
+    if config.trim_not_defined:
+        trim_not_defined(tree)
 
     tree = remove_identity_assignment(tree)
     return tree

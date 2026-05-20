@@ -14,7 +14,7 @@ from .conversion.converter import Converter
 from .builders.builder import Builder
 from .parsing.parser import parse_pyx, path_to_module_name
 from .postprocessing.pipeline import postprocessing_pipeline
-from .models.pyi_elements import PyiModule
+from .models.pyi_elements import PyiModule, PyiClass
 
 
 logger = logging.getLogger(__name__)
@@ -52,14 +52,16 @@ class StubgenPyx:
     postprocessing (import normalization, trimming, etc.).
 
     Attributes:
-        converter: Converts Cython AST visitors to PyiElements.
-        builder: Builds .pyi text from PyiElements.
         config: Configuration controlling generation behavior.
     """
 
-    converter: Converter = field(default_factory=Converter)
-    builder: Builder = field(default_factory=Builder)
     config: StubgenPyxConfig = field(default_factory=StubgenPyxConfig)
+
+    def _make_converter(self) -> Converter:
+        return Converter()
+
+    def _make_builder(self) -> Builder:
+        return Builder(include_private=self.config.include_private)
 
     def convert_str(
         self, pyx_str: str, pxd_str: str | None = None, pyx_path: Path | None = None
@@ -78,13 +80,14 @@ class StubgenPyx:
             Various exceptions from parsing, conversion, or building.
         """
         module = self.compile_str_to_module(pyx_str, pxd_str, pyx_path)
-        content = self.builder.build_module(module)
+        builder = self._make_builder()
+        content = builder.build_module(module)
         return postprocessing_pipeline(content, self.config, pyx_path).strip()
 
     def compile_str_to_module(
         self, pyx_str: str, pxd_str: str | None = None, pyx_path: Path | None = None
     ) -> PyiModule:
-        """Compile Cython source strings into a PyiModule
+        """Compile Cython source strings into a PyiModule.
 
         Args:
             pyx_str: The source Cython code.
@@ -97,40 +100,25 @@ class StubgenPyx:
         Raises:
             Various exceptions from parsing, conversion, or building.
         """
-        self.builder.include_private = self.config.include_private
+        converter = self._make_converter()
 
         module_name = path_to_module_name(pyx_path) if pyx_path else None
         parse_result = parse_pyx(pyx_str, module_name=module_name, pyx_path=pyx_path)
 
         module_visitor = ModuleVisitor(node=parse_result.source_ast)
-        self.converter.type_comments = parse_result.type_comments
-        module = self.converter.convert_module(module_visitor, parse_result.source)
+        module = converter.convert_module(
+            module_visitor, parse_result.source, parse_result.type_comments
+        )
 
-        if pxd_str and not self.config.no_pxd_to_stubs:
+        if pxd_str and self.config.pxd_to_stubs:
             pxd_parse_result = parse_pyx(
                 pxd_str, module_name=module_name, pyx_path=pyx_path
             )
             pxd_visitor = ModuleVisitor(node=pxd_parse_result.source_ast)
-            self.converter.type_comments = pxd_parse_result.type_comments
-            pxd_module = self.converter.convert_module(
-                pxd_visitor, pxd_parse_result.source
+            pxd_module = converter.convert_module(
+                pxd_visitor, pxd_parse_result.source, pxd_parse_result.type_comments
             )
-
-            extra_imports = pxd_module.imports
-            extra_enums = pxd_module.scope.enums
-            extra_classes = pxd_module.scope.classes
-            extra_assignments = pxd_module.scope.assignments
-        else:
-            extra_imports = []
-            extra_enums = []
-            extra_classes = []
-            extra_assignments = []
-
-        module.scope.enums += extra_enums
-        module.scope.assignments += extra_assignments
-        module.scope.deduplicate_assignments()
-        module.scope.merge_classes(extra_classes)
-        module.imports += extra_imports
+            _merge_pxd_into_module(module, pxd_module)
 
         return module
 
@@ -146,9 +134,6 @@ class StubgenPyx:
         When matching .pyx patterns, standalone .pxd files are also included if
         there is no corresponding .pyx file with the same stem.
         """
-
-        # Note: Path.glob is not suitable with patterns containing absolute
-        # paths, so glob is much better here
         file_paths = list(glob.glob(pyx_file_pattern, recursive=True))
 
         if pyx_file_pattern.lower().endswith(".pyx"):
@@ -197,9 +182,6 @@ class StubgenPyx:
     ) -> list[ConversionResult]:
         """Convert multiple .pyx files, each possibly merging a companion .pxd file.
 
-        Reads the .pyx files and companions .pxd (if they exist), converts them,
-        and writes the resulting .pyi file.
-
         Args:
             pyx_file_paths: Paths to the input .pyx files.
             output_dir: Optional output directory for .pyi files. If None,
@@ -231,9 +213,6 @@ class StubgenPyx:
     ) -> ConversionResult:
         """Convert a single .pyx file, optionally merging a companion .pxd file.
 
-        Reads the .pyx file and companion .pxd (if it exists), converts them,
-        and writes the resulting .pyi file.
-
         Args:
             pyx_file_path: Path to the input .pyx file.
             pyi_file_path: Path to write the output .pyi file. If None,
@@ -255,17 +234,14 @@ class StubgenPyx:
                 raise ValueError(f"File not found: {pyx_file_path}") from e
 
             pxd_str = None
-            pxd_file_path = pyx_file_path.with_suffix(".pxd")
-            if (
-                pxd_file_path.exists()
-                and not self.config.no_pxd_to_stubs
-                and pxd_file_path != pyx_file_path
-            ):
-                logger.debug(f"Found pxd file: {pxd_file_path}")
-                try:
-                    pxd_str = pxd_file_path.read_text(encoding="utf-8")
-                except UnicodeDecodeError as e:
-                    logger.warning(f"Could not read .pxd file {pxd_file_path}: {e}")
+            if self.config.pxd_to_stubs:
+                pxd_file_path = pyx_file_path.with_suffix(".pxd")
+                if pxd_file_path.exists() and pxd_file_path != pyx_file_path:
+                    logger.debug(f"Found pxd file: {pxd_file_path}")
+                    try:
+                        pxd_str = pxd_file_path.read_text(encoding="utf-8")
+                    except UnicodeDecodeError as e:
+                        logger.warning(f"Could not read .pxd file {pxd_file_path}: {e}")
 
             pyi_content = self.convert_str(
                 pyx_str=pyx_str,
@@ -302,3 +278,54 @@ class StubgenPyx:
                 pyi_file=pyi_file_path,
                 error=e,
             )
+
+
+def _merge_pxd_into_module(module: PyiModule, pxd_module: PyiModule) -> None:
+    """Merge pxd module contents into the pyx module in-place.
+
+    This is a free function rather than a method on PyiModule/PyiScope so that
+    the data models stay as pure containers without merge semantics baked in.
+    """
+    module.scope.enums += pxd_module.scope.enums
+    module.scope.assignments += pxd_module.scope.assignments
+    _deduplicate_assignments(module.scope)
+    _merge_classes(module.scope, pxd_module.scope.classes)
+    module.imports += pxd_module.imports
+
+
+def _deduplicate_assignments(scope) -> None:
+    """Remove duplicate assignments from a scope while preserving order."""
+    seen: set[str] = set()
+    unique: list = []
+    for assignment in scope.assignments:
+        name = assignment.statement.partition("=")[0].partition(":")[0].strip()
+        if not name or name not in seen:
+            if name:
+                seen.add(name)
+            unique.append(assignment)
+    scope.assignments = unique
+
+
+def _merge_classes(scope, extra_classes: list[PyiClass]) -> None:
+    """Merge extra classes into scope, combining same-name classes."""
+    existing: dict[str, PyiClass] = {cls.name: cls for cls in scope.classes}
+    for extra in extra_classes:
+        if extra.name in existing:
+            _merge_two_classes(existing[extra.name], extra)
+        else:
+            scope.classes.append(extra)
+
+
+def _merge_two_classes(target: PyiClass, other: PyiClass) -> None:
+    """Merge other into target in-place."""
+    if target.doc is None:
+        target.doc = other.doc
+    target.bases = [*dict.fromkeys(target.bases + other.bases)]
+    if target.metaclass is None:
+        target.metaclass = other.metaclass
+    target.decorators = [*dict.fromkeys(target.decorators + other.decorators)]
+    target.scope.assignments += other.scope.assignments
+    _deduplicate_assignments(target.scope)
+    target.scope.functions += other.scope.functions
+    _merge_classes(target.scope, other.scope.classes)
+    target.scope.enums += other.scope.enums

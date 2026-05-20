@@ -12,22 +12,24 @@ class StubgenPyxConfig:
     """Options controlling .pyi generation behavior.
 
     Attributes:
-        no_sort_imports: Skip import sorting.
-        no_trim_imports: Skip removing unused imports.
-        no_pxd_to_stubs: Skip merging .pxd file contents.
-        no_normalize_names: Skip normalizing Cython type names.
-        no_deduplicate_imports: Skip deduplicating imports.
-        exclude_attribution: Skip adding generation attribution comment.
-        continue_on_error: Continue processing files that failed.
-        include_private: Include private members.
-        verbose: Enable verbose logging.
+        sort_imports: Sort imports in the output (default: True).
+        trim_imports: Remove unused imports (default: True).
+        pxd_to_stubs: Merge .pxd file contents into stubs (default: True).
+        normalize_names: Normalize Cython type names to Python equivalents (default: True).
+        deduplicate_imports: Remove duplicate imports (default: True).
+        trim_not_defined: Replace undefined names with ``...`` (default: True).
+        exclude_attribution: Skip adding generation attribution comment (default: False).
+        continue_on_error: Continue processing files that failed (default: False).
+        include_private: Include private members (default: False).
+        verbose: Enable verbose logging (default: False).
     """
 
-    no_sort_imports: bool = False
-    no_trim_imports: bool = False
-    no_pxd_to_stubs: bool = False
-    no_normalize_names: bool = False
-    no_deduplicate_imports: bool = False
+    sort_imports: bool = True
+    trim_imports: bool = True
+    pxd_to_stubs: bool = True
+    normalize_names: bool = True
+    deduplicate_imports: bool = True
+    trim_not_defined: bool = True
     exclude_attribution: bool = False
     continue_on_error: bool = False
     include_private: bool = False
@@ -35,12 +37,13 @@ class StubgenPyxConfig:
 
     def __post_init__(self):
         """Validate configuration and log warnings for unusual settings."""
-        if all(
+        if not any(
             [
-                self.no_sort_imports,
-                self.no_trim_imports,
-                self.no_normalize_names,
-                self.no_deduplicate_imports,
+                self.sort_imports,
+                self.trim_imports,
+                self.normalize_names,
+                self.deduplicate_imports,
+                self.trim_not_defined,
             ]
         ):
             logger.warning(

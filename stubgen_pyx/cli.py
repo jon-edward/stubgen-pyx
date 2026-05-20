@@ -19,7 +19,7 @@ def _create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Generate Python stub files (.pyi) from Cython source code (.pyx/.pxd)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
+        epilog="""\
 Examples:
   %(prog)s .                         # Convert all .pyx files in current directory
   %(prog)s src/ --file "**/*.pyx"    # Convert all .pyx files in src/
@@ -115,6 +115,12 @@ Examples:
     )
 
     parser.add_argument(
+        "--no-trim-not-defined",
+        help="Do not replace names that are not builtin and not defined with `...`",
+        action="store_true",
+    )
+
+    parser.add_argument(
         "--exclude-attribution",
         help="Exclude stubgen-pyx attribution comment from the output stub",
         action="store_true",
@@ -136,10 +142,7 @@ Examples:
 
 
 def _create_dir(path: Path, dry_run: bool = False):
-    """Create given directory if not already existing.
-
-    dry_run controls the actual creation.
-    """
+    """Create given directory if not already existing."""
     if not path.exists():
         if dry_run:
             logger.info(f"Would create output directory: {path}")
@@ -152,7 +155,6 @@ def _parse_args() -> argparse.Namespace | None:
     parser = _create_parser()
     args = parser.parse_args()
 
-    # check the arguments
     if args.output_dir is not None and args.output_file is not None:
         logger.error(
             "Error: options '--output-dir' and '--output-file' cannot be used together"
@@ -169,7 +171,6 @@ def main():
     if args is None:
         sys.exit(1)
 
-    # Setup logging
     log_level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(
         level=log_level,
@@ -178,20 +179,20 @@ def main():
 
     logger.info(f"stubgen-pyx v{__version__}")
 
-    # Create configuration
+    # CLI uses --no-* flags; config now uses positive booleans
     config = StubgenPyxConfig(
-        no_sort_imports=args.no_sort_imports,
-        no_trim_imports=args.no_trim_imports,
-        no_normalize_names=args.no_normalize_names,
-        no_pxd_to_stubs=args.no_pxd_to_stubs,
+        sort_imports=not args.no_sort_imports,
+        trim_imports=not args.no_trim_imports,
+        normalize_names=not args.no_normalize_names,
+        pxd_to_stubs=not args.no_pxd_to_stubs,
+        deduplicate_imports=not args.no_deduplicate_imports,
+        trim_not_defined=not args.no_trim_not_defined,
         exclude_attribution=args.exclude_attribution,
-        no_deduplicate_imports=args.no_deduplicate_imports,
         continue_on_error=args.continue_on_error,
         include_private=args.include_private,
         verbose=args.verbose,
     )
 
-    # Build file pattern
     source_dir = Path(args.dir) if args.dir else Path(".")
     if args.file:
         pyx_file_pattern = str(source_dir / args.file)
@@ -199,11 +200,15 @@ def main():
         pyx_file_pattern = str(source_dir / "**" / "*.pyx")
     logger.debug(f"Using pattern: {pyx_file_pattern}")
 
-    # Create converter and run
     stubgen = StubgenPyx(config=config)
 
-    # Check single-file mode if requested
     pyx_files = tuple(stubgen.resolve_glob(pyx_file_pattern))
+
+    # Validate no-files before single-file check to give clearer error messages
+    if not pyx_files:
+        logger.error(f"No .pyx files found matching pattern: {pyx_file_pattern}")
+        sys.exit(1)
+
     if args.output_file is not None and ((_num := len(pyx_files)) != 1):
         logger.error(
             "Option --output-file requires a single input pyx file in "
@@ -211,7 +216,6 @@ def main():
         )
         sys.exit(1)
 
-    # Validate output directory
     output_dir = None
     if args.output_dir:
         output_dir = Path(args.output_dir)
@@ -225,12 +229,10 @@ def main():
 
     results: list[ConversionResult]
     if args.output_file is None:
-        # multi-files input
         results = stubgen.convert_multiple_files(
             pyx_files, output_dir=output_dir, dry_run=args.dry_run
         )
     else:
-        # single-file input
         assert len(pyx_files) == 1
         results = [
             stubgen.convert_single_file(
@@ -238,18 +240,12 @@ def main():
             )
         ]
 
-    # Summary reporting
     successful_count = sum(1 for r in results if r.success)
     logger.info(f"Successfully converted {successful_count} file(s)")
 
-    # Exit with appropriate code
     failed_count = sum(1 for r in results if not r.success)
     if failed_count > 0:
         logger.error(f"{failed_count} file(s) failed to convert")
-        sys.exit(1)
-
-    if not results:
-        logger.error(f"No .pyx files found matching pattern: {pyx_file_pattern}")
         sys.exit(1)
 
     sys.exit(0)
