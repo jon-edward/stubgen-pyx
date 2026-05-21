@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import glob
 import logging
+import os
 from typing import Iterable
 from pathlib import Path
 
@@ -40,7 +41,10 @@ class ConversionResult:
     def status_message(self) -> str:
         """Human-readable status summary."""
         if self.success:
-            return f"Converted {self.pyx_file} to {self.pyi_file}"
+            if self.pyx_file != self.pyi_file:
+                return f"Converted {self.pyx_file} to {self.pyi_file}"
+            else:
+                return f"Skipped {self.pyx_file}"
         return f"Failed to convert {self.pyx_file}: {self.error}"
 
 
@@ -193,10 +197,26 @@ class StubgenPyx:
         """
         results: list[ConversionResult] = []
 
-        for pyx_path in pyx_file_paths:
-            pyi_path = (
-                output_dir / pyx_path.with_suffix(".pyi").name if output_dir else None
-            )
+        pyx_paths = list(pyx_file_paths)
+        common_root = None
+        if output_dir and pyx_paths:
+            common_root = Path(os.path.commonpath([str(p.parent) for p in pyx_paths]))
+
+        for pyx_path in pyx_paths:
+            if output_dir:
+                # place pyi files in the same dir structure as the source pyx files
+                # relative to the common root of the pyx files
+                pyi_name = pyx_path.with_suffix(".pyi")
+                if common_root is not None:
+                    try:
+                        pyi_path = output_dir / pyi_name.relative_to(common_root)
+                    except ValueError:
+                        pyi_path = output_dir / pyi_name.name
+                else:
+                    pyi_path = output_dir / pyi_name.name
+                pyi_path.parent.mkdir(parents=True, exist_ok=True)
+            else:
+                pyi_path = None  # generate in-place
             result = self.convert_single_file(pyx_path, pyi_path, dry_run)
             results.append(result)
 
@@ -232,6 +252,15 @@ class StubgenPyx:
                 raise ValueError(f"File encoding error in {pyx_file_path}: {e}") from e
             except FileNotFoundError as e:
                 raise ValueError(f"File not found: {pyx_file_path}") from e
+
+            if (
+                pyx_file_path.with_suffix(".py").exists()
+                and pyx_file_path.with_suffix(".py").name == "__init__.py"
+            ):
+                # Skip __init__.pxd/.pyx files with an existing __init__.py
+                return ConversionResult(
+                    success=True, pyx_file=pyx_file_path, pyi_file=pyx_file_path
+                )
 
             pxd_str = None
             if self.config.pxd_to_stubs:
