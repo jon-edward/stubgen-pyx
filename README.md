@@ -110,10 +110,6 @@ stubgen-pyx . --output-dir stubs/
 # Convert a single .pyx file to a specific output path
 # (requires exactly one matching input file)
 stubgen-pyx . --file mymodule.pyx --output-file output/mymodule.pyi
-
-# Run stubgen-pyx with a custom current working directory
-# (useful for working with Cython includes)
-stubgen-pyx --cwd ./src
 ```
 
 **Disable specific transformations:**
