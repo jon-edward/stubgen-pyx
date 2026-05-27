@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+from typing import Any
 
 
 def remove_identity_assignment(tree: ast.AST) -> ast.AST:
@@ -22,4 +23,14 @@ class _IdentityAssignmentRemover(ast.NodeTransformer):
         ):
             if node.targets[0].id == node.value.id:
                 return None
+        return node
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> Any:
+        """Remove identity assignments (e.g., `x: Something = x`)."""
+        if (
+            isinstance(node.target, ast.Name)
+            and isinstance(node.value, ast.Name)
+            and node.target.id == node.value.id
+        ):
+            return None
         return node
