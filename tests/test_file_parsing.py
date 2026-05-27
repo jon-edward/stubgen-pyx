@@ -53,43 +53,8 @@ class TestTryParseString:
         assert result == ""
 
 
-class TestGetIncludesAndEqualsstar:
+class TestGetIncludes:
     """Test include and equals-star replacement functions."""
-
-    def test_replace_equals_star_no_matches(self):
-        """Test that code without = * is unchanged."""
-        code = """
-x = 5
-y = z * 2
-"""
-        result = file_parsing._replace_equals_star(code)
-        assert "x = 5" in result
-        assert "y = z * 2" in result
-
-    def test_replace_equals_star_single_match(self):
-        """Test replacing a single = * occurrence."""
-        code = "x = *\n"
-        result = file_parsing._replace_equals_star(code)
-        assert "..." in result
-        assert "*" not in result or "z * 2" in code
-
-    def test_replace_equals_star_multiple_matches(self):
-        """Test replacing multiple = * occurrences."""
-        code = "x = *\ny = *\nz = 5"
-        result = file_parsing._replace_equals_star(code)
-        assert result.count("...") >= 2
-
-    def test_get_equals_star_indices_empty(self):
-        """Test getting indices when there are no matches."""
-        code = "x = 5\ny = z * 2"
-        indices = file_parsing._get_equals_star_indices(code)
-        assert len(indices) == 0
-
-    def test_get_equals_star_indices_single(self):
-        """Test getting indices for a single match."""
-        code = "x = *"
-        indices = file_parsing._get_equals_star_indices(code)
-        assert len(indices) >= 0  # May or may not find it depending on tokenization
 
     def test_expand_includes_no_includes(self):
         """Test that code without includes is unchanged."""
@@ -159,19 +124,6 @@ def hello():
 """
             result = file_parsing.file_parsing_preprocess(source_file, code)
             assert "def hello" in result
-
-    def test_file_parsing_preprocess_with_equals_star(self):
-        """Test preprocessing code with = * pattern."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            source_file = Path(tmpdir) / "source.pyx"
-            source_file.write_text("")
-
-            code = """
-x = *
-y = 5
-"""
-            result = file_parsing.file_parsing_preprocess(source_file, code)
-            assert "..." in result
 
     def test_file_parsing_preprocess_combined(self):
         """Test preprocessing with both includes and *= patterns."""

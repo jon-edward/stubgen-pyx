@@ -6,7 +6,7 @@ cdef class MergedClass:
         self.original_value = v
         self.merged_value = v
 
-    cpdef int function(self):
+    cpdef int function(self, int x = 100):
         return self.merged_value
 
     def set_merged_value(self, int v):

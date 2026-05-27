@@ -7,12 +7,13 @@ See `preprocess.py` for preprocessing details.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from io import StringIO
 from pathlib import Path
-import typing
 
-from Cython.Compiler.TreeFragment import parse_from_strings, StringParseContext
-from Cython.Compiler import Errors
+from Cython.Compiler.TreeFragment import StringParseContext
+from Cython.Compiler import Errors, Parsing
 from Cython.Compiler.ModuleNode import ModuleNode
+from Cython.Compiler.Scanning import PyrexScanner, StringSourceDescriptor
 
 from .file_parsing import file_parsing_preprocess
 from .preprocess import (
@@ -45,7 +46,10 @@ _DEFAULT_MODULE_NAME = "__pyx_module__"
 
 
 def parse_pyx(
-    source: str, module_name: str | None = None, pyx_path: Path | None = None
+    source: str,
+    module_name: str | None = None,
+    pyx_path: Path | None = None,
+    pxd: bool = False,
 ) -> ParsedSource:
     """Parse Cython source code.
 
@@ -55,6 +59,7 @@ def parse_pyx(
         source: Cython source code string.
         module_name: Optional module name for error messages.
         pyx_path: Optional file path for context and preprocessing.
+        pxd: Whether the source is a .pxd file. If pyx_path is also provided and it's a .pxd, this is overridden.
 
     Returns:
         ParsedSource with preprocessed code and AST.
@@ -62,15 +67,24 @@ def parse_pyx(
     module_name = module_name or _DEFAULT_MODULE_NAME
 
     if pyx_path:
+        pxd = pxd or pyx_path.suffix == ".pxd"
         source = file_parsing_preprocess(pyx_path, source)
         module_name = path_to_module_name(pyx_path)
 
-    return _parse_str(source, module_name)
+    return _parse_str(source, module_name, pxd)
 
 
-def _parse_str(source: str, module_name: str) -> ParsedSource:
-    """Internal: parse preprocessed source with Cython compiler."""
-    context = StringParseContext(module_name, cpp=True)
+def _parse_str(source: str, module_name: str, pxd: bool = False) -> ParsedSource:
+    """Simplified version of Cython.Compiler.TreeFragment.parse_from_strings but with allowing pxd.
+
+    Args:
+        source: Cython source code string.
+        module_name: Module name for error messages.
+        pxd: Whether the source is a .pxd file.
+
+    Returns:
+        ParsedSource with preprocessed code and AST.
+    """
 
     # Extract type comments from the original source, then translate
     # original line numbers to post-preprocess line numbers by subtracting
@@ -87,10 +101,27 @@ def _parse_str(source: str, module_name: str) -> ParsedSource:
 
     source = preprocess(source)
 
-    ast = parse_from_strings(module_name, source, context=context)
-    ast = typing.cast("ModuleNode", ast)
+    encoding = "UTF-8"
+    initial_pos = (module_name, 1, 0)
 
-    return ParsedSource(source, ast, type_comments=type_comments)
+    context = StringParseContext(module_name)
+    code_source = StringSourceDescriptor(module_name, source)
+    buf = StringIO(source)
+
+    scope = context.find_module(module_name, pos=initial_pos, need_pxd=False)
+    scanner = PyrexScanner(
+        buf,
+        filename=code_source,
+        source_encoding=encoding,
+        scope=scope,
+        context=context,
+        initial_pos=initial_pos,
+    )
+    ctx = Parsing.Ctx(allow_struct_enum_decorator=True)
+
+    tree = Parsing.p_module(scanner, pxd, module_name, ctx=ctx)
+
+    return ParsedSource(source, tree, type_comments)
 
 
 def _normalize_part(part: str) -> str:
