@@ -42,7 +42,7 @@ def file_parsing_preprocess(source: Path, code: str) -> str:
             raise MaxIncludeDepthError(
                 f"Too many includes in source file (>{_STUBGEN_MAX_INCLUDE_DEPTH}). Possible circular include? Increase `STUBGEN_MAX_INCLUDE_DEPTH` environment variable."
             )
-    return _replace_equals_star(expanded)
+    return expanded
 
 
 def _read_file_fallback(path: Path, fallback: str) -> str:
@@ -112,25 +112,3 @@ def _get_includes(source: Path, code: str) -> list[_Include]:
 
     results.reverse()
     return results
-
-
-def _get_equals_star_indices(code: str) -> list[tuple[int, int]]:
-    results = []
-    last_token: tokenize.TokenInfo | None = None
-
-    line_converter = LineColConverter(code)
-    for token in tokenize_py(code):
-        if token.string == "*" and last_token and last_token.string == "=":
-            start = line_converter.line_col_to_offset(token.start)
-            end = line_converter.line_col_to_offset(token.end)
-            results.append((start, end))
-        last_token = token
-
-    results.reverse()
-    return results
-
-
-def _replace_equals_star(code: str) -> str:
-    for start, end in _get_equals_star_indices(code):
-        code = remove_indices(code, start, end, replace_with="...")
-    return code
