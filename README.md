@@ -26,7 +26,7 @@ Automatic stub file generation for Cython extensions that enables full IDE suppo
 **Comprehensive Cython Support**
 
 - Extracts type information from Cython source files
-- Preserves docstrings and function signatures
+- Preserves docstrings (if specified) and function signatures
 - Handles both `.pyx` and `.pxd` files
 - Supports class hierarchies and inheritance
 
@@ -132,6 +132,9 @@ stubgen-pyx . --no-deduplicate-imports
 
 # Skip trimming undefined names from annotations and defaults
 stubgen-pyx . --no-trim-not-defined
+
+# Skip preserving docstrings from the stub
+stubgen-pyx . --exclude-docstrings
 
 # Skip adding stubgen-pyx attribution comment
 stubgen-pyx . --exclude-attribution
@@ -260,6 +263,7 @@ All configuration is handled through the `StubgenPyxConfig` dataclass:
 | `continue_on_error`   | bool | False   | Continue processing even if a file fails        |
 | `include_private`     | bool | False   | Include private functions in the generated stub |
 | `verbose`             | bool | False   | Enable verbose logging output                   |
+| `include_docstrings`  | bool | True    | Include docstrings in the generated stub        |
 
 ## Example
 

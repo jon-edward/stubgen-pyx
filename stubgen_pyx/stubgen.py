@@ -111,7 +111,10 @@ class StubgenPyx:
 
         module_visitor = ModuleVisitor(node=parse_result.source_ast)
         module = converter.convert_module(
-            module_visitor, parse_result.source, parse_result.type_comments
+            module_visitor,
+            parse_result.source,
+            parse_result.type_comments,
+            include_docstrings=self.config.include_docstrings,
         )
 
         if pxd_str and self.config.pxd_to_stubs:
@@ -120,7 +123,10 @@ class StubgenPyx:
             )
             pxd_visitor = ModuleVisitor(node=pxd_parse_result.source_ast)
             pxd_module = converter.convert_module(
-                pxd_visitor, pxd_parse_result.source, pxd_parse_result.type_comments
+                pxd_visitor,
+                pxd_parse_result.source,
+                pxd_parse_result.type_comments,
+                include_docstrings=self.config.include_docstrings,
             )
             _merge_pxd_into_module(module, pxd_module)
 

@@ -53,6 +53,7 @@ class Converter:
         visitor: ModuleVisitor,
         source_code: str,
         type_comments: dict[int, str] | None = None,
+        include_docstrings: bool = True,
     ) -> PyiModule:
         """Convert a ModuleVisitor to a PyiModule.
 
@@ -67,10 +68,12 @@ class Converter:
         tc = type_comments or {}
         doc = docstring_to_string(visitor.node.doc) if visitor.node.doc else None
         return PyiModule(
-            doc=doc,
+            doc=doc if include_docstrings else None,
             imports=self.convert_imports(visitor.import_visitor, source_code)
             + [PyiImport("from typing import Any as _Any, TypeAlias as _TypeAlias")],
-            scope=self.convert_scope(visitor.scope, source_code, tc),
+            scope=self.convert_scope(
+                visitor.scope, source_code, tc, include_docstrings
+            ),
         )
 
     def convert_imports(
@@ -89,6 +92,7 @@ class Converter:
         visitor: ScopeVisitor,
         source_code: str,
         type_comments: dict[int, str] | None = None,
+        include_docstrings: bool = True,
     ) -> PyiScope:
         """Convert a ScopeVisitor to a PyiScope.
 
@@ -105,11 +109,17 @@ class Converter:
 
         # Preserve source order across cdef and def functions
         cdef_funcs = [
-            (node.pos[1], self.convert_cdef_func(node, source_code, tc))
+            (
+                node.pos[1],
+                self.convert_cdef_func(node, source_code, tc, include_docstrings),
+            )
             for node in visitor.cdef_functions
         ]
         py_funcs = [
-            (node.pos[1], self.convert_py_func(node, source_code, tc))
+            (
+                node.pos[1],
+                self.convert_py_func(node, source_code, tc, include_docstrings),
+            )
             for node in visitor.py_functions
         ]
         all_funcs_sorted = sorted(cdef_funcs + py_funcs, key=lambda t: t[0])
@@ -123,7 +133,7 @@ class Converter:
             + cdef_assignments,
             functions=functions,
             classes=[
-                self.convert_class(class_visitor, source_code, tc)
+                self.convert_class(class_visitor, source_code, tc, include_docstrings)
                 for class_visitor in visitor.classes
             ],
             enums=[self.convert_enum(enum) for enum in visitor.enums],
@@ -134,6 +144,7 @@ class Converter:
         class_visitor: ClassVisitor,
         source_code: str,
         type_comments: dict[int, str] | None = None,
+        include_docstrings: bool = True,
     ) -> PyiClass:
         """Convert a ClassVisitor to a PyiClass."""
         tc = type_comments or {}
@@ -148,11 +159,13 @@ class Converter:
 
         return PyiClass(
             name=name,
-            doc=doc,
+            doc=doc if include_docstrings else None,
             bases=get_bases(class_visitor.node),
             metaclass=get_metaclass(class_visitor.node),
             decorators=get_decorators(source_code, class_visitor.node),
-            scope=self.convert_scope(class_visitor.scope, source_code, tc),
+            scope=self.convert_scope(
+                class_visitor.scope, source_code, tc, include_docstrings
+            ),
         )
 
     def convert_cdef_func(
@@ -160,6 +173,7 @@ class Converter:
         cdef_func: Nodes.CFuncDefNode,
         source_code: str,
         type_comments: dict[int, str] | None = None,
+        include_docstrings: bool = True,
     ) -> PyiFunction:
         """Convert a C function definition node to PyiFunction."""
         tc = type_comments or {}
@@ -168,7 +182,7 @@ class Converter:
         return PyiFunction(
             name,
             is_async=False,
-            doc=doc,
+            doc=doc if include_docstrings else None,
             decorators=get_decorators(source_code, cdef_func),
             signature=get_signature(cdef_func),
             type_comment=self._type_comment_for(cdef_func, tc),
@@ -179,6 +193,7 @@ class Converter:
         node: Nodes.DefNode,
         source_code: str,
         type_comments: dict[int, str] | None = None,
+        include_docstrings: bool = True,
     ) -> PyiFunction:
         """Convert a Python function definition node to PyiFunction."""
         tc = type_comments or {}
@@ -187,7 +202,7 @@ class Converter:
         return PyiFunction(
             name,
             is_async=node.is_async_def,
-            doc=doc,
+            doc=doc if include_docstrings else None,
             decorators=get_decorators(source_code, node),
             signature=get_signature(node),
             type_comment=self._type_comment_for(node, tc),

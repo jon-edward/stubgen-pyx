@@ -30,6 +30,7 @@ class StubgenPyxConfig:
     normalize_names: bool = True
     deduplicate_imports: bool = True
     trim_not_defined: bool = True
+    include_docstrings: bool = True
     exclude_attribution: bool = False
     continue_on_error: bool = False
     include_private: bool = False

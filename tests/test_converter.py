@@ -556,3 +556,33 @@ class TestConverterStateless:
         mv2 = ModuleVisitor(pr2.source_ast)
         module2 = converter.convert_module(mv2, pr2.source, {})
         assert module2.scope.functions[0].type_comment is None
+
+
+class TestExcludeDocstrings:
+    def test_docstrings_excluded(self):
+        from stubgen_pyx.conversion.converter import Converter
+        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
+
+        converter = Converter()
+
+        pr = parse_pyx("""
+def foo():
+    \"""
+    This is a docstring
+    \"""
+""")
+        mv = ModuleVisitor(pr.source_ast)
+        module = converter.convert_module(
+            mv, pr.source, pr.type_comments, include_docstrings=False
+        )
+
+        assert len(module.scope.functions) == 1
+        assert module.scope.functions[0].doc is None
+
+        module = converter.convert_module(
+            mv, pr.source, pr.type_comments, include_docstrings=True
+        )
+
+        assert len(module.scope.functions) == 1
+        assert module.scope.functions[0].doc is not None
