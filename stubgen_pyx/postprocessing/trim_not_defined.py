@@ -200,7 +200,15 @@ class _NotDefinedRemover(ast.NodeTransformer):
         """Process annotated assignment annotation and value."""
         node.annotation = self._replace_if_undefined(node.annotation, annotation=True)
         if node.value is not None:
-            node.value = self._replace_if_undefined(node.value)
+            type_alias_override = False
+            if (
+                isinstance(node.annotation, ast.Name)
+                and node.annotation.id == "_TypeAlias"
+            ):
+                type_alias_override = True  # Treat type aliases as annotations
+            node.value = self._replace_if_undefined(
+                node.value, annotation=type_alias_override
+            )
         return node
 
     def visit_arguments(self, node: ast.arguments) -> ast.arguments:
@@ -236,7 +244,7 @@ class _NotDefinedRemover(ast.NodeTransformer):
     ) -> ast.AST:
         """Process function return type annotation."""
         if node.returns is not None:
-            node.returns = self._replace_if_undefined(node.returns)
+            node.returns = self._replace_if_undefined(node.returns, annotation=True)
         return self.generic_visit(node)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:

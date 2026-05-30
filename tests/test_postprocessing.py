@@ -12,6 +12,7 @@ from stubgen_pyx.postprocessing import (
     normalize_names,
     sort_imports,
     trim_imports,
+    trim_not_defined,
 )
 
 
@@ -397,3 +398,39 @@ class TestMergeLogicInStubgen:
         assert result.count("x: int") == 1
         # y should appear exactly once
         assert result.count("y: int") == 1
+
+
+class TestTrimNotDefined:
+    """Test the trim_not_defined module."""
+
+    def test_trim_not_defined(self):
+        """Test that trim_not_defined removes undefined names."""
+        code = "def func(x: UndefinedType) -> int: pass"
+        tree = ast.parse(code)
+        result = trim_not_defined.trim_not_defined(tree)
+        result_str = ast.unparse(result)
+        assert "UndefinedType" not in result_str
+
+    def test_trim_not_defined_keeps_defined(self):
+        """Test that trim_not_defined keeps defined names."""
+        code = "from typing import List\ndef func(x: List[int]) -> int: pass"
+        tree = ast.parse(code)
+        result = trim_not_defined.trim_not_defined(tree)
+        result_str = ast.unparse(result)
+        assert "List" in result_str
+
+    def test_keeps_type_alias_if_star_imported(self):
+        """Test that type aliases are kept if star-imported."""
+        code = "from typing import TypeAlias as _TypeAlias\nfrom module import *\nCustomType: _TypeAlias = imported_name"
+        tree = ast.parse(code)
+        result = trim_not_defined.trim_not_defined(tree)
+        result_str = ast.unparse(result)
+        assert "imported_name" in result_str
+
+    def test_keeps_annotation_if_star_imported(self):
+        """Test that annotations are kept if star-imported."""
+        code = "from module import *\nvariable: imported_type = 1"
+        tree = ast.parse(code)
+        result = trim_not_defined.trim_not_defined(tree)
+        result_str = ast.unparse(result)
+        assert "imported_type" in result_str
