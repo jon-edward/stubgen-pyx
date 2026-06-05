@@ -18,6 +18,8 @@ from .trim_not_defined import trim_not_defined
 from .sort_imports import sort_imports
 from .attribution import stubgen_attribution
 from .remove_identity_assignment import remove_identity_assignment
+from .collapse_funcdefs import collapse_funcdefs
+from .normalize_member_spacing import normalize_member_spacing
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +41,9 @@ def postprocessing_pipeline(
     pyi_ast = _ast_transforms(pyi_ast, config)
     pyi_code = ast.unparse(pyi_ast)
 
+    pyi_code = collapse_funcdefs(pyi_code)
+    pyi_code = normalize_member_spacing(pyi_code)
+
     if config.sort_imports:
         pyi_code = sort_imports(pyi_code)
 
@@ -56,12 +61,13 @@ def _ast_transforms(tree: ast.AST, config: StubgenPyxConfig) -> ast.AST:
     if config.normalize_names:
         tree = _NameNormalizer().visit(tree)
 
-    if config.trim_imports:
-        used_names = collect_names(tree)
-        tree = _UnusedImportRemover(used_names).visit(tree)
+    tree = remove_identity_assignment(tree)
 
     if config.trim_not_defined:
         trim_not_defined(tree)
 
-    tree = remove_identity_assignment(tree)
+    if config.trim_imports:
+        used_names = collect_names(tree)
+        tree = _UnusedImportRemover(used_names).visit(tree)
+
     return tree

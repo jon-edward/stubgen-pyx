@@ -88,6 +88,8 @@ class _NameCollector(ast.NodeVisitor):
 
         if isinstance(attribute, ast.Name):
             names.append(attribute.id)
+        else:
+            self.generic_visit(node)
 
         names.reverse()
         names.pop()
@@ -100,4 +102,18 @@ class _NameCollector(ast.NodeVisitor):
     def visit_Name(self, node: ast.Name) -> ast.Name:
         """Collect referenced identifiers."""
         self.names.add(node.id)
+        return node
+
+    def visit_Assign(self, node: ast.Assign) -> ast.Assign:
+        """Special case for __all__ assignment."""
+        if isinstance(node.targets[0], ast.Name) and node.targets[0].id == "__all__":
+            if isinstance(node.value, (ast.List, ast.Tuple)):
+                for item in node.value.elts:
+                    if isinstance(item, ast.Constant):
+                        str_constant = self._get_str_constant(item)
+                        if str_constant:
+                            self._try_parsed_visit(str_constant)
+                return node  # don't recurse
+
+        self.visit(node.value)
         return node
