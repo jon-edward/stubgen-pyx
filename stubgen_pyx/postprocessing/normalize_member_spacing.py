@@ -42,7 +42,7 @@ import ast
 from dataclasses import dataclass, field
 import enum
 import tokenize
-from typing import Union, TypeAlias
+from typing import Union
 
 from ..parsing.utils import LineColConverter, tokenize_py, remove_indices
 
@@ -93,7 +93,7 @@ class _MemberTypeState(enum.Enum):
     PREVIOUS_CLASS = "previous_class"
 
 
-_VISIT_TYPE: TypeAlias = Union[
+_VISIT_TYPE = Union[
     ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef, ast.AnnAssign, ast.Assign
 ]
 
