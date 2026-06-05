@@ -173,14 +173,6 @@ class Builder:
         if enum_lines:
             chunks.append("".join(enum_lines) + "\n")
 
-        class_lines: list[str] = []
-        for element in scope.classes:
-            class_content = self.build_class(element)
-            if class_content:
-                class_lines.append(f"{class_content}\n\n")
-        if class_lines:
-            chunks.append("".join(class_lines) + "\n")
-
         assignment_lines: list[str] = []
         for element in scope.assignments:
             assignment_content = self.build_assignment(element)
@@ -188,6 +180,14 @@ class Builder:
                 assignment_lines.append(f"{assignment_content}\n")
         if assignment_lines:
             chunks.append("".join(assignment_lines) + "\n")
+
+        class_lines: list[str] = []
+        for element in scope.classes:
+            class_content = self.build_class(element)
+            if class_content:
+                class_lines.append(f"{class_content}\n\n")
+        if class_lines:
+            chunks.append("".join(class_lines) + "\n")
 
         function_lines: list[str] = []
         for element in scope.functions:
