@@ -86,7 +86,7 @@ class StubgenPyx:
         module = self.compile_str_to_module(pyx_str, pxd_str, pyx_path)
         builder = self._make_builder()
         content = builder.build_module(module)
-        return postprocessing_pipeline(content, self.config, pyx_path).strip()
+        return postprocessing_pipeline(content, self.config, pyx_path).strip() + "\n"
 
     def compile_str_to_module(
         self, pyx_str: str, pxd_str: str | None = None, pyx_path: Path | None = None
