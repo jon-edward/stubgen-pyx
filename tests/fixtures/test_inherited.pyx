@@ -1,3 +1,4 @@
+from collections.abc import Callable
 
 class BaseClass:
     a: int
@@ -15,6 +16,9 @@ class ChildClass(BaseClass):
 
     def d(self) -> int:
         return self.b()
+
+
+__all__ = ['ChildClass', 'BaseClass', 'Callable']
 
 
 if __name__ == '__main__':
