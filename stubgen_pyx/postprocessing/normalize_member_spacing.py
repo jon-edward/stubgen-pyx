@@ -36,6 +36,8 @@ is converted to:
     C: int = ...
 """
 
+from __future__ import annotations
+
 import ast
 from dataclasses import dataclass, field
 import enum

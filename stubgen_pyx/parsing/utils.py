@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import io
 import tokenize
 from typing import Generator
