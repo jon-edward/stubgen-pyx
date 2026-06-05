@@ -311,13 +311,10 @@ def matrix_product(Matrix a, Matrix b) -> Matrix:
 
 class Matrix:
     """A simple matrix class."""
-
     def __init__(self, rows: int, cols: int):
         """Initialize a matrix."""
-
     def shape(self) -> tuple[int, int]:
         """Get matrix dimensions."""
-
     def scale(self, factor: float):
         """Scale all elements."""
 
