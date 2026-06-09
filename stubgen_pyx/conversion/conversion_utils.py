@@ -12,6 +12,9 @@ def extract_type_from_base_type(node) -> str | None:
     """Extract type name from a base_type node, trying multiple approaches."""
     base_type = node.base_type
     try:
+        if isinstance(base_type, Nodes.CTupleBaseTypeNode):
+            return _extract_tuple_base_type_node(base_type)
+
         name = None
         if hasattr(base_type, "name") and base_type.name is not None:
             name = ".".join(base_type.module_path + [base_type.name])
@@ -29,6 +32,13 @@ def extract_type_from_base_type(node) -> str | None:
     except AttributeError:
         pass
     return None
+
+
+def _extract_tuple_base_type_node(node) -> str:
+    output = []
+    for base in node.components:
+        output.append(extract_type_from_base_type(base) or "object")
+    return f"tuple[{', '.join(output)}]"
 
 
 def get_source(source: str, node: Nodes.Node) -> str:

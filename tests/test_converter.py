@@ -586,3 +586,42 @@ def foo():
 
         assert len(module.scope.functions) == 1
         assert module.scope.functions[0].doc is not None
+
+
+class TestTupleBaseType:
+    def test_tuple_base_type(self):
+        from stubgen_pyx.conversion.converter import Converter
+        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
+
+        converter = Converter()
+
+        pr = parse_pyx("""
+cpdef (int, int) foo(int x, int y):
+    return (x, y)
+""")
+        mv = ModuleVisitor(pr.source_ast)
+        module = converter.convert_module(mv, pr.source, pr.type_comments)
+
+        assert len(module.scope.functions) == 1
+        assert module.scope.functions[0].signature.return_type == "tuple[int, int]"
+
+    def test_tuple_base_type_nested(self):
+        from stubgen_pyx.conversion.converter import Converter
+        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
+
+        converter = Converter()
+
+        pr = parse_pyx("""
+cpdef ((int, int), int) foo(int x, int y):
+    return ((x, x), y)
+""")
+        mv = ModuleVisitor(pr.source_ast)
+        module = converter.convert_module(mv, pr.source, pr.type_comments)
+
+        assert len(module.scope.functions) == 1
+        assert (
+            module.scope.functions[0].signature.return_type
+            == "tuple[tuple[int, int], int]"
+        )
