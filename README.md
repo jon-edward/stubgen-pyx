@@ -9,6 +9,14 @@
 
 Automatic stub file generation for Cython extensions that enables full IDE support and type checking for Cython modules.
 
+## Used By
+
+- [NVIDIA](https://github.com/NVIDIA/cuda-python)
+- [cyndilib](https://github.com/cyndilib/cyndilib)
+
+<small>Are you using this project in production or in an open-source tool? We’d love to feature you!
+Please open a [pull request](https://github.com/jon-edward/stubgen-pyx/pulls) to add your project, company, or application to this list.</small>
+
 ## Table of Contents
 
 - [Features](#features)
