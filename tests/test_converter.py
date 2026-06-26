@@ -625,3 +625,44 @@ cpdef ((int, int), int) foo(int x, int y):
             module.scope.functions[0].signature.return_type
             == "tuple[tuple[int, int], int]"
         )
+
+
+class TestCinitInitHandling:
+    def test_cinit_to_init_absent_init(self):
+        from stubgen_pyx.conversion.converter import Converter
+        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
+
+        converter = Converter()
+
+        pr = parse_pyx("""
+cdef class Foo:
+    def __cinit__(self):
+        pass
+""")
+        mv = ModuleVisitor(pr.source_ast)
+        module = converter.convert_module(mv, pr.source, pr.type_comments)
+
+        assert len(module.scope.classes) == 1
+        assert module.scope.classes[0].scope.functions[0].name == "__init__"
+
+    def test_drop_cinit_present_init(self):
+        from stubgen_pyx.conversion.converter import Converter
+        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
+
+        converter = Converter()
+
+        pr = parse_pyx("""
+cdef class Foo:
+    def __init__(self):
+        pass
+    def __cinit__(self):
+        pass
+""")
+        mv = ModuleVisitor(pr.source_ast)
+        module = converter.convert_module(mv, pr.source, pr.type_comments)
+
+        assert len(module.scope.classes) == 1
+        assert len(module.scope.classes[0].scope.functions) == 1
+        assert module.scope.classes[0].scope.functions[0].name == "__init__"

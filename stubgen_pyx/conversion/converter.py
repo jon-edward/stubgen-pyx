@@ -122,6 +122,17 @@ class Converter:
             )
             for node in visitor.py_functions
         ]
+
+        # Replace __cinit__ with __init__ if no __init__ is present, otherwise remove
+        contains_init = any(py_func.name == "__init__" for _, py_func in py_funcs)
+
+        for idx, (_, py_func) in enumerate(py_funcs):
+            if py_func.name == "__cinit__" and not contains_init:
+                py_func.name = "__init__"
+            elif py_func.name == "__cinit__" and contains_init:
+                del py_funcs[idx]
+                break
+
         all_funcs_sorted = sorted(cdef_funcs + py_funcs, key=lambda t: t[0])
         functions = [f for _, f in all_funcs_sorted]
 
