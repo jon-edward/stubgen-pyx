@@ -94,3 +94,8 @@ def print_dict(d: dict) -> List[bint]:
     """
     pprint.pprint(d)
     return [False, False, True]
+
+
+cpdef int returns_list(int x = None):
+    x = x or 0
+    return [1, 2][x]

@@ -98,6 +98,9 @@ def _to_argument(arg: Nodes.CArgDeclNode) -> PyiArgument:
         annotation = _get_annotation(arg)
 
     default = unparse_expr(arg.default)  # type: ignore
+    if default == "None" and annotation and "None" not in annotation:
+        annotation += " | None"
+
     return PyiArgument(name, default=default, annotation=annotation)
 
 

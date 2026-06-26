@@ -685,3 +685,48 @@ cdef class Foo:
 
         assert len(module.scope.classes) == 1
         assert "value" in module.scope.classes[0].scope.assignments[0].statement
+
+
+class TestInferredNoneUnion:
+    def test_inferred_none_union(self):
+        from stubgen_pyx.conversion.converter import Converter
+        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
+
+        converter = Converter()
+
+        pr = parse_pyx("""
+cdef class Foo:
+    cpdef int bar(self, int x = None):
+        return x
+""")
+        mv = ModuleVisitor(pr.source_ast)
+        module = converter.convert_module(mv, pr.source, pr.type_comments)
+
+        assert len(module.scope.classes) == 1
+        assert (
+            module.scope.classes[0].scope.functions[0].signature.args[1].annotation
+            == "int | None"
+        )
+
+    def test_inferred_none_no_annotation(self):
+        from stubgen_pyx.conversion.converter import Converter
+        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
+
+        converter = Converter()
+
+        pr = parse_pyx("""
+cdef class Foo:
+    cpdef int bar(self, x = None):
+        return x
+""")
+        mv = ModuleVisitor(pr.source_ast)
+        module = converter.convert_module(mv, pr.source, pr.type_comments)
+
+        assert len(module.scope.classes) == 1
+        # Does not add ``| None`` to instances where no annotation
+        assert (
+            module.scope.classes[0].scope.functions[0].signature.args[1].annotation
+            is None
+        )
