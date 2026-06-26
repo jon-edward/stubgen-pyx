@@ -143,6 +143,20 @@ class TestBuilder:
         result = builder.build_signature(sig)
         assert "*" in result
 
+    def test_build_signature_vararg_then_kwonly_args(self):
+        """Test building a signature with *args followed by keyword-only args."""
+        builder = Builder()
+        sig = PyiSignature(
+            args=[
+                PyiArgument("x", annotation="str"),
+                PyiArgument("y", annotation="int"),
+            ],
+            var_arg=PyiArgument("args", annotation="object"),
+            num_kwonly_args=1,
+        )
+        result = builder.build_signature(sig)
+        assert result == "(x: str, *args: object, y: int)"
+
     def test_build_function_simple(self):
         """Test building a simple function."""
         builder = Builder()

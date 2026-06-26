@@ -66,16 +66,30 @@ class Builder:
             String like "(x: int, y: str) -> bool".
         """
         arg_strings: list[str] = []
+        kwonly_args = (
+            signature.args[-signature.num_kwonly_args :]
+            if signature.num_kwonly_args > 0
+            else []
+        )
+        positional_args = signature.args[: len(signature.args) - len(kwonly_args)]
+
         if signature.num_posonly_args > 0:
-            for i in range(signature.num_posonly_args):
-                arg_strings.append(self.build_argument(signature.args[i]))
+            for i in range(min(signature.num_posonly_args, len(positional_args))):
+                arg_strings.append(self.build_argument(positional_args[i]))
             arg_strings.append("/")
-        for i in range(signature.num_posonly_args, len(signature.args)):
-            arg_strings.append(self.build_argument(signature.args[i]))
+
+        for i in range(signature.num_posonly_args, len(positional_args)):
+            arg_strings.append(self.build_argument(positional_args[i]))
+
         if signature.var_arg is not None:
             arg_strings.append("*" + self.build_argument(signature.var_arg))
-        if signature.num_kwonly_args > 0 and signature.var_arg is None:
-            arg_strings.insert(-signature.num_kwonly_args, "*")
+
+        if signature.num_kwonly_args > 0:
+            if signature.var_arg is None:
+                arg_strings.append("*")
+            for arg in kwonly_args:
+                arg_strings.append(self.build_argument(arg))
+
         if signature.kw_arg is not None:
             arg_strings.append(f"**{signature.kw_arg.name}")
         sig = f"({', '.join(arg_strings)})"
