@@ -666,3 +666,22 @@ cdef class Foo:
         assert len(module.scope.classes) == 1
         assert len(module.scope.classes[0].scope.functions) == 1
         assert module.scope.classes[0].scope.functions[0].name == "__init__"
+
+
+class TestReadonlyVisibility:
+    def test_readonly_visibility(self):
+        from stubgen_pyx.conversion.converter import Converter
+        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
+
+        converter = Converter()
+
+        pr = parse_pyx("""
+cdef class Foo:
+    cdef readonly int value
+""")
+        mv = ModuleVisitor(pr.source_ast)
+        module = converter.convert_module(mv, pr.source, pr.type_comments)
+
+        assert len(module.scope.classes) == 1
+        assert "value" in module.scope.classes[0].scope.assignments[0].statement

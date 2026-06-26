@@ -110,7 +110,8 @@ class ScopeVisitor(TreeVisitor):
     def visit_CVarDefNode(self, node: Nodes.CVarDefNode):
         """Collect C variable/constance definitions"""
         visibility: str = node.visibility  # type: ignore
-        if self.in_class and visibility == "public":
+        # Only ``public`` and ``readonly`` are Python-visible
+        if self.in_class and (visibility == "public" or visibility == "readonly"):
             self.cdef_variables.append(node)
 
 
