@@ -70,7 +70,7 @@ class Converter:
         return PyiModule(
             doc=doc if include_docstrings else None,
             imports=self.convert_imports(visitor.import_visitor, source_code)
-            + [PyiImport("from typing import Any as _Any, TypeAlias as _TypeAlias")],
+            + [PyiImport("from typing import Any, Callable, TypeAlias, TypedDict")],
             scope=self.convert_scope(
                 visitor.scope, source_code, tc, include_docstrings
             ),
@@ -86,6 +86,28 @@ class Converter:
         """Convert a single import node to PyiImport, rewriting cimport -> import."""
         raw = get_source(source_code, node)
         return PyiImport(_CIMPORT_RE.sub("import", raw))
+
+    def convert_struct_or_union(
+        self, node: Nodes.CStructOrUnionDefNode, source_code: str
+    ) -> PyiClass:
+        """Convert a C struct or union definition node to PyiClass."""
+        attributes = []
+        for attribute in node.attributes:
+            if isinstance(attribute, Nodes.CVarDefNode):
+                attributes.extend(
+                    [
+                        PyiAssignment(f"{name}: {base_type or 'Any'}")
+                        for name, base_type in get_cdef_variables(attribute)
+                    ]
+                )
+        is_union = node.kind == "union"
+        keywords = {"total": "False"} if is_union else {}
+        return PyiClass(
+            name=node.name,
+            bases=["TypedDict"],
+            keywords=keywords,
+            scope=PyiScope(assignments=attributes),
+        )
 
     def convert_scope(
         self,
@@ -104,7 +126,7 @@ class Converter:
         cdef_assignments: list[PyiAssignment] = []
         for cdef_variable in visitor.cdef_variables:
             for name, base_type in get_cdef_variables(cdef_variable):
-                resolved_type = base_type if base_type else "_Any"
+                resolved_type = base_type if base_type else "Any"
                 cdef_assignments.append(PyiAssignment(f"{name}: {resolved_type}"))
 
         # Preserve source order across cdef and def functions
@@ -136,6 +158,11 @@ class Converter:
         all_funcs_sorted = sorted(cdef_funcs + py_funcs, key=lambda t: t[0])
         functions = [f for _, f in all_funcs_sorted]
 
+        structs_or_enums = [
+            self.convert_struct_or_union(node, source_code)
+            for node in visitor.cdef_structs_or_unions
+        ]
+
         return PyiScope(
             assignments=[
                 self.convert_assignment(assignment, source_code)
@@ -143,7 +170,8 @@ class Converter:
             ]
             + cdef_assignments,
             functions=functions,
-            classes=[
+            classes=structs_or_enums
+            + [
                 self.convert_class(class_visitor, source_code, tc, include_docstrings)
                 for class_visitor in visitor.classes
             ],
@@ -164,7 +192,9 @@ class Converter:
         else:
             name: str = class_visitor.node.name
 
-        node_doc: str | None = class_visitor.node.doc  # type: ignore
+        node_doc: str | None = (
+            class_visitor.node.doc if hasattr(class_visitor.node, "doc") else None
+        )  # type: ignore
 
         doc = docstring_to_string(node_doc) if node_doc else None
 
@@ -261,7 +291,7 @@ class Converter:
 
             base_name: str = node.name  # type: ignore
             type_name = ".".join(node.module_path + [base_name])
-            return PyiAssignment(f"{name}: _TypeAlias = {type_name}")
+            return PyiAssignment(f"{name}: TypeAlias = {type_name}")
 
         return PyiAssignment(get_source(source_code, assignment))
 
@@ -271,4 +301,4 @@ class Converter:
             name: str | None = node.name  # type: ignore
             return PyiEnum(enum_name=name, names=get_enum_names(node))
         # Make it usable as an alias for int
-        return PyiAssignment(f"{node.name}: _TypeAlias = int")  # type: ignore
+        return PyiAssignment(f"{node.name}: TypeAlias = int")  # type: ignore

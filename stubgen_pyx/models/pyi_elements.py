@@ -78,6 +78,7 @@ class PyiClass(PyiElement):
     doc: str | None = None
     bases: list[str] = field(default_factory=list)
     metaclass: str | None = None
+    keywords: dict[str, str] = field(default_factory=dict)
     decorators: list[str] = field(default_factory=list)
     scope: PyiScope = field(default_factory=PyiScope)
 

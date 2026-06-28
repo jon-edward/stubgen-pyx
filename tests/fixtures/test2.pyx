@@ -53,4 +53,18 @@ cdef class ImportedClass:
         self._private_field = value
 
 
+cdef cppclass FooCppBar:
+    pass
+
+
+cdef union FooUnion:
+    int i
+    float f
+
+
+cdef struct FooStruct:
+    int i
+    FooUnion u
+
 X: ImportedClass = ImportedClass()
+gitgi

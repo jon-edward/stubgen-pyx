@@ -359,6 +359,7 @@ def _merge_two_classes(target: PyiClass, other: PyiClass) -> None:
     if target.metaclass is None:
         target.metaclass = other.metaclass
     target.decorators = [*dict.fromkeys(target.decorators + other.decorators)]
+    target.keywords = {**target.keywords, **other.keywords}
     target.scope.assignments += other.scope.assignments
     _deduplicate_assignments(target.scope)
     target.scope.functions += other.scope.functions

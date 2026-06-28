@@ -203,7 +203,7 @@ class _NotDefinedRemover(ast.NodeTransformer):
             type_alias_override = False
             if (
                 isinstance(node.annotation, ast.Name)
-                and node.annotation.id == "_TypeAlias"
+                and node.annotation.id == "TypeAlias"
             ):
                 type_alias_override = True  # Treat type aliases as annotations
             node.value = self._replace_if_undefined(

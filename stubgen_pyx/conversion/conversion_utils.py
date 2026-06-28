@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import textwrap
 
 
@@ -14,7 +15,6 @@ def extract_type_from_base_type(node) -> str | None:
     try:
         if isinstance(base_type, Nodes.CTupleBaseTypeNode):
             return _extract_tuple_base_type_node(base_type)
-
         name = None
         if hasattr(base_type, "name") and base_type.name is not None:
             name = ".".join(base_type.module_path + [base_type.name])
@@ -32,6 +32,24 @@ def extract_type_from_base_type(node) -> str | None:
     except AttributeError:
         pass
     return None
+
+
+# TODO: Handle templated types
+# def _extract_templated_base_type_node(node) -> str | None:
+#     print(node.dump())
+#     base_type = extract_type_from_base_type(node.base_type_node)
+#     print(base_type)
+#     types = []
+#     kwargs = {}
+#     for arg in node.positional_args:
+#         types.append(extract_type_from_base_type(arg.base_type))
+#     if isinstance(node.keyword_args, ExprNodes.DictNode):
+#         for key, value in node.keyword_args.key_value_pairs:
+#             if not isinstance(key, ExprNodes.IdentifierStringNode):
+#                 continue
+#             kwargs[key.value] = unparse_expr(value)
+#     parts = types + [f"{k}={v}" for k, v in kwargs.items()]
+#     return f"{base_type}[{', '.join(parts)}]"
 
 
 def _extract_tuple_base_type_node(node) -> str:
@@ -70,7 +88,7 @@ def get_decorators(
 
 def get_bases(node: Nodes.CClassDefNode | Nodes.PyClassDefNode) -> list[str]:
     """Extract base class names from a class node."""
-    if not node.bases:  # type: ignore
+    if not hasattr(node, "bases") or not node.bases:  # type: ignore
         return []
     output = []
     for base in node.bases.args:  # type: ignore
@@ -88,6 +106,23 @@ def get_metaclass(node: Nodes.PyClassDefNode | Nodes.CClassDefNode) -> str | Non
     return None
 
 
+def _get_name_from_ptr_or_name_decl(
+    decl: Nodes.CNameDeclaratorNode
+    | Nodes.CPtrDeclaratorNode
+    | Nodes.CConstDeclaratorNode,
+) -> str:
+    if isinstance(
+        decl,
+        (
+            Nodes.CPtrDeclaratorNode,
+            Nodes.CConstDeclaratorNode,
+            Nodes.CFuncDeclaratorNode,
+        ),
+    ):
+        return _get_name_from_ptr_or_name_decl(decl.base)
+    return decl.name
+
+
 def get_cdef_variables(node: Nodes.CVarDefNode) -> list[tuple[str, str | None]]:
     """Extract all variable names from a cdef variable node.
 
@@ -96,8 +131,32 @@ def get_cdef_variables(node: Nodes.CVarDefNode) -> list[tuple[str, str | None]]:
     The type may be None if it cannot be determined.
     """
     base_type = extract_type_from_base_type(node)  # type: ignore
-    declarators: list[Nodes.CNameDeclaratorNode] = node.declarators  # type: ignore
-    return [(d.name, base_type) for d in declarators if d.name]
+    if (
+        not base_type
+        and hasattr(node, "base_type")
+        and isinstance(node.base_type, Nodes.CPtrDeclaratorNode)
+    ):
+        base_type = extract_type_from_base_type(node.base_type)
+    accepted_declarators = (
+        Nodes.CNameDeclaratorNode,
+        Nodes.CPtrDeclaratorNode,
+        Nodes.CConstDeclaratorNode,
+        Nodes.CFuncDeclaratorNode,
+    )
+    declarators = []
+    for declarator in node.declarators:
+        if isinstance(declarator, accepted_declarators):
+            declarators.append(declarator)
+        else:
+            logging.warning(f"Unknown declarator type: {type(declarator).__name__}")
+    # TODO: Handle function pointers by properly extracting the return and argument types
+    return [
+        (
+            _get_name_from_ptr_or_name_decl(d),
+            base_type if not isinstance(d, Nodes.CFuncDeclaratorNode) else "Callable",
+        )
+        for d in declarators
+    ]
 
 
 def get_enum_names(node: Nodes.CEnumDefNode) -> list[str]:

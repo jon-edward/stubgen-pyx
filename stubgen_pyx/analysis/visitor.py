@@ -31,6 +31,9 @@ class ScopeVisitor(TreeVisitor):
     classes: list[ClassVisitor] = field(default_factory=list, init=False)
     enums: list[Nodes.CEnumDefNode] = field(default_factory=list, init=False)
     cdef_variables: list[Nodes.CVarDefNode] = field(default_factory=list, init=False)
+    cdef_structs_or_unions: list[Nodes.CStructOrUnionDefNode] = field(
+        default_factory=list, init=False
+    )
 
     def __post_init__(self):
         super().__init__()
@@ -89,6 +92,10 @@ class ScopeVisitor(TreeVisitor):
         self.classes.append(ClassVisitor(node=node))
         return node
 
+    def visit_CppClassNode(self, node):
+        """Collect C++ Cython extension type (cdef cppclass) definitions. Currently unsupported."""
+        return node
+
     def visit_DefNode(self, node):
         """Collect Python function definitions."""
         self.py_functions.append(node)
@@ -113,6 +120,11 @@ class ScopeVisitor(TreeVisitor):
         # Only ``public`` and ``readonly`` are Python-visible
         if self.in_class and (visibility == "public" or visibility == "readonly"):
             self.cdef_variables.append(node)
+
+    def visit_CStructOrUnionDefNode(self, node: Nodes.CStructOrUnionDefNode):
+        """Collect C struct/union definitions"""
+        self.cdef_structs_or_unions.append(node)
+        return node
 
 
 @dataclass

@@ -113,6 +113,8 @@ class Builder:
 
         if class_.bases or class_.metaclass is not None:
             inheritance_parts = list(class_.bases)
+            if class_.keywords:
+                inheritance_parts.extend(f"{k}={v}" for k, v in class_.keywords.items())
             if class_.metaclass is not None:
                 inheritance_parts.append(f"metaclass={class_.metaclass}")
             parts.append(f"({', '.join(inheritance_parts)})")

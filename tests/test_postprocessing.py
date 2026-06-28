@@ -421,7 +421,7 @@ class TestTrimNotDefined:
 
     def test_keeps_type_alias_if_star_imported(self):
         """Test that type aliases are kept if star-imported."""
-        code = "from typing import TypeAlias as _TypeAlias\nfrom module import *\nCustomType: _TypeAlias = imported_name"
+        code = "from typing import TypeAlias as TypeAlias\nfrom module import *\nCustomType: TypeAlias = imported_name"
         tree = ast.parse(code)
         result = trim_not_defined.trim_not_defined(tree)
         result_str = ast.unparse(result)

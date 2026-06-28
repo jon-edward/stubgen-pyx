@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock
 
-
-from stubgen_pyx.parsing import file_parsing
+from stubgen_pyx.parsing import file_parsing, parser
 
 
 class TestTryParseString:
@@ -154,3 +154,29 @@ class TestIncludeDataclass:
         assert include.path == path
         assert include.start == 10
         assert include.end == 20
+
+
+class TestParserCaching:
+    """Regression tests for parser caching."""
+
+    def test_parse_pyx_reuses_cached_result_for_identical_source(self, monkeypatch):
+        """Repeated parses of unchanged source should reuse the cached AST."""
+        parser.clear_parse_cache()
+
+        calls = []
+
+        def fake_parse_str(source: str, module_name: str, pxd: bool = False):
+            calls.append((source, module_name, pxd))
+            return parser.ParsedSource(
+                source=source,
+                source_ast=MagicMock(),
+                type_comments={},
+            )
+
+        monkeypatch.setattr(parser, "_parse_str", fake_parse_str)
+
+        first = parser.parse_pyx("def foo(): return 1", module_name="demo")
+        second = parser.parse_pyx("def foo(): return 1", module_name="demo")
+
+        assert first is second
+        assert len(calls) == 1

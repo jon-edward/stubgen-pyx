@@ -730,3 +730,75 @@ cdef class Foo:
             module.scope.classes[0].scope.functions[0].signature.args[1].annotation
             is None
         )
+
+
+class TestStructOrUnionType:
+    def test_struct_or_union_type(self):
+        from stubgen_pyx.conversion.converter import Converter
+        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
+
+        converter = Converter()
+
+        pr = parse_pyx("""
+cdef struct Foo:
+    int x
+    int y
+""")
+        mv = ModuleVisitor(pr.source_ast)
+        module = converter.convert_module(mv, pr.source, pr.type_comments)
+
+        assert len(module.scope.classes) == 1
+        assert module.scope.classes[0].bases[0] == "TypedDict"
+        assert not module.scope.classes[0].keywords
+
+        pr = parse_pyx("""
+cdef union Foo:
+    int x
+    int y
+""")
+        mv = ModuleVisitor(pr.source_ast)
+        module = converter.convert_module(mv, pr.source, pr.type_comments)
+
+        assert len(module.scope.classes) == 1
+        assert module.scope.classes[0].bases[0] == "TypedDict"
+        assert module.scope.classes[0].keywords["total"] == "False"
+
+    def test_cdef_ptr_attributes(self):
+        from stubgen_pyx.conversion.converter import Converter
+        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
+
+        converter = Converter()
+
+        pr = parse_pyx("""
+cdef struct BarStruct:
+    int x
+
+cdef struct Foo:
+    BarStruct* bar
+""")
+        mv = ModuleVisitor(pr.source_ast)
+        module = converter.convert_module(mv, pr.source, pr.type_comments)
+
+        assert len(module.scope.classes) == 2
+        assert (
+            module.scope.classes[1].scope.assignments[0].statement == "bar: BarStruct"
+        )
+
+    def test_cfunc_ptr_attribute(self):
+        from stubgen_pyx.conversion.converter import Converter
+        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
+
+        converter = Converter()
+
+        pr = parse_pyx("""
+cdef struct Foo:
+    int (*bar)(int)
+""")
+        mv = ModuleVisitor(pr.source_ast)
+        module = converter.convert_module(mv, pr.source, pr.type_comments)
+
+        assert len(module.scope.classes) == 1
+        assert module.scope.classes[0].scope.assignments[0].statement == "bar: Callable"
