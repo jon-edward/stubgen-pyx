@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
+import hashlib
 import logging
 import os
 from pathlib import Path
@@ -19,15 +20,40 @@ _STUBGEN_MAX_INCLUDE_DEPTH = int(
 
 logger = logging.getLogger(__name__)
 
+_FILE_PARSING_CACHE: dict[tuple[tuple[str, str], str], str] = {}
+
 
 class MaxIncludeDepthError(ValueError):
     pass
+
+
+def _make_file_parsing_cache_key(
+    source: Path, code: str
+) -> tuple[tuple[str, str], str]:
+    """Create a cache key for file parsing preprocessing."""
+    try:
+        stat_result = source.stat()
+        path_key = f"{source.resolve()}:{stat_result.st_mtime_ns}:{stat_result.st_size}"
+    except OSError:
+        path_key = str(source.resolve())
+
+    code_digest = hashlib.sha256(code.encode("utf-8")).hexdigest()
+    return ((str(source), path_key), code_digest)
+
+
+def clear_file_parsing_cache() -> None:
+    """Clear cached file parsing preprocessing results."""
+    _FILE_PARSING_CACHE.clear()
 
 
 def file_parsing_preprocess(source: Path, code: str) -> str:
     """
     Preprocess Cython code before parsing it.
     """
+    cache_key = _make_file_parsing_cache_key(source, code)
+    if cache_key in _FILE_PARSING_CACHE:
+        return _FILE_PARSING_CACHE[cache_key]
+
     # Start expansion from the provided code. Repeatedly expand includes
     # until no more changes occur or a maximum depth is reached.
     expanded = code
@@ -42,6 +68,8 @@ def file_parsing_preprocess(source: Path, code: str) -> str:
             raise MaxIncludeDepthError(
                 f"Too many includes in source file (>{_STUBGEN_MAX_INCLUDE_DEPTH}). Possible circular include? Increase `STUBGEN_MAX_INCLUDE_DEPTH` environment variable."
             )
+
+    _FILE_PARSING_CACHE[cache_key] = expanded
     return expanded
 
 

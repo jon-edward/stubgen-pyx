@@ -7,6 +7,7 @@ See `preprocess.py` for preprocessing details.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
 from io import StringIO
 from pathlib import Path
 
@@ -43,6 +44,34 @@ class ParsedSource:
 
 
 _DEFAULT_MODULE_NAME = "__pyx_module__"
+_PARSE_CACHE: dict[tuple[tuple[str, bool], str, str], ParsedSource] = {}
+
+
+def _make_parse_cache_key(
+    source: str,
+    module_name: str,
+    pxd: bool,
+    pyx_path: Path | None,
+) -> tuple[tuple[str, bool], str, str]:
+    """Create a cache key for a parse operation."""
+    if pyx_path is not None:
+        try:
+            stat_result = pyx_path.stat()
+            path_key = (
+                f"{pyx_path.resolve()}:{stat_result.st_mtime_ns}:{stat_result.st_size}"
+            )
+        except OSError:
+            path_key = str(pyx_path.resolve())
+    else:
+        path_key = ""
+
+    source_digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    return ((module_name, pxd), source_digest, path_key)
+
+
+def clear_parse_cache() -> None:
+    """Clear cached parse results."""
+    _PARSE_CACHE.clear()
 
 
 def parse_pyx(
@@ -71,7 +100,13 @@ def parse_pyx(
         source = file_parsing_preprocess(pyx_path, source)
         module_name = path_to_module_name(pyx_path)
 
-    return _parse_str(source, module_name, pxd)
+    cache_key = _make_parse_cache_key(source, module_name, pxd, pyx_path)
+    if cache_key in _PARSE_CACHE:
+        return _PARSE_CACHE[cache_key]
+
+    parsed_source = _parse_str(source, module_name, pxd)
+    _PARSE_CACHE[cache_key] = parsed_source
+    return parsed_source
 
 
 def _parse_str(source: str, module_name: str, pxd: bool = False) -> ParsedSource:
