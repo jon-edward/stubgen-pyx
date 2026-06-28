@@ -19,6 +19,7 @@ from ..models.pyi_elements import (
     PyiAssignment,
     PyiFunction,
     PyiEnum,
+    PyiSignature,
 )
 from .signature import get_signature
 from .conversion_utils import (
@@ -33,6 +34,12 @@ from .conversion_utils import (
 )
 
 _CIMPORT_RE = re.compile(r"\bcimport\b")
+
+
+@dataclass
+class PyiFusedType:
+    name: str
+    concrete_types: tuple[str, ...]
 
 
 @dataclass
@@ -67,13 +74,17 @@ class Converter:
         """
         tc = type_comments or {}
         doc = docstring_to_string(visitor.node.doc) if visitor.node.doc else None
+        scope = self.convert_scope(
+            visitor.scope, source_code, tc, include_docstrings
+        )
+        typing_import = "from typing import Any as _Any, TypeAlias as _TypeAlias"
+        if _scope_uses_typevar(scope):
+            typing_import += ", TypeVar"
         return PyiModule(
             doc=doc if include_docstrings else None,
             imports=self.convert_imports(visitor.import_visitor, source_code)
-            + [PyiImport("from typing import Any as _Any, TypeAlias as _TypeAlias")],
-            scope=self.convert_scope(
-                visitor.scope, source_code, tc, include_docstrings
-            ),
+            + [PyiImport(typing_import)],
+            scope=scope,
         )
 
     def convert_imports(
@@ -100,6 +111,7 @@ class Converter:
         line position, rather than emitting all cdef functions first.
         """
         tc = type_comments or {}
+        fused_types = self.convert_fused_types(visitor.fused_types)
 
         cdef_assignments: list[PyiAssignment] = []
         for cdef_variable in visitor.cdef_variables:
@@ -111,7 +123,9 @@ class Converter:
         cdef_funcs = [
             (
                 node.pos[1],
-                self.convert_cdef_func(node, source_code, tc, include_docstrings),
+                self.convert_cdef_func(
+                    node, source_code, tc, include_docstrings, fused_types
+                ),
             )
             for node in visitor.cdef_functions
         ]
@@ -135,9 +149,17 @@ class Converter:
 
         all_funcs_sorted = sorted(cdef_funcs + py_funcs, key=lambda t: t[0])
         functions = [f for _, f in all_funcs_sorted]
+        if functions:
+            fused_typevar_names = _find_typevar_fused_types(functions, fused_types)
+        else:
+            fused_typevar_names = list(fused_types)
 
         return PyiScope(
             assignments=[
+                self.convert_fused_type(fused_types[name])
+                for name in fused_typevar_names
+            ]
+            + [
                 self.convert_assignment(assignment, source_code)
                 for assignment in visitor.assignments
             ]
@@ -185,6 +207,7 @@ class Converter:
         source_code: str,
         type_comments: dict[int, str] | None = None,
         include_docstrings: bool = True,
+        fused_types: dict[str, PyiFusedType] | None = None,
     ) -> PyiFunction:
         """Convert a C function definition node to PyiFunction."""
         tc = type_comments or {}
@@ -195,8 +218,31 @@ class Converter:
             is_async=False,
             doc=doc if include_docstrings else None,
             decorators=get_decorators(source_code, cdef_func),
-            signature=get_signature(cdef_func),
+            signature=_resolve_fused_signature(
+                get_signature(cdef_func), fused_types or {}
+            ),
             type_comment=self._type_comment_for(cdef_func, tc),
+        )
+
+    def convert_fused_types(
+        self, fused_type_nodes: list[Nodes.FusedTypeNode]
+    ) -> dict[str, PyiFusedType]:
+        fused_types: dict[str, PyiFusedType] = {}
+        for node in fused_type_nodes:
+            name = getattr(node, "name")
+            type_nodes = getattr(node, "types")
+            concrete_types = tuple(
+                type_name
+                for type_name in (_type_name(type_node) for type_node in type_nodes)
+                if type_name is not None
+            )
+            fused_types[name] = PyiFusedType(name, concrete_types)
+        return fused_types
+
+    def convert_fused_type(self, fused_type: PyiFusedType) -> PyiAssignment:
+        concrete_types = ", ".join(fused_type.concrete_types)
+        return PyiAssignment(
+            f'{fused_type.name} = TypeVar("{fused_type.name}", {concrete_types})'
         )
 
     def convert_py_func(
@@ -225,7 +271,7 @@ class Converter:
         """Convert an assignment node to PyiAssignment, extracting type annotations."""
         if isinstance(assignment, Nodes.SingleAssignmentNode):
             expr = unparse_expr(assignment.rhs)
-            name: str = assignment.lhs.name  # type: ignore
+            name: str = assignment.lhs.name
             if expr != "...":
                 annotation = (
                     assignment.lhs.annotation.string.value
@@ -259,7 +305,7 @@ class Converter:
             if not isinstance(node, Nodes.CSimpleBaseTypeNode):
                 return PyiAssignment(f"{name} = ...")
 
-            base_name: str = node.name  # type: ignore
+            base_name: str = node.name
             type_name = ".".join(node.module_path + [base_name])
             return PyiAssignment(f"{name}: _TypeAlias = {type_name}")
 
@@ -272,3 +318,70 @@ class Converter:
             return PyiEnum(enum_name=name, names=get_enum_names(node))
         # Make it usable as an alias for int
         return PyiAssignment(f"{node.name}: _TypeAlias = int")  # type: ignore
+
+
+def _type_name(node: Nodes.Node) -> str | None:
+    if isinstance(node, Nodes.CSimpleBaseTypeNode):
+        module_path = getattr(node, "module_path")
+        name = getattr(node, "name")
+        return ".".join(module_path + [name])
+    if isinstance(node, Nodes.TemplatedTypeNode):
+        return _type_name(getattr(node, "base_type_node"))
+    return None
+
+
+def _resolve_fused_signature(
+    signature: PyiSignature, fused_types: dict[str, PyiFusedType]
+) -> PyiSignature:
+    usage = _signature_fused_usage(signature, fused_types)
+    for arg in signature.args:
+        if arg.annotation in fused_types:
+            arg.annotation = _resolved_fused_annotation(arg.annotation, usage, fused_types)
+    if signature.return_type in fused_types:
+        signature.return_type = _resolved_fused_annotation(
+            signature.return_type, usage, fused_types
+        )
+    return signature
+
+
+def _resolved_fused_annotation(
+    name: str,
+    usage: dict[str, tuple[int, bool]],
+    fused_types: dict[str, PyiFusedType],
+) -> str:
+    param_count, used_as_return = usage[name]
+    if used_as_return or param_count > 1:
+        return name
+    return " | ".join(fused_types[name].concrete_types)
+
+
+def _signature_fused_usage(
+    signature: PyiSignature, fused_types: dict[str, PyiFusedType]
+) -> dict[str, tuple[int, bool]]:
+    usage: dict[str, tuple[int, bool]] = {}
+    for name in fused_types:
+        param_count = sum(arg.annotation == name for arg in signature.args)
+        used_as_return = signature.return_type == name
+        if param_count or used_as_return:
+            usage[name] = (param_count, used_as_return)
+    return usage
+
+
+def _find_typevar_fused_types(
+    functions: list[PyiFunction], fused_types: dict[str, PyiFusedType]
+) -> list[str]:
+    used: list[str] = []
+    for name in fused_types:
+        for function in functions:
+            if _signature_uses_name(function.signature, name):
+                used.append(name)
+                break
+    return used
+
+
+def _signature_uses_name(signature: PyiSignature, name: str) -> bool:
+    return any(arg.annotation == name for arg in signature.args) or signature.return_type == name
+
+
+def _scope_uses_typevar(scope: PyiScope) -> bool:
+    return any("TypeVar(" in assignment.statement for assignment in scope.assignments)
