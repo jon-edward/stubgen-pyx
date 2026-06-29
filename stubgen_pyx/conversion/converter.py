@@ -30,6 +30,7 @@ from .conversion_utils import (
     get_cdef_variables,
     unparse_expr,
     docstring_to_string,
+    extract_type_from_base_type,
 )
 
 _CIMPORT_RE = re.compile(r"\bcimport\b")
@@ -70,7 +71,10 @@ class Converter:
         return PyiModule(
             doc=doc if include_docstrings else None,
             imports=self.convert_imports(visitor.import_visitor, source_code)
-            + [PyiImport("from typing import Any, Callable, TypeAlias, TypedDict")],
+            + [
+                PyiImport("from typing import Any, Callable, TypeAlias, TypedDict"),
+                PyiImport("import numpy"),
+            ],
             scope=self.convert_scope(
                 visitor.scope, source_code, tc, include_docstrings
             ),
@@ -192,10 +196,7 @@ class Converter:
         else:
             name: str = class_visitor.node.name
 
-        node_doc: str | None = (
-            class_visitor.node.doc if hasattr(class_visitor.node, "doc") else None
-        )  # type: ignore
-
+        node_doc: str | None = getattr(class_visitor.node, "doc", None)
         doc = docstring_to_string(node_doc) if node_doc else None
 
         return PyiClass(
@@ -279,19 +280,10 @@ class Converter:
 
         if isinstance(assignment, Nodes.CTypeDefNode):
             name: str = assignment.declarator.name  # type: ignore
-            if isinstance(assignment.base_type, Nodes.CSimpleBaseTypeNode):  # type: ignore
-                node = assignment.base_type  # type: ignore
-            elif isinstance(assignment.base_type, Nodes.TemplatedTypeNode):  # type: ignore
-                node = assignment.base_type.base_type_node  # type: ignore
-            else:
+            type_str = extract_type_from_base_type(assignment)
+            if not type_str:
                 return PyiAssignment(f"{name} = ...")
-
-            if not isinstance(node, Nodes.CSimpleBaseTypeNode):
-                return PyiAssignment(f"{name} = ...")
-
-            base_name: str = node.name  # type: ignore
-            type_name = ".".join(node.module_path + [base_name])
-            return PyiAssignment(f"{name}: TypeAlias = {type_name}")
+            return PyiAssignment(f"{name}: TypeAlias = {type_str}")
 
         return PyiAssignment(get_source(source_code, assignment))
 

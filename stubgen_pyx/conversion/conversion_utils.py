@@ -5,70 +5,174 @@ from __future__ import annotations
 import logging
 import textwrap
 
-
 from Cython.Compiler import Nodes, ExprNodes
+from Cython.CodeWriter import ExpressionWriter
+
+_CYTHON_TO_NUMPY_SCALAR: dict[str, str] = {
+    "bint": "bool_",
+    "bool": "bool_",
+    "char": "byte",
+    "signed char": "int8",
+    "short": "short",
+    "short int": "short",
+    "int": "intc",
+    "long": "int_",
+    "long int": "int_",
+    "long long": "longlong",
+    "long long int": "longlong",
+    "unsigned char": "ubyte",
+    "unsigned short": "ushort",
+    "unsigned short int": "ushort",
+    "unsigned int": "uintc",
+    "unsigned long": "uint",
+    "unsigned long int": "uint",
+    "unsigned long long": "ulonglong",
+    "unsigned long long int": "ulonglong",
+    "int8_t": "int8",
+    "int16_t": "int16",
+    "int32_t": "int32",
+    "int64_t": "int64",
+    "uint8_t": "uint8",
+    "uint16_t": "uint16",
+    "uint32_t": "uint32",
+    "uint64_t": "uint64",
+    "Py_ssize_t": "intp",
+    "size_t": "uintp",
+    "Py_intptr_t": "intp",
+    "float": "single",
+    "double": "double",
+    "long double": "longdouble",
+    "float complex": "complex64",
+    "double complex": "complex128",
+}
 
 
-def extract_type_from_base_type(node) -> str | None:
-    """Extract type name from a base_type node, trying multiple approaches."""
-    base_type = node.base_type
+def extract_type_from_base_type(node, is_ptr: bool = False) -> str | None:
+    """Extract a type annotation string from a base_type node.
+
+    Handles plain named types, pointer types (``char *`` -> ``bytes``),
+    tuple types, C++ templated types, fixed-size C arrays, and typed
+    memoryviews.
+    """
     try:
-        if isinstance(base_type, Nodes.CTupleBaseTypeNode):
-            return _extract_tuple_base_type_node(base_type)
-        name = None
-        if hasattr(base_type, "name") and base_type.name is not None:
-            name = ".".join(base_type.module_path + [base_type.name])
-        if (
-            hasattr(base_type, "base_type_node")
-            and base_type.base_type_node is not None
-        ):
-            name = ".".join(
-                base_type.base_type_node.module_path + [base_type.base_type_node.name]
-            )
-        if name == "char" and isinstance(node.declarator, Nodes.CPtrDeclaratorNode):
-            # char * -> str, too complex to handle with name substitution
-            return "str"
-        return name
+        base_type = node.base_type
     except AttributeError:
-        pass
-    return None
+        return None
+
+    # CArgDeclNode carries a single .declarator; check it for pointer-ness.
+    if not is_ptr:
+        is_ptr = isinstance(getattr(node, "declarator", None), Nodes.CPtrDeclaratorNode)
+
+    if isinstance(base_type, Nodes.CTupleBaseTypeNode):
+        return _extract_tuple_type(base_type)
+    if isinstance(base_type, Nodes.TemplatedTypeNode):
+        return _extract_templated_type(base_type)
+    if isinstance(base_type, Nodes.MemoryViewSliceTypeNode):
+        return _extract_memoryview_type(base_type)
+
+    name: str | None = None
+    if hasattr(base_type, "name") and base_type.name is not None:
+        name = ".".join(base_type.module_path + [base_type.name])
+    if hasattr(base_type, "base_type_node") and base_type.base_type_node is not None:
+        name = ".".join(
+            base_type.base_type_node.module_path + [base_type.base_type_node.name]
+        )
+
+    if is_ptr and name == "char":
+        return "bytes"
+
+    return name
 
 
-# TODO: Handle templated types
-# def _extract_templated_base_type_node(node) -> str | None:
-#     print(node.dump())
-#     base_type = extract_type_from_base_type(node.base_type_node)
-#     print(base_type)
-#     types = []
-#     kwargs = {}
-#     for arg in node.positional_args:
-#         types.append(extract_type_from_base_type(arg.base_type))
-#     if isinstance(node.keyword_args, ExprNodes.DictNode):
-#         for key, value in node.keyword_args.key_value_pairs:
-#             if not isinstance(key, ExprNodes.IdentifierStringNode):
-#                 continue
-#             kwargs[key.value] = unparse_expr(value)
-#     parts = types + [f"{k}={v}" for k, v in kwargs.items()]
-#     return f"{base_type}[{', '.join(parts)}]"
+def _extract_tuple_type(node: Nodes.CTupleBaseTypeNode) -> str:
+    """Unparse a C tuple base-type node as ``tuple[A, B, ...]``."""
+    parts = [extract_type_from_base_type(c) or "object" for c in node.components]
+    return f"tuple[{', '.join(parts)}]"
 
 
-def _extract_tuple_base_type_node(node) -> str:
-    output = []
-    for base in node.components:
-        output.append(extract_type_from_base_type(base) or "object")
-    return f"tuple[{', '.join(output)}]"
+def _extract_templated_type(node: Nodes.TemplatedTypeNode) -> str | None:
+    """Unparse a ``TemplatedTypeNode`` as either a fixed-size C array or a
+    C++ template instantiation.
+
+    Fixed-size C arrays (``char[100]``, ``int[100][100]``) are detected by
+    their positional args being integer literals and are delegated to
+    ``_extract_array_type``.  Everything else is treated as a C++ template
+    and rendered as ``Base[T1, T2, ...]``.  Returns ``None`` when the base
+    type cannot be resolved.
+    """
+    positional_args = getattr(node, "positional_args", [])
+
+    # Fixed-size C array: all positional args are integer literals.
+    if positional_args and all(
+        isinstance(a, ExprNodes.IntNode) for a in positional_args
+    ):
+        return _extract_array_type(node)
+
+    # Template instantiation
+    base_type_node = getattr(node, "base_type_node", None)
+    if base_type_node is None:
+        return None
+
+    base = ".".join(base_type_node.module_path + [base_type_node.name])
+
+    parts = [extract_type_from_base_type(a) or "object" for a in positional_args]
+    # keywords intentionally omitted as they are not supported in Python
+    return f"{base}[{', '.join(parts)}]" if parts else base
+
+
+def _extract_array_type(node: Nodes.TemplatedTypeNode) -> str | None:
+    """Recursively unwrap nested ``TemplatedTypeNode`` fixed-size C arrays.
+
+    ``char[100]``      -> ``"bytes"``
+    ``char[100][100]`` -> ``"list[bytes]"``
+    ``int[100]``       -> ``"list[int]"``
+    ``int[100][100]``  -> ``"list[list[int]]"``
+
+    Returns ``None`` when the innermost base type cannot be resolved.
+    """
+    base_type_node = getattr(node, "base_type_node", None)
+    if base_type_node is None:
+        return None
+
+    # Nested array: recurse to resolve the inner type first.
+    if isinstance(base_type_node, Nodes.TemplatedTypeNode):
+        inner = _extract_array_type(base_type_node)
+        return f"list[{inner}]" if inner is not None else None
+
+    # Innermost level: resolve the scalar name.
+    try:
+        name = ".".join(base_type_node.module_path + [base_type_node.name])
+    except AttributeError:
+        return None
+
+    if not name:
+        return None
+    return "bytes" if name == "char" else f"list[{name}]"
+
+
+def _extract_memoryview_type(node) -> str:
+    """Unparse a typed memoryview node as ``numpy.typing.NDArray[dtype]``.
+
+    Falls back to plain ``memoryview`` when the scalar type is not in the
+    mapping (e.g. a user-defined struct or an unrecognised C type).
+    """
+    base = getattr(node, "base_type_node", None)
+    if base is not None:
+        name = getattr(base, "name", None)
+        scalar = None if name is None else _CYTHON_TO_NUMPY_SCALAR.get(name)
+        if scalar:
+            return f"numpy.typing.NDArray[numpy.{scalar}]"
+    return "memoryview"
 
 
 def get_source(source: str, node: Nodes.Node) -> str:
-    """Extract source code for a node, dedented and trimmed.
+    """Extract source code for a node, dedented and stripped.
 
-    Note: Node end_pos is often inaccurate; fallback to start position if needed.
+    ``end_pos`` is often inaccurate in Cython's AST; the function falls back
+    to the start position when it is missing.
     """
     lines = source.splitlines(keepends=True)
-
-    end_pos = node.end_pos()
-    if end_pos is None:
-        end_pos = node.pos
+    end_pos = node.end_pos() or node.pos
     output = "".join(lines[i - 1] for i in range(node.pos[1], end_pos[1] + 1))
     return textwrap.dedent(output).rstrip()
 
@@ -80,37 +184,36 @@ def get_decorators(
     | Nodes.CClassDefNode
     | Nodes.PyClassDefNode,
 ) -> list[str]:
-    """Extract decorator expressions from a function or class node."""
+    """Return decorator source strings for a function or class node."""
     if node.decorators:
-        return [get_source(source, node) for node in node.decorators]
+        return [get_source(source, d) for d in node.decorators]
     return []
 
 
 def get_bases(node: Nodes.CClassDefNode | Nodes.PyClassDefNode) -> list[str]:
-    """Extract base class names from a class node."""
-    if not hasattr(node, "bases") or not node.bases:  # type: ignore
+    """Return base-class name strings from a class node."""
+    if not hasattr(node, "bases") or not node.bases:
         return []
-    output = []
-    for base in node.bases.args:  # type: ignore
-        if isinstance(base, ExprNodes.NameNode):
-            output.append(base.name)  # type: ignore
-    return output
+    return [
+        base.name for base in node.bases.args if isinstance(base, ExprNodes.NameNode)
+    ]
 
 
 def get_metaclass(node: Nodes.PyClassDefNode | Nodes.CClassDefNode) -> str | None:
-    """Extract metaclass name from a Python class node, if present."""
+    """Return the metaclass name from a Python class node, if present."""
     if not isinstance(node, Nodes.PyClassDefNode):
         return None
     if node.metaclass and isinstance(node.metaclass, ExprNodes.NameNode):
-        return node.metaclass.name  # type: ignore
+        return node.metaclass.name
     return None
 
 
-def _get_name_from_ptr_or_name_decl(
+def _declarator_name(
     decl: Nodes.CNameDeclaratorNode
     | Nodes.CPtrDeclaratorNode
     | Nodes.CConstDeclaratorNode,
 ) -> str:
+    """Recursively unwrap pointer/const/func declarators to reach the name."""
     if isinstance(
         decl,
         (
@@ -119,76 +222,67 @@ def _get_name_from_ptr_or_name_decl(
             Nodes.CFuncDeclaratorNode,
         ),
     ):
-        return _get_name_from_ptr_or_name_decl(decl.base)
+        return _declarator_name(decl.base)
     return decl.name
 
 
 def get_cdef_variables(node: Nodes.CVarDefNode) -> list[tuple[str, str | None]]:
-    """Extract all variable names from a cdef variable node.
+    """Return ``(name, type)`` pairs for every declarator in a cdef statement.
 
-    A single ``cdef public int x, y, z`` node has multiple declarators.
-    Returns a list of (name, type) pairs, one per declarator.
-    The type may be None if it cannot be determined.
+    A single ``cdef public int x, y, z`` node can contain multiple declarators.
+    Fixed-size array types (``char[N]``, ``int[N][M]``) are resolved via the
+    base_type's ``TemplatedTypeNode``; pointer declarators on ``char`` emit
+    ``"bytes"``; function-pointer declarators emit ``"Callable"``.
+
+    .. todo::
+        Properly extract return and argument types for function pointers.
     """
-    base_type = extract_type_from_base_type(node)  # type: ignore
-    if (
-        not base_type
-        and hasattr(node, "base_type")
-        and isinstance(node.base_type, Nodes.CPtrDeclaratorNode)
-    ):
-        base_type = extract_type_from_base_type(node.base_type)
-    accepted_declarators = (
+    accepted = (
         Nodes.CNameDeclaratorNode,
         Nodes.CPtrDeclaratorNode,
         Nodes.CConstDeclaratorNode,
         Nodes.CFuncDeclaratorNode,
     )
     declarators = []
-    for declarator in node.declarators:
-        if isinstance(declarator, accepted_declarators):
-            declarators.append(declarator)
+    for decl in node.declarators:
+        if isinstance(decl, accepted):
+            declarators.append(decl)
         else:
-            logging.warning(f"Unknown declarator type: {type(declarator).__name__}")
-    # TODO: Handle function pointers by properly extracting the return and argument types
-    return [
-        (
-            _get_name_from_ptr_or_name_decl(d),
-            base_type if not isinstance(d, Nodes.CFuncDeclaratorNode) else "Callable",
-        )
-        for d in declarators
-    ]
+            logging.warning("Unknown declarator type: %s", type(decl).__name__)
+
+    results = []
+    for d in declarators:
+        name = _declarator_name(d)
+        if isinstance(d, Nodes.CFuncDeclaratorNode):
+            typ: str | None = "Callable"
+        elif isinstance(d, Nodes.CPtrDeclaratorNode):
+            typ = extract_type_from_base_type(node, is_ptr=True)
+        else:
+            typ = extract_type_from_base_type(node)
+        results.append((name, typ))
+    return results
 
 
 def get_enum_names(node: Nodes.CEnumDefNode) -> list[str]:
-    """Extract member names from an enum definition node."""
+    """Return member names from an enum definition node."""
     return [item.name for item in node.items]  # type: ignore
 
 
 def docstring_to_string(docstring: str) -> str:
-    """Convert a raw docstring to a Python string literal with triple quotes."""
+    """Wrap a raw docstring in triple-double-quotes, escaping embedded ones."""
     if not docstring:
         return '""" """'
     first_line, *rest = docstring.splitlines(keepends=True)
     rest_joined = textwrap.dedent("".join(rest))
-    docstring = f"{first_line}{rest_joined}".replace('"""', r"\"\"\"")
-    return f'"""{docstring}"""'
+    body = f"{first_line}{rest_joined}".replace('"""', r"\"\"\"")
+    return f'"""{body}"""'
 
 
 def unparse_expr(node: Nodes.Node | None) -> str | None:
-    """Convert a default argument expression to source code string.
-
-    Simple literals are unparsed to their string form. Complex expressions
-    are replaced with '...'.
-    """
+    """Render an expression node to source code."""
     if node is None:
         return None
 
-    if isinstance(node, ExprNodes.NoneNode):
-        return "None"
-    if isinstance(node, ExprNodes.NameNode):
-        return node.name  # type: ignore
-    if isinstance(node, (ExprNodes.IntNode, ExprNodes.FloatNode, ExprNodes.BoolNode)):
-        return node.value  # type: ignore
-    if isinstance(node, (ExprNodes.UnicodeNode, ExprNodes.BytesNode)):
-        return repr(node.value)  # type: ignore
-    return "..."
+    expr_writer = ExpressionWriter(allow_unknown_nodes=True)
+    expr_writer.visit(node)
+    return expr_writer.result

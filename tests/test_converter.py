@@ -467,7 +467,93 @@ cpdef str get(char* path):
         func = result.scope.functions[0]
         assert len(func.signature.args) == 1
         arg = func.signature.args[0]
-        assert arg.annotation == "str"
+        assert arg.annotation == "bytes"
+
+    def test_char_ptr_type_var(self):
+        """Test converting char pointer type."""
+        code = """
+cdef class Foo:
+    cdef public char* bar
+"""
+        parsed = parse_pyx(code)
+        visitor = ModuleVisitor(parsed.source_ast)
+
+        converter = Converter()
+        result = converter.convert_module(visitor, parsed.source)
+
+        assert len(result.scope.classes) == 1
+        cls = result.scope.classes[0]
+        assert len(cls.scope.assignments) == 1
+        assert cls.scope.assignments[0].statement == "bar: bytes"
+
+    def test_sized_array_type(self):
+        """Test converting sized array type."""
+        code = """
+cdef class Foo:
+    cdef public int[3] bar
+"""
+        parsed = parse_pyx(code)
+        visitor = ModuleVisitor(parsed.source_ast)
+
+        converter = Converter()
+        result = converter.convert_module(visitor, parsed.source)
+
+        assert len(result.scope.classes) == 1
+        cls = result.scope.classes[0]
+        assert len(cls.scope.assignments) == 1
+        assert cls.scope.assignments[0].statement == "bar: list[int]"
+
+    def test_sized_array_type_var_nested(self):
+        """Test converting sized array type."""
+        code = """
+cdef class Foo:
+    cdef public int[3][3] bar
+    cdef public other.val[3][3] baz
+"""
+        parsed = parse_pyx(code)
+        visitor = ModuleVisitor(parsed.source_ast)
+
+        converter = Converter()
+        result = converter.convert_module(visitor, parsed.source)
+
+        assert len(result.scope.classes) == 1
+        cls = result.scope.classes[0]
+        assert len(cls.scope.assignments) == 2
+        assert cls.scope.assignments[0].statement == "bar: list[list[int]]"
+        assert cls.scope.assignments[1].statement == "baz: list[list[other.val]]"
+
+    def test_sized_array_type_var_bytes(self):
+        """Test converting sized array type."""
+        code = """
+cdef class Foo:
+    cdef public char[3][3] bar
+"""
+        parsed = parse_pyx(code)
+        visitor = ModuleVisitor(parsed.source_ast)
+
+        converter = Converter()
+        result = converter.convert_module(visitor, parsed.source)
+
+        assert len(result.scope.classes) == 1
+        cls = result.scope.classes[0]
+        assert len(cls.scope.assignments) == 1
+        assert cls.scope.assignments[0].statement == "bar: list[bytes]"
+
+    def test_class_metaclass(self):
+        """Test converting class metaclass."""
+        code = """
+class MyClass(metaclass=type):
+    pass
+"""
+        parsed = parse_pyx(code)
+        visitor = ModuleVisitor(parsed.source_ast)
+
+        converter = Converter()
+        result = converter.convert_module(visitor, parsed.source)
+
+        assert len(result.scope.classes) == 1
+        cls = result.scope.classes[0]
+        assert cls.metaclass == "type"
 
 
 class TestFunctionSourceOrder:
@@ -802,3 +888,85 @@ cdef struct Foo:
 
         assert len(module.scope.classes) == 1
         assert module.scope.classes[0].scope.assignments[0].statement == "bar: Callable"
+
+
+class TestMemoryviewConversion:
+    def test_memoryview_to_numpy(self):
+        from stubgen_pyx.conversion.converter import Converter
+        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
+
+        converter = Converter()
+
+        pr = parse_pyx("""
+
+ctypedef int[:, :] int_view
+
+cdef class Foo:
+    cdef public double[:, :] bar
+""")
+        mv = ModuleVisitor(pr.source_ast)
+        module = converter.convert_module(mv, pr.source, pr.type_comments)
+
+        assert len(module.scope.classes) == 1
+        assert (
+            module.scope.classes[0].scope.assignments[0].statement
+            == "bar: numpy.typing.NDArray[numpy.double]"
+        )
+        assert (
+            module.scope.assignments[0].statement
+            == "int_view: TypeAlias = numpy.typing.NDArray[numpy.intc]"
+        )
+
+
+class TestTemplateTypeConversion:
+    def test_template_type_conversion(self):
+        from stubgen_pyx.conversion.converter import Converter
+        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
+
+        converter = Converter()
+
+        pr = parse_pyx("""
+cpdef list[int] foo():
+    return []
+""")
+        mv = ModuleVisitor(pr.source_ast)
+        module = converter.convert_module(mv, pr.source, pr.type_comments)
+
+        assert len(module.scope.functions) == 1
+        assert module.scope.functions[0].signature.return_type == "list[int]"
+
+        pr = parse_pyx("""
+cpdef imported.array[list[int]] foo():
+    return []
+""")
+        mv = ModuleVisitor(pr.source_ast)
+        module = converter.convert_module(mv, pr.source, pr.type_comments)
+
+        assert len(module.scope.functions) == 1
+        assert (
+            module.scope.functions[0].signature.return_type
+            == "imported.array[list[int]]"
+        )
+
+
+class TestCdefEnumConversion:
+    def test_cdef_enum_no_wrapper(self):
+        from stubgen_pyx.conversion.converter import Converter
+        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
+
+        converter = Converter()
+
+        pr = parse_pyx("""
+cdef enum:
+    A = 1
+    B = 2
+    C = 3
+""")
+        mv = ModuleVisitor(pr.source_ast)
+        module = converter.convert_module(mv, pr.source, pr.type_comments)
+
+        assert len(module.scope.classes) == 0
+        assert len(module.scope.assignments) == 0

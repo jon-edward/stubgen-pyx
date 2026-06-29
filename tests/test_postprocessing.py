@@ -68,6 +68,12 @@ class MyClass:
         names = collect_names.collect_names(tree)
         assert "ForwardRef" in names or len(names) >= 0
 
+    def test_collect_names_malformed_str(self):
+        code = 'def func(x: "ForwardRef<<<INVALID>>>") -> None: pass'
+        tree = ast.parse(code)
+        names = collect_names.collect_names(tree)
+        assert "ForwardRef" not in names
+
     def test_collect_names_attribute_access(self):
         """Test collecting names from attribute access."""
         code = """

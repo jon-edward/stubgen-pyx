@@ -35,6 +35,8 @@ cdef class ImportedClass:
     A docstring for ImportedClass
     """
 
+    cdef public double[:, :] embedding
+
     def __init__(self):
         """
         A docstring for __init__
@@ -65,6 +67,6 @@ cdef union FooUnion:
 cdef struct FooStruct:
     int i
     FooUnion u
+    double[:, :] embedding
 
 X: ImportedClass = ImportedClass()
-gitgi
