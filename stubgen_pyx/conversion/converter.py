@@ -19,6 +19,7 @@ from ..models.pyi_elements import (
     PyiAssignment,
     PyiFunction,
     PyiEnum,
+    PyiFusedType,
 )
 from .signature import get_signature
 from .source_extraction import get_decorators, get_bases, get_metaclass, get_source
@@ -66,7 +67,9 @@ class Converter:
             doc=doc if include_docstrings else None,
             imports=self.convert_imports(visitor.import_visitor, source_code)
             + [
-                PyiImport("from typing import Any, Callable, TypeAlias, TypedDict"),
+                PyiImport(
+                    "from typing import Any, Callable, TypeAlias, TypedDict, TypeVar"
+                ),
                 PyiImport("import numpy"),
             ],
             scope=self.convert_scope(
@@ -174,6 +177,10 @@ class Converter:
                 for class_visitor in visitor.classes
             ],
             enums=[self.convert_enum(enum) for enum in visitor.enums],
+            fused_types=[
+                self.convert_fused_type(fused_type)
+                for fused_type in visitor.fused_types
+            ],
         )
 
     def convert_class(
@@ -288,3 +295,10 @@ class Converter:
             return PyiEnum(enum_name=name, names=get_enum_names(node))
         # Make it usable as an alias for int
         return PyiAssignment(f"{node.name}: TypeAlias = int")  # type: ignore
+
+    def convert_fused_type(self, node: Nodes.FusedTypeNode) -> PyiFusedType:
+        """Convert a fused type definition to PyiAssignment."""
+        return PyiFusedType(
+            name=node.name,
+            concrete_types=[extract_type_from_base_type(n) for n in node.types],
+        )

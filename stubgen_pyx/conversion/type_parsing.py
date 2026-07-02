@@ -50,6 +50,10 @@ def extract_type_from_base_type(node, is_ptr: bool = False) -> str | None:
     tuple types, C++ templated types, fixed-size C arrays, and typed
     memoryviews.
     """
+
+    if isinstance(node, Nodes.CSimpleBaseTypeNode):
+        return node.name
+
     try:
         base_type = node.base_type
     except AttributeError:

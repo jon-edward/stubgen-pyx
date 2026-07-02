@@ -17,6 +17,7 @@ from ..models.pyi_elements import (
     PyiSignature,
     PyiArgument,
     PyiEnum,
+    PyiFusedType,
 )
 
 
@@ -197,6 +198,14 @@ class Builder:
         if assignment_lines:
             chunks.append("".join(assignment_lines) + "\n")
 
+        fused_type_lines: list[str] = []
+        for element in scope.fused_types:
+            fused_type_content = self.build_fused_type(element)
+            if fused_type_content:
+                fused_type_lines.append(f"{fused_type_content}\n")
+        if fused_type_lines:
+            chunks.append("".join(fused_type_lines) + "\n")
+
         class_lines: list[str] = []
         for element in scope.classes:
             class_content = self.build_class(element)
@@ -269,3 +278,8 @@ class Builder:
             return self.build_class(class_)
 
         return "\n".join(annotations)
+
+    def build_fused_type(self, fused_type: PyiFusedType) -> str | None:
+        if not self.include_private and self._is_private(fused_type.name):
+            return None
+        return f"{fused_type.name} = TypeVar({fused_type.name!r}, {', '.join(fused_type.concrete_types)})"

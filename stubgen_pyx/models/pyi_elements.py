@@ -68,6 +68,7 @@ class PyiScope(PyiElement):
     functions: list[PyiFunction] = field(default_factory=list)
     classes: list[PyiClass] = field(default_factory=list)
     enums: list[PyiEnum | PyiAssignment] = field(default_factory=list)
+    fused_types: list[PyiFusedType] = field(default_factory=list)
 
 
 @dataclass
@@ -98,3 +99,11 @@ class PyiModule(PyiElement):
     doc: str | None = None
     imports: list[PyiImport] = field(default_factory=list)
     scope: PyiScope = field(default_factory=PyiScope)
+
+
+@dataclass
+class PyiFusedType(PyiElement):
+    """Represents a fused type."""
+
+    name: str
+    concrete_types: list[str] = field(default_factory=list)

@@ -70,3 +70,11 @@ cdef struct FooStruct:
     double[:, :] embedding
 
 X: ImportedClass = ImportedClass()
+
+ctypedef fused TestFusedType:
+    int
+    double
+
+cdef fused TestOtherFusedType:
+    int
+    double

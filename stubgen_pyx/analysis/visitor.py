@@ -34,6 +34,7 @@ class ScopeVisitor(TreeVisitor):
     cdef_structs_or_unions: list[Nodes.CStructOrUnionDefNode] = field(
         default_factory=list, init=False
     )
+    fused_types: list[Nodes.FusedTypeNode] = field(default_factory=list, init=False)
 
     def __post_init__(self):
         super().__init__()
@@ -124,6 +125,11 @@ class ScopeVisitor(TreeVisitor):
     def visit_CStructOrUnionDefNode(self, node: Nodes.CStructOrUnionDefNode):
         """Collect C struct/union definitions"""
         self.cdef_structs_or_unions.append(node)
+        return node
+
+    def visit_FusedTypeNode(self, node: Nodes.FusedTypeNode):
+        """Collect fused type definitions"""
+        self.fused_types.append(node)
         return node
 
 
