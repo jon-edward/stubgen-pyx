@@ -21,17 +21,11 @@ from ..models.pyi_elements import (
     PyiEnum,
 )
 from .signature import get_signature
-from .conversion_utils import (
-    get_decorators,
-    get_bases,
-    get_metaclass,
-    get_source,
-    get_enum_names,
-    get_cdef_variables,
-    unparse_expr,
-    docstring_to_string,
-    extract_type_from_base_type,
-)
+from .source_extraction import get_decorators, get_bases, get_metaclass, get_source
+from .declarators import get_enum_names, get_cdef_variables
+from .unparse import unparse_expr
+from .docstrings import docstring_to_string
+from .type_parsing import extract_type_from_base_type
 
 _CIMPORT_RE = re.compile(r"\bcimport\b")
 

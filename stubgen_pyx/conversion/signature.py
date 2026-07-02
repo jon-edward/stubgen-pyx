@@ -6,7 +6,8 @@ import logging
 
 from Cython.Compiler import Nodes
 
-from .conversion_utils import unparse_expr, extract_type_from_base_type
+from .unparse import unparse_expr
+from .type_parsing import extract_type_from_base_type
 from ..models.pyi_elements import PyiArgument, PyiSignature
 
 

@@ -1,12 +1,8 @@
-"""Utility functions for converting Cython AST nodes."""
+"""Type parsing helpers for Cython AST nodes."""
 
 from __future__ import annotations
 
-import logging
-import textwrap
-
 from Cython.Compiler import Nodes, ExprNodes
-from Cython.CodeWriter import ExpressionWriter
 
 _CYTHON_TO_NUMPY_SCALAR: dict[str, str] = {
     "bint": "bool_",
@@ -116,7 +112,6 @@ def _extract_templated_type(node: Nodes.TemplatedTypeNode) -> str | None:
     base = ".".join(base_type_node.module_path + [base_type_node.name])
 
     parts = [extract_type_from_base_type(a) or "object" for a in positional_args]
-    # keywords intentionally omitted as they are not supported in Python
     return f"{base}[{', '.join(parts)}]" if parts else base
 
 
@@ -163,126 +158,3 @@ def _extract_memoryview_type(node) -> str:
         if scalar:
             return f"numpy.typing.NDArray[numpy.{scalar}]"
     return "memoryview"
-
-
-def get_source(source: str, node: Nodes.Node) -> str:
-    """Extract source code for a node, dedented and stripped.
-
-    ``end_pos`` is often inaccurate in Cython's AST; the function falls back
-    to the start position when it is missing.
-    """
-    lines = source.splitlines(keepends=True)
-    end_pos = node.end_pos() or node.pos
-    output = "".join(lines[i - 1] for i in range(node.pos[1], end_pos[1] + 1))
-    return textwrap.dedent(output).rstrip()
-
-
-def get_decorators(
-    source: str,
-    node: Nodes.DefNode
-    | Nodes.CFuncDefNode
-    | Nodes.CClassDefNode
-    | Nodes.PyClassDefNode,
-) -> list[str]:
-    """Return decorator source strings for a function or class node."""
-    if node.decorators:
-        return [get_source(source, d) for d in node.decorators]
-    return []
-
-
-def get_bases(node: Nodes.CClassDefNode | Nodes.PyClassDefNode) -> list[str]:
-    """Return base-class name strings from a class node."""
-    if not hasattr(node, "bases") or not node.bases:
-        return []
-    return [
-        base.name for base in node.bases.args if isinstance(base, ExprNodes.NameNode)
-    ]
-
-
-def get_metaclass(node: Nodes.PyClassDefNode | Nodes.CClassDefNode) -> str | None:
-    """Return the metaclass name from a Python class node, if present."""
-    if not isinstance(node, Nodes.PyClassDefNode):
-        return None
-    if node.metaclass and isinstance(node.metaclass, ExprNodes.NameNode):
-        return node.metaclass.name
-    return None
-
-
-def _declarator_name(
-    decl: Nodes.CNameDeclaratorNode
-    | Nodes.CPtrDeclaratorNode
-    | Nodes.CConstDeclaratorNode,
-) -> str:
-    """Recursively unwrap pointer/const/func declarators to reach the name."""
-    if isinstance(
-        decl,
-        (
-            Nodes.CPtrDeclaratorNode,
-            Nodes.CConstDeclaratorNode,
-            Nodes.CFuncDeclaratorNode,
-        ),
-    ):
-        return _declarator_name(decl.base)
-    return decl.name
-
-
-def get_cdef_variables(node: Nodes.CVarDefNode) -> list[tuple[str, str | None]]:
-    """Return ``(name, type)`` pairs for every declarator in a cdef statement.
-
-    A single ``cdef public int x, y, z`` node can contain multiple declarators.
-    Fixed-size array types (``char[N]``, ``int[N][M]``) are resolved via the
-    base_type's ``TemplatedTypeNode``; pointer declarators on ``char`` emit
-    ``"bytes"``; function-pointer declarators emit ``"Callable"``.
-
-    .. todo::
-        Properly extract return and argument types for function pointers.
-    """
-    accepted = (
-        Nodes.CNameDeclaratorNode,
-        Nodes.CPtrDeclaratorNode,
-        Nodes.CConstDeclaratorNode,
-        Nodes.CFuncDeclaratorNode,
-    )
-    declarators = []
-    for decl in node.declarators:
-        if isinstance(decl, accepted):
-            declarators.append(decl)
-        else:
-            logging.warning("Unknown declarator type: %s", type(decl).__name__)
-
-    results = []
-    for d in declarators:
-        name = _declarator_name(d)
-        if isinstance(d, Nodes.CFuncDeclaratorNode):
-            typ: str | None = "Callable"
-        elif isinstance(d, Nodes.CPtrDeclaratorNode):
-            typ = extract_type_from_base_type(node, is_ptr=True)
-        else:
-            typ = extract_type_from_base_type(node)
-        results.append((name, typ))
-    return results
-
-
-def get_enum_names(node: Nodes.CEnumDefNode) -> list[str]:
-    """Return member names from an enum definition node."""
-    return [item.name for item in node.items]  # type: ignore
-
-
-def docstring_to_string(docstring: str) -> str:
-    """Wrap a raw docstring in triple-double-quotes, escaping embedded ones."""
-    if not docstring:
-        return '""" """'
-    first_line, *rest = docstring.splitlines(keepends=True)
-    rest_joined = textwrap.dedent("".join(rest))
-    body = f"{first_line}{rest_joined}".replace('"""', r"\"\"\"")
-    return f'"""{body}"""'
-
-
-def unparse_expr(node: Nodes.Node | None) -> str | None:
-    """Render an expression node to source code."""
-    if node is None:
-        return None
-
-    expr_writer = ExpressionWriter(allow_unknown_nodes=True)
-    expr_writer.visit(node)
-    return expr_writer.result
