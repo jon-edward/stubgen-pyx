@@ -326,6 +326,7 @@ def _merge_pxd_into_module(module: PyiModule, pxd_module: PyiModule) -> None:
     _deduplicate_assignments(module.scope)
     _merge_classes(module.scope, pxd_module.scope.classes)
     module.imports += pxd_module.imports
+    module.scope.fused_types += pxd_module.scope.fused_types
 
 
 def _deduplicate_assignments(scope) -> None:
