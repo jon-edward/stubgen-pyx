@@ -19,6 +19,7 @@ from ..models.pyi_elements import (
     PyiAssignment,
     PyiFunction,
     PyiEnum,
+    PyiSignature,
 )
 from .signature import get_signature
 from .source_extraction import get_decorators, get_bases, get_metaclass, get_source
@@ -28,6 +29,27 @@ from .docstrings import docstring_to_string
 from .type_parsing import extract_type_from_base_type
 
 _CIMPORT_RE = re.compile(r"\bcimport\b")
+
+_C_TO_PYTHON = {
+    "char": "int",
+    "double": "float",
+    "long": "int",
+    "long double": "float",
+    "long long": "int",
+    "short": "int",
+    "signed char": "int",
+    "unsigned char": "int",
+    "unsigned int": "int",
+    "unsigned long": "int",
+    "unsigned long long": "int",
+    "unsigned short": "int",
+}
+
+
+@dataclass
+class PyiFusedType:
+    name: str
+    concrete_types: tuple[str, ...]
 
 
 @dataclass
@@ -224,6 +246,27 @@ class Converter:
             type_comment=self._type_comment_for(cdef_func, tc),
         )
 
+    def convert_fused_types(
+        self, fused_type_nodes: list[Nodes.FusedTypeNode]
+    ) -> dict[str, PyiFusedType]:
+        fused_types: dict[str, PyiFusedType] = {}
+        for node in fused_type_nodes:
+            name = getattr(node, "name")
+            type_nodes = getattr(node, "types")
+            concrete_types = tuple(
+                type_name
+                for type_name in (_type_name(type_node) for type_node in type_nodes)
+                if type_name is not None
+            )
+            fused_types[name] = PyiFusedType(name, concrete_types)
+        return fused_types
+
+    def convert_fused_type(self, fused_type: PyiFusedType) -> PyiAssignment:
+        concrete_types = ", ".join(fused_type.concrete_types)
+        return PyiAssignment(
+            f'{fused_type.name} = TypeVar("{fused_type.name}", {concrete_types})'
+        )
+
     def convert_py_func(
         self,
         node: Nodes.DefNode,
@@ -288,3 +331,17 @@ class Converter:
             return PyiEnum(enum_name=name, names=get_enum_names(node))
         # Make it usable as an alias for int
         return PyiAssignment(f"{node.name}: TypeAlias = int")  # type: ignore
+
+
+def _type_name(node: Nodes.Node) -> str | None:
+    if isinstance(node, Nodes.CSimpleBaseTypeNode):
+        module_path = getattr(node, "module_path")
+        name = getattr(node, "name")
+        return ".".join(module_path + [name])
+    if isinstance(node, Nodes.TemplatedTypeNode):
+        return _type_name(getattr(node, "base_type_node"))
+    return None
+
+
+def _normalize_type_name(type_name: str) -> str:
+    return _C_TO_PYTHON.get(type_name, type_name)
