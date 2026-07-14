@@ -84,16 +84,15 @@ class Converter:
         """
         tc = type_comments or {}
         doc = docstring_to_string(visitor.node.doc) if visitor.node.doc else None
+        scope = self.convert_scope(visitor.scope, source_code, tc, include_docstrings)
+        typing_import = "from typing import Any, Any as _Any, TypeAlias as _TypeAlias, TypedDict"
+        if _scope_uses_typevar(scope):
+            typing_import += ", TypeVar"
         return PyiModule(
             doc=doc if include_docstrings else None,
             imports=self.convert_imports(visitor.import_visitor, source_code)
-            + [
-                PyiImport("from typing import Any, Any as _Any, TypeAlias as _TypeAlias, TypedDict"),
-                PyiImport("import numpy"),
-            ],
-            scope=self.convert_scope(
-                visitor.scope, source_code, tc, include_docstrings
-            ),
+            + [PyiImport(typing_import), PyiImport("import numpy")],
+            scope=scope,
         )
 
     def convert_imports(
@@ -135,6 +134,7 @@ class Converter:
         source_code: str,
         type_comments: dict[int, str] | None = None,
         include_docstrings: bool = True,
+        inherited_fused_types: dict[str, PyiFusedType] | None = None,
     ) -> PyiScope:
         """Convert a ScopeVisitor to a PyiScope.
 
@@ -143,7 +143,7 @@ class Converter:
         """
         tc = type_comments or {}
         local_fused_types = self.convert_fused_types(visitor.fused_types)
-        fused_types = local_fused_types
+        fused_types = {**(inherited_fused_types or {}), **local_fused_types}
 
         cdef_assignments: list[PyiAssignment] = []
         for cdef_variable in visitor.cdef_variables:
@@ -164,7 +164,9 @@ class Converter:
         py_funcs = [
             (
                 node.pos[1],
-                self.convert_py_func(node, source_code, tc, include_docstrings),
+                self.convert_py_func(
+                    node, source_code, tc, include_docstrings, fused_types
+                ),
             )
             for node in visitor.py_functions
         ]
@@ -181,24 +183,32 @@ class Converter:
 
         all_funcs_sorted = sorted(cdef_funcs + py_funcs, key=lambda t: t[0])
         functions = [f for _, f in all_funcs_sorted]
-
         structs_or_enums = [
             self.convert_struct_or_union(node, source_code)
             for node in visitor.cdef_structs_or_unions
         ]
+        classes = [
+            self.convert_class(
+                class_visitor, source_code, tc, include_docstrings, fused_types
+            )
+            for class_visitor in visitor.classes
+        ]
+        fused_typevar_names = _find_typevar_fused_types(
+            PyiScope(functions=functions, classes=classes), local_fused_types
+        )
 
         return PyiScope(
             assignments=[
+                self.convert_fused_type(fused_types[name])
+                for name in fused_typevar_names
+            ]
+            + [
                 self.convert_assignment(assignment, source_code)
                 for assignment in visitor.assignments
             ]
             + cdef_assignments,
             functions=functions,
-            classes=structs_or_enums
-            + [
-                self.convert_class(class_visitor, source_code, tc, include_docstrings)
-                for class_visitor in visitor.classes
-            ],
+            classes=structs_or_enums + classes,
             enums=[self.convert_enum(enum) for enum in visitor.enums],
         )
 
@@ -208,6 +218,7 @@ class Converter:
         source_code: str,
         type_comments: dict[int, str] | None = None,
         include_docstrings: bool = True,
+        inherited_fused_types: dict[str, PyiFusedType] | None = None,
     ) -> PyiClass:
         """Convert a ClassVisitor to a PyiClass."""
         tc = type_comments or {}
@@ -226,7 +237,7 @@ class Converter:
             metaclass=get_metaclass(class_visitor.node),
             decorators=get_decorators(source_code, class_visitor.node),
             scope=self.convert_scope(
-                class_visitor.scope, source_code, tc, include_docstrings
+                class_visitor.scope, source_code, tc, include_docstrings, inherited_fused_types
             ),
         )
 
@@ -278,6 +289,7 @@ class Converter:
         source_code: str,
         type_comments: dict[int, str] | None = None,
         include_docstrings: bool = True,
+        fused_types: dict[str, PyiFusedType] | None = None,
     ) -> PyiFunction:
         """Convert a Python function definition node to PyiFunction."""
         tc = type_comments or {}
@@ -288,7 +300,7 @@ class Converter:
             is_async=node.is_async_def,
             doc=doc if include_docstrings else None,
             decorators=get_decorators(source_code, node),
-            signature=get_signature(node),
+            signature=_resolve_fused_signature(get_signature(node), fused_types or {}),
             type_comment=self._type_comment_for(node, tc),
         )
 
@@ -383,6 +395,35 @@ def _signature_fused_usage(
         if param_count or used_as_return:
             usage[name] = (param_count, used_as_return)
     return usage
+
+
+def _find_typevar_fused_types(
+    scope: PyiScope, fused_types: dict[str, PyiFusedType]
+) -> list[str]:
+    used: list[str] = []
+    for name in fused_types:
+        for function in _scope_functions(scope):
+            if _signature_uses_name(function.signature, name):
+                used.append(name)
+                break
+    return used
+
+
+def _signature_uses_name(signature: PyiSignature, name: str) -> bool:
+    return any(
+        _annotation_uses_name(arg.annotation, name) for arg in signature.args
+    ) or _annotation_uses_name(signature.return_type, name)
+
+
+def _scope_functions(scope: PyiScope) -> list[PyiFunction]:
+    functions = list(scope.functions)
+    for class_ in scope.classes:
+        functions.extend(_scope_functions(class_.scope))
+    return functions
+
+
+def _scope_uses_typevar(scope: PyiScope) -> bool:
+    return any("TypeVar(" in assignment.statement for assignment in scope.assignments)
 
 
 def _annotation_uses_name(annotation: str | None, name: str) -> bool:
