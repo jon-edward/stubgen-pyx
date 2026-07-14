@@ -107,6 +107,18 @@ class StubgenPyx:
         converter = self._make_converter()
 
         module_name = path_to_module_name(pyx_path) if pyx_path else None
+        pxd_parse_result = None
+        pxd_visitor = None
+        pxd_fused_types = None
+        if pxd_str and self.config.pxd_to_stubs:
+            pxd_parse_result = parse_pyx(
+                pxd_str, module_name=module_name, pyx_path=pyx_path, pxd=True
+            )
+            pxd_visitor = ModuleVisitor(node=pxd_parse_result.source_ast)
+            pxd_fused_types = converter.convert_fused_types(
+                pxd_visitor.scope.fused_types
+            )
+
         parse_result = parse_pyx(pyx_str, module_name=module_name, pyx_path=pyx_path)
 
         module_visitor = ModuleVisitor(node=parse_result.source_ast)
@@ -115,13 +127,10 @@ class StubgenPyx:
             parse_result.source,
             parse_result.type_comments,
             include_docstrings=self.config.include_docstrings,
+            inherited_fused_types=pxd_fused_types,
         )
 
-        if pxd_str and self.config.pxd_to_stubs:
-            pxd_parse_result = parse_pyx(
-                pxd_str, module_name=module_name, pyx_path=pyx_path, pxd=True
-            )
-            pxd_visitor = ModuleVisitor(node=pxd_parse_result.source_ast)
+        if pxd_parse_result is not None and pxd_visitor is not None:
             pxd_module = converter.convert_module(
                 pxd_visitor,
                 pxd_parse_result.source,

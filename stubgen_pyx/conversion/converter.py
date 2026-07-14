@@ -71,6 +71,7 @@ class Converter:
         source_code: str,
         type_comments: dict[int, str] | None = None,
         include_docstrings: bool = True,
+        inherited_fused_types: dict[str, PyiFusedType] | None = None,
     ) -> PyiModule:
         """Convert a ModuleVisitor to a PyiModule.
 
@@ -84,7 +85,14 @@ class Converter:
         """
         tc = type_comments or {}
         doc = docstring_to_string(visitor.node.doc) if visitor.node.doc else None
-        scope = self.convert_scope(visitor.scope, source_code, tc, include_docstrings)
+        scope = self.convert_scope(
+            visitor.scope,
+            source_code,
+            tc,
+            include_docstrings,
+            inherited_fused_types,
+            emit_inherited_fused_typevars=True,
+        )
         typing_import = "from typing import Any, Any as _Any, TypeAlias as _TypeAlias, TypedDict"
         if _scope_uses_typevar(scope):
             typing_import += ", TypeVar"
@@ -135,6 +143,7 @@ class Converter:
         type_comments: dict[int, str] | None = None,
         include_docstrings: bool = True,
         inherited_fused_types: dict[str, PyiFusedType] | None = None,
+        emit_inherited_fused_typevars: bool = False,
     ) -> PyiScope:
         """Convert a ScopeVisitor to a PyiScope.
 
@@ -193,8 +202,11 @@ class Converter:
             )
             for class_visitor in visitor.classes
         ]
+        typevar_candidates = (
+            fused_types if emit_inherited_fused_typevars else local_fused_types
+        )
         fused_typevar_names = _find_typevar_fused_types(
-            PyiScope(functions=functions, classes=classes), local_fused_types
+            PyiScope(functions=functions, classes=classes), typevar_candidates
         )
 
         return PyiScope(
