@@ -142,6 +142,8 @@ class Converter:
         line position, rather than emitting all cdef functions first.
         """
         tc = type_comments or {}
+        local_fused_types = self.convert_fused_types(visitor.fused_types)
+        fused_types = local_fused_types
 
         cdef_assignments: list[PyiAssignment] = []
         for cdef_variable in visitor.cdef_variables:
@@ -153,7 +155,9 @@ class Converter:
         cdef_funcs = [
             (
                 node.pos[1],
-                self.convert_cdef_func(node, source_code, tc, include_docstrings),
+                self.convert_cdef_func(
+                    node, source_code, tc, include_docstrings, fused_types
+                ),
             )
             for node in visitor.cdef_functions
         ]
@@ -232,6 +236,7 @@ class Converter:
         source_code: str,
         type_comments: dict[int, str] | None = None,
         include_docstrings: bool = True,
+        fused_types: dict[str, PyiFusedType] | None = None,
     ) -> PyiFunction:
         """Convert a C function definition node to PyiFunction."""
         tc = type_comments or {}
@@ -242,7 +247,7 @@ class Converter:
             is_async=False,
             doc=doc if include_docstrings else None,
             decorators=get_decorators(source_code, cdef_func),
-            signature=get_signature(cdef_func),
+            signature=_resolve_fused_signature(get_signature(cdef_func), fused_types or {}),
             type_comment=self._type_comment_for(cdef_func, tc),
         )
 
@@ -331,6 +336,70 @@ class Converter:
             return PyiEnum(enum_name=name, names=get_enum_names(node))
         # Make it usable as an alias for int
         return PyiAssignment(f"{node.name}: _TypeAlias = int")  # type: ignore
+
+
+def _resolve_fused_signature(
+    signature: PyiSignature, fused_types: dict[str, PyiFusedType]
+) -> PyiSignature:
+    usage = _signature_fused_usage(signature, fused_types)
+    for arg in signature.args:
+        if arg.annotation is not None:
+            arg.annotation = _resolved_fused_annotation(
+                arg.annotation, usage, fused_types
+            )
+    if signature.return_type is not None:
+        signature.return_type = _resolved_fused_annotation(
+            signature.return_type, usage, fused_types
+        )
+    return signature
+
+
+def _resolved_fused_annotation(
+    annotation: str,
+    usage: dict[str, tuple[int, bool]],
+    fused_types: dict[str, PyiFusedType],
+) -> str:
+    resolved = annotation
+    for name in fused_types:
+        if not _annotation_uses_name(resolved, name):
+            continue
+        param_count, used_as_return = usage[name]
+        replacement = name
+        if (not used_as_return and param_count <= 1) or param_count == 0:
+            replacement = " | ".join(fused_types[name].concrete_types)
+        resolved = _replace_annotation_name(resolved, name, replacement)
+    return resolved
+
+
+def _signature_fused_usage(
+    signature: PyiSignature, fused_types: dict[str, PyiFusedType]
+) -> dict[str, tuple[int, bool]]:
+    usage: dict[str, tuple[int, bool]] = {}
+    for name in fused_types:
+        param_count = sum(
+            _annotation_uses_name(arg.annotation, name) for arg in signature.args
+        )
+        used_as_return = _annotation_uses_name(signature.return_type, name)
+        if param_count or used_as_return:
+            usage[name] = (param_count, used_as_return)
+    return usage
+
+
+def _annotation_uses_name(annotation: str | None, name: str) -> bool:
+    if annotation is None:
+        return False
+    return name in _annotation_parts(annotation)
+
+
+def _replace_annotation_name(annotation: str, name: str, replacement: str) -> str:
+    parts = [
+        replacement if part == name else part for part in _annotation_parts(annotation)
+    ]
+    return " | ".join(parts)
+
+
+def _annotation_parts(annotation: str) -> list[str]:
+    return [part.strip() for part in annotation.split("|")]
 
 
 def _type_name(node: Nodes.Node) -> str | None:
