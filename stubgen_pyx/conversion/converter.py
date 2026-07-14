@@ -88,7 +88,7 @@ class Converter:
             doc=doc if include_docstrings else None,
             imports=self.convert_imports(visitor.import_visitor, source_code)
             + [
-                PyiImport("from typing import Any, Callable, TypeAlias, TypedDict"),
+                PyiImport("from typing import Any, Any as _Any, TypeAlias as _TypeAlias, TypedDict"),
                 PyiImport("import numpy"),
             ],
             scope=self.convert_scope(
@@ -146,7 +146,7 @@ class Converter:
         cdef_assignments: list[PyiAssignment] = []
         for cdef_variable in visitor.cdef_variables:
             for name, base_type in get_cdef_variables(cdef_variable):
-                resolved_type = base_type if base_type else "Any"
+                resolved_type = base_type if base_type else "_Any"
                 cdef_assignments.append(PyiAssignment(f"{name}: {resolved_type}"))
 
         # Preserve source order across cdef and def functions
@@ -330,7 +330,7 @@ class Converter:
             name: str | None = node.name  # type: ignore
             return PyiEnum(enum_name=name, names=get_enum_names(node))
         # Make it usable as an alias for int
-        return PyiAssignment(f"{node.name}: TypeAlias = int")  # type: ignore
+        return PyiAssignment(f"{node.name}: _TypeAlias = int")  # type: ignore
 
 
 def _type_name(node: Nodes.Node) -> str | None:
