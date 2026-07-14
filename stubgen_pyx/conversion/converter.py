@@ -258,7 +258,12 @@ class Converter:
             is_async=False,
             doc=doc if include_docstrings else None,
             decorators=get_decorators(source_code, cdef_func),
-            signature=_resolve_fused_signature(get_signature(cdef_func), fused_types or {}),
+            signature=_resolve_fused_signature(
+                _restore_fused_memoryview_annotations(
+                    get_signature(cdef_func), cdef_func, fused_types or {}
+                ),
+                fused_types or {},
+            ),
             type_comment=self._type_comment_for(cdef_func, tc),
         )
 
@@ -270,9 +275,11 @@ class Converter:
             name = getattr(node, "name")
             type_nodes = getattr(node, "types")
             concrete_types = tuple(
-                type_name
-                for type_name in (_type_name(type_node) for type_node in type_nodes)
-                if type_name is not None
+                dict.fromkeys(
+                    _normalize_type_name(type_name)
+                    for type_name in (_type_name(type_node) for type_node in type_nodes)
+                    if type_name is not None
+                )
             )
             fused_types[name] = PyiFusedType(name, concrete_types)
         return fused_types
@@ -300,7 +307,12 @@ class Converter:
             is_async=node.is_async_def,
             doc=doc if include_docstrings else None,
             decorators=get_decorators(source_code, node),
-            signature=_resolve_fused_signature(get_signature(node), fused_types or {}),
+            signature=_resolve_fused_signature(
+                _restore_fused_memoryview_annotations(
+                    get_signature(node), node, fused_types or {}
+                ),
+                fused_types or {},
+            ),
             type_comment=self._type_comment_for(node, tc),
         )
 
@@ -350,6 +362,42 @@ class Converter:
         return PyiAssignment(f"{node.name}: _TypeAlias = int")  # type: ignore
 
 
+def _restore_fused_memoryview_annotations(
+    signature: PyiSignature,
+    node: Nodes.CFuncDefNode | Nodes.DefNode,
+    fused_types: dict[str, PyiFusedType],
+) -> PyiSignature:
+    if not fused_types:
+        return signature
+
+    if isinstance(node, Nodes.CFuncDefNode):
+        arg_nodes = getattr(getattr(node, "declarator", None), "args", [])
+    else:
+        arg_nodes = getattr(node, "args", [])
+    for arg, arg_node in zip(signature.args, arg_nodes, strict=False):
+        fused_name = _fused_memoryview_name(arg_node, fused_types)
+        if arg.annotation == "memoryview" and fused_name is not None:
+            arg.annotation = fused_name
+
+    fused_name = _fused_memoryview_name(node, fused_types)
+    if signature.return_type == "memoryview" and fused_name is not None:
+        signature.return_type = fused_name
+
+    return signature
+
+
+def _fused_memoryview_name(
+    node: Nodes.Node, fused_types: dict[str, PyiFusedType]
+) -> str | None:
+    base_type = getattr(node, "base_type", None)
+    if not isinstance(base_type, Nodes.MemoryViewSliceTypeNode):
+        return None
+
+    scalar = getattr(base_type, "base_type_node", None)
+    name = getattr(scalar, "name", None)
+    return name if name in fused_types else None
+
+
 def _resolve_fused_signature(
     signature: PyiSignature, fused_types: dict[str, PyiFusedType]
 ) -> PyiSignature:
@@ -377,7 +425,9 @@ def _resolved_fused_annotation(
             continue
         param_count, used_as_return = usage[name]
         replacement = name
-        if (not used_as_return and param_count <= 1) or param_count == 0:
+        if "object" in fused_types[name].concrete_types:
+            replacement = "object"
+        elif (not used_as_return and param_count <= 1) or param_count == 0:
             replacement = " | ".join(fused_types[name].concrete_types)
         resolved = _replace_annotation_name(resolved, name, replacement)
     return resolved
