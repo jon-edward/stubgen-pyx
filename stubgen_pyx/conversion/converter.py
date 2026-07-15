@@ -96,7 +96,7 @@ class Converter:
         typing_import = (
             "from typing import Any, Any as _Any, TypeAlias as _TypeAlias, TypedDict"
         )
-        if _scope_uses_typevar(scope):
+        if any("TypeVar(" in assignment.statement for assignment in scope.assignments):
             typing_import += ", TypeVar"
         return PyiModule(
             doc=doc if include_docstrings else None,
@@ -207,9 +207,19 @@ class Converter:
         typevar_candidates = (
             fused_types if emit_inherited_fused_typevars else local_fused_types
         )
-        fused_typevar_names = _find_typevar_fused_types(
-            PyiScope(functions=functions, classes=classes), typevar_candidates
-        )
+        typevar_scan_scope = PyiScope(functions=functions, classes=classes)
+        fused_typevar_names = [
+            name
+            for name in typevar_candidates
+            if any(
+                any(
+                    _annotation_uses_name(arg.annotation, name)
+                    for arg in function.signature.args
+                )
+                or _annotation_uses_name(function.signature.return_type, name)
+                for function in _scope_functions(typevar_scan_scope)
+            )
+        ]
 
         return PyiScope(
             assignments=[
@@ -294,7 +304,7 @@ class Converter:
             type_nodes = getattr(node, "types")
             concrete_types = tuple(
                 dict.fromkeys(
-                    _normalize_type_name(type_name)
+                    _C_TO_PYTHON.get(type_name, type_name)
                     for type_name in (_type_name(type_node) for type_node in type_nodes)
                     if type_name is not None
                 )
@@ -422,7 +432,14 @@ def _resolve_fused_signature(
     signature: PyiSignature, fused_types: dict[str, PyiFusedType]
 ) -> PyiSignature:
     """Rewrite a signature's fused-type annotations to their resolved Python form."""
-    usage = _signature_fused_usage(signature, fused_types)
+    usage: dict[str, tuple[int, bool]] = {}
+    for name in fused_types:
+        param_count = sum(
+            _annotation_uses_name(arg.annotation, name) for arg in signature.args
+        )
+        used_as_return = _annotation_uses_name(signature.return_type, name)
+        if param_count or used_as_return:
+            usage[name] = (param_count, used_as_return)
     for arg in signature.args:
         if arg.annotation is not None:
             arg.annotation = _resolved_fused_annotation(
@@ -451,43 +468,11 @@ def _resolved_fused_annotation(
             replacement = "object"
         elif (not used_as_return and param_count <= 1) or param_count == 0:
             replacement = " | ".join(fused_types[name].concrete_types)
-        resolved = _replace_annotation_name(resolved, name, replacement)
-    return resolved
-
-
-def _signature_fused_usage(
-    signature: PyiSignature, fused_types: dict[str, PyiFusedType]
-) -> dict[str, tuple[int, bool]]:
-    """Count param/return occurrences of each fused type name in a signature."""
-    usage: dict[str, tuple[int, bool]] = {}
-    for name in fused_types:
-        param_count = sum(
-            _annotation_uses_name(arg.annotation, name) for arg in signature.args
+        resolved = " | ".join(
+            replacement if part == name else part
+            for part in _annotation_parts(resolved)
         )
-        used_as_return = _annotation_uses_name(signature.return_type, name)
-        if param_count or used_as_return:
-            usage[name] = (param_count, used_as_return)
-    return usage
-
-
-def _find_typevar_fused_types(
-    scope: PyiScope, fused_types: dict[str, PyiFusedType]
-) -> list[str]:
-    """Return fused type names actually referenced by any function signature in the scope."""
-    used: list[str] = []
-    for name in fused_types:
-        for function in _scope_functions(scope):
-            if _signature_uses_name(function.signature, name):
-                used.append(name)
-                break
-    return used
-
-
-def _signature_uses_name(signature: PyiSignature, name: str) -> bool:
-    """Return True if the given name appears in any argument or return annotation."""
-    return any(
-        _annotation_uses_name(arg.annotation, name) for arg in signature.args
-    ) or _annotation_uses_name(signature.return_type, name)
+    return resolved
 
 
 def _scope_functions(scope: PyiScope) -> list[PyiFunction]:
@@ -498,24 +483,11 @@ def _scope_functions(scope: PyiScope) -> list[PyiFunction]:
     return functions
 
 
-def _scope_uses_typevar(scope: PyiScope) -> bool:
-    """Return True if the scope contains any TypeVar assignment."""
-    return any("TypeVar(" in assignment.statement for assignment in scope.assignments)
-
-
 def _annotation_uses_name(annotation: str | None, name: str) -> bool:
     """Return True if the given name appears as a part of the (union) annotation."""
     if annotation is None:
         return False
     return name in _annotation_parts(annotation)
-
-
-def _replace_annotation_name(annotation: str, name: str, replacement: str) -> str:
-    """Return the annotation with every occurrence of name replaced by replacement."""
-    parts = [
-        replacement if part == name else part for part in _annotation_parts(annotation)
-    ]
-    return " | ".join(parts)
 
 
 def _annotation_parts(annotation: str) -> list[str]:
@@ -532,8 +504,3 @@ def _type_name(node: Nodes.Node) -> str | None:
     if isinstance(node, Nodes.TemplatedTypeNode):
         return _type_name(getattr(node, "base_type_node"))
     return None
-
-
-def _normalize_type_name(type_name: str) -> str:
-    """Map a raw C type name to its Python equivalent, leaving unknown names unchanged."""
-    return _C_TO_PYTHON.get(type_name, type_name)
