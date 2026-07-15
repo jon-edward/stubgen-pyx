@@ -107,6 +107,14 @@ class StubgenPyx:
         converter = self._make_converter()
 
         module_name = path_to_module_name(pyx_path) if pyx_path else None
+        # Full fused type support including cross-file inheritance would require
+        # Cython's own scope/env for symbol resolution, which is not currently available
+        # in this generator. Making that available would require a significant refactor,
+        # so in lieu of that we restrict the code to only handle the companion .pxd file
+        # (same stem) by parsing it as a separate pre-pass and merging its fused
+        # typedefs into the .pyx conversion. This is a pragmatic compromise that covers
+        # the majority of real-world use cases. Fused typedefs made visible via
+        # `cimport` from an unrelated module are not resolved through this path.
         pxd_parse_result = None
         pxd_visitor = None
         pxd_fused_types = None

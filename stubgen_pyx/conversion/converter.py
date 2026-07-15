@@ -152,6 +152,16 @@ class Converter:
 
         Preserves source order by interleaving cdef and def functions by their
         line position, rather than emitting all cdef functions first.
+
+        The ``emit_inherited_fused_typevars`` flag encodes a scope-role
+        distinction: which scope owns emitting ``TypeVar``/``TypeAlias``
+        assignments for fused typedefs that were inherited from a parent
+        (currently: the companion ``.pxd``, threaded in via
+        ``inherited_fused_types``). Exactly one scope in a nesting chain must
+        own that emission; emitting in more than one place produces
+        duplicate, incorrect ``TypeVar`` declarations. Only the outermost scope
+        (``convert_module``) should emit them. This solution is not the most elegant,
+        but it is a sufficient encoding for differentiating modules and classes today.
         """
         tc = type_comments or {}
         local_fused_types = self.convert_fused_types(visitor.fused_types)
@@ -396,7 +406,18 @@ def _restore_fused_memoryview_annotations(
     node: Nodes.CFuncDefNode | Nodes.DefNode,
     fused_types: dict[str, PyiFusedType],
 ) -> PyiSignature:
-    """Restore fused typedef names on memoryview annotations lost during signature extraction."""
+    """Restore fused typedef names on memoryview annotations lost during signature extraction.
+
+    This post-processing pass is a workaround for the fact that fused types are not
+    natively supported throughout the rest of stubgen-pyx's type-parsing and
+    signature-extraction machinery. If fused types were threaded into
+    _extract_memoryview_type we could preserve the fused typedef name there, but that
+    would require treating fused types as the first-class type concept throughout
+    the type-parsing layer, which is a much larger refactor. Instead, this pass
+    walks the original AST alongside the extracted signature and repairs any memoryview
+    annotations that were flattened to the string "memoryview" back to their fused
+    typedef name, so that the downstream fused-type resolver can handle them correctly.
+    """
     if not fused_types:
         return signature
 
@@ -432,7 +453,21 @@ def _fused_memoryview_name(
 def _resolve_fused_signature(
     signature: PyiSignature, fused_types: dict[str, PyiFusedType]
 ) -> PyiSignature:
-    """Rewrite a signature's fused-type annotations to their resolved Python form."""
+    """Rewrite a signature's fused-type annotations to their resolved Python form.
+
+    Having the AST layer natively handle fused resolution would require the
+    ``PyiSignature`` model to carry structured fused references rather than
+    strings, and every downstream consumer (import emission,
+    ``trim_not_defined``, source rendering) would need to handle those gracefully.
+    Doing so is a much larger refactor. To avoid that, this function is a localized
+    post-processing pass that rewrites the signature's argument and return annotations
+    after the AST traversal has completed by introspecting the already-generated
+    annotation strings and the fused-type definitions. A fused typedef like ``numeric``
+    resolves to a ``TypeVar`` when it appears in both a parameter and the return, to a
+    ``|``-union when it appears in one parameter only, or to ``object`` when its member
+    set includes ``object``. That decision is a *whole-signature* property, so it cannot
+    be made while an individual argument's annotation is being generated.
+    """
     usage: dict[str, tuple[int, bool]] = {}
     for name in fused_types:
         param_count = sum(
