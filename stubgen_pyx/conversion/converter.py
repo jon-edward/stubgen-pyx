@@ -385,6 +385,7 @@ def _restore_fused_memoryview_annotations(
     node: Nodes.CFuncDefNode | Nodes.DefNode,
     fused_types: dict[str, PyiFusedType],
 ) -> PyiSignature:
+    """Restore fused typedef names on memoryview annotations lost during signature extraction."""
     if not fused_types:
         return signature
 
@@ -407,6 +408,7 @@ def _restore_fused_memoryview_annotations(
 def _fused_memoryview_name(
     node: Nodes.Node, fused_types: dict[str, PyiFusedType]
 ) -> str | None:
+    """Return the fused typedef name backing a memoryview node, or None if not fused."""
     base_type = getattr(node, "base_type", None)
     if not isinstance(base_type, Nodes.MemoryViewSliceTypeNode):
         return None
@@ -419,6 +421,7 @@ def _fused_memoryview_name(
 def _resolve_fused_signature(
     signature: PyiSignature, fused_types: dict[str, PyiFusedType]
 ) -> PyiSignature:
+    """Rewrite a signature's fused-type annotations to their resolved Python form."""
     usage = _signature_fused_usage(signature, fused_types)
     for arg in signature.args:
         if arg.annotation is not None:
@@ -437,6 +440,7 @@ def _resolved_fused_annotation(
     usage: dict[str, tuple[int, bool]],
     fused_types: dict[str, PyiFusedType],
 ) -> str:
+    """Resolve a single annotation string using per-name fused usage and definitions."""
     resolved = annotation
     for name in fused_types:
         if not _annotation_uses_name(resolved, name):
@@ -454,6 +458,7 @@ def _resolved_fused_annotation(
 def _signature_fused_usage(
     signature: PyiSignature, fused_types: dict[str, PyiFusedType]
 ) -> dict[str, tuple[int, bool]]:
+    """Count param/return occurrences of each fused type name in a signature."""
     usage: dict[str, tuple[int, bool]] = {}
     for name in fused_types:
         param_count = sum(
@@ -468,6 +473,7 @@ def _signature_fused_usage(
 def _find_typevar_fused_types(
     scope: PyiScope, fused_types: dict[str, PyiFusedType]
 ) -> list[str]:
+    """Return fused type names actually referenced by any function signature in the scope."""
     used: list[str] = []
     for name in fused_types:
         for function in _scope_functions(scope):
@@ -478,12 +484,14 @@ def _find_typevar_fused_types(
 
 
 def _signature_uses_name(signature: PyiSignature, name: str) -> bool:
+    """Return True if the given name appears in any argument or return annotation."""
     return any(
         _annotation_uses_name(arg.annotation, name) for arg in signature.args
     ) or _annotation_uses_name(signature.return_type, name)
 
 
 def _scope_functions(scope: PyiScope) -> list[PyiFunction]:
+    """Return all functions in the scope, recursively descending into nested classes."""
     functions = list(scope.functions)
     for class_ in scope.classes:
         functions.extend(_scope_functions(class_.scope))
@@ -491,16 +499,19 @@ def _scope_functions(scope: PyiScope) -> list[PyiFunction]:
 
 
 def _scope_uses_typevar(scope: PyiScope) -> bool:
+    """Return True if the scope contains any TypeVar assignment."""
     return any("TypeVar(" in assignment.statement for assignment in scope.assignments)
 
 
 def _annotation_uses_name(annotation: str | None, name: str) -> bool:
+    """Return True if the given name appears as a part of the (union) annotation."""
     if annotation is None:
         return False
     return name in _annotation_parts(annotation)
 
 
 def _replace_annotation_name(annotation: str, name: str, replacement: str) -> str:
+    """Return the annotation with every occurrence of name replaced by replacement."""
     parts = [
         replacement if part == name else part for part in _annotation_parts(annotation)
     ]
@@ -508,10 +519,12 @@ def _replace_annotation_name(annotation: str, name: str, replacement: str) -> st
 
 
 def _annotation_parts(annotation: str) -> list[str]:
+    """Split a union annotation string into its stripped alternative parts."""
     return [part.strip() for part in annotation.split("|")]
 
 
 def _type_name(node: Nodes.Node) -> str | None:
+    """Return a dotted type name for a simple or templated base-type node, or None."""
     if isinstance(node, Nodes.CSimpleBaseTypeNode):
         module_path = getattr(node, "module_path")
         name = getattr(node, "name")
@@ -522,4 +535,5 @@ def _type_name(node: Nodes.Node) -> str | None:
 
 
 def _normalize_type_name(type_name: str) -> str:
+    """Map a raw C type name to its Python equivalent, leaving unknown names unchanged."""
     return _C_TO_PYTHON.get(type_name, type_name)
