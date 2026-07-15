@@ -7,6 +7,7 @@ import ast
 import re
 
 from dataclasses import dataclass
+from collections.abc import Iterator
 
 from Cython.Compiler import Nodes
 
@@ -475,12 +476,11 @@ def _resolved_fused_annotation(
     return resolved
 
 
-def _scope_functions(scope: PyiScope) -> list[PyiFunction]:
-    """Return all functions in the scope, recursively descending into nested classes."""
-    functions = list(scope.functions)
+def _scope_functions(scope: PyiScope) -> Iterator[PyiFunction]:
+    """Yield all functions in the scope, recursively descending into nested classes."""
+    yield from scope.functions
     for class_ in scope.classes:
-        functions.extend(_scope_functions(class_.scope))
-    return functions
+        yield from _scope_functions(class_.scope)
 
 
 def _annotation_uses_name(annotation: str | None, name: str) -> bool:
@@ -497,10 +497,8 @@ def _annotation_parts(annotation: str) -> list[str]:
 
 def _type_name(node: Nodes.Node) -> str | None:
     """Return a dotted type name for a simple or templated base-type node, or None."""
+    while isinstance(node, Nodes.TemplatedTypeNode):
+        node = getattr(node, "base_type_node")
     if isinstance(node, Nodes.CSimpleBaseTypeNode):
-        module_path = getattr(node, "module_path")
-        name = getattr(node, "name")
-        return ".".join(module_path + [name])
-    if isinstance(node, Nodes.TemplatedTypeNode):
-        return _type_name(getattr(node, "base_type_node"))
+        return ".".join(getattr(node, "module_path") + [getattr(node, "name")])
     return None
