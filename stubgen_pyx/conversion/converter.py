@@ -93,7 +93,9 @@ class Converter:
             inherited_fused_types,
             emit_inherited_fused_typevars=True,
         )
-        typing_import = "from typing import Any, Any as _Any, TypeAlias as _TypeAlias, TypedDict"
+        typing_import = (
+            "from typing import Any, Any as _Any, TypeAlias as _TypeAlias, TypedDict"
+        )
         if _scope_uses_typevar(scope):
             typing_import += ", TypeVar"
         return PyiModule(
@@ -249,7 +251,11 @@ class Converter:
             metaclass=get_metaclass(class_visitor.node),
             decorators=get_decorators(source_code, class_visitor.node),
             scope=self.convert_scope(
-                class_visitor.scope, source_code, tc, include_docstrings, inherited_fused_types
+                class_visitor.scope,
+                source_code,
+                tc,
+                include_docstrings,
+                inherited_fused_types,
             ),
         )
 
