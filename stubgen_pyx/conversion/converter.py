@@ -425,7 +425,7 @@ def _restore_fused_memoryview_annotations(
         arg_nodes = getattr(getattr(node, "declarator", None), "args", [])
     else:
         arg_nodes = getattr(node, "args", [])
-    for arg, arg_node in zip(signature.args, arg_nodes, strict=False):
+    for arg, arg_node in zip(signature.args, arg_nodes):
         fused_name = _fused_memoryview_name(arg_node, fused_types)
         if arg.annotation == "memoryview" and fused_name is not None:
             arg.annotation = fused_name
