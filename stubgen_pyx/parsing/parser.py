@@ -140,6 +140,8 @@ def _parse_str(source: str, module_name: str, pxd: bool = False) -> ParsedSource
     initial_pos = (module_name, 1, 0)
 
     context = StringParseContext(module_name)
+    if pxd:
+        context.cpp = True
     code_source = StringSourceDescriptor(module_name, source)
     buf = StringIO(source)
 
