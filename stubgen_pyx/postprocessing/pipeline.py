@@ -22,6 +22,7 @@ from .remove_overload_implementations import remove_overload_implementations
 from .sort_imports import sort_imports
 from .trim_imports import _UnusedImportRemover
 from .trim_not_defined import trim_not_defined
+from .unquote_annotations import unquote_annotations
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,8 @@ def _ast_transforms(
         trim_not_defined(tree)
 
     tree = overload_singledispatch(tree)
+
+    tree = unquote_annotations(tree)
 
     if config.trim_imports:
         used_names = collect_names(tree)
