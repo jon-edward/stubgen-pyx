@@ -107,6 +107,26 @@ class StubgenPyx:
         converter = self._make_converter()
 
         module_name = path_to_module_name(pyx_path) if pyx_path else None
+        # Full fused type support including cross-file inheritance would require
+        # Cython's own scope/env for symbol resolution, which is not currently available
+        # in this generator. Making that available would require a significant refactor,
+        # so in lieu of that we restrict the code to only handle the companion .pxd file
+        # (same stem) by parsing it as a separate pre-pass and merging its fused
+        # typedefs into the .pyx conversion. This is a pragmatic compromise that covers
+        # the majority of real-world use cases. Fused typedefs made visible via
+        # `cimport` from an unrelated module are not resolved through this path.
+        pxd_parse_result = None
+        pxd_visitor = None
+        pxd_fused_types = None
+        if pxd_str and self.config.pxd_to_stubs:
+            pxd_parse_result = parse_pyx(
+                pxd_str, module_name=module_name, pyx_path=pyx_path, pxd=True
+            )
+            pxd_visitor = ModuleVisitor(node=pxd_parse_result.source_ast)
+            pxd_fused_types = converter.convert_fused_types(
+                pxd_visitor.scope.fused_types
+            )
+
         parse_result = parse_pyx(pyx_str, module_name=module_name, pyx_path=pyx_path)
 
         module_visitor = ModuleVisitor(node=parse_result.source_ast)
@@ -115,13 +135,10 @@ class StubgenPyx:
             parse_result.source,
             parse_result.type_comments,
             include_docstrings=self.config.include_docstrings,
+            inherited_fused_types=pxd_fused_types,
         )
 
-        if pxd_str and self.config.pxd_to_stubs:
-            pxd_parse_result = parse_pyx(
-                pxd_str, module_name=module_name, pyx_path=pyx_path, pxd=True
-            )
-            pxd_visitor = ModuleVisitor(node=pxd_parse_result.source_ast)
+        if pxd_parse_result is not None and pxd_visitor is not None:
             pxd_module = converter.convert_module(
                 pxd_visitor,
                 pxd_parse_result.source,
