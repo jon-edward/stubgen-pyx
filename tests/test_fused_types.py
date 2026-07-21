@@ -256,7 +256,7 @@ def test_pxd_declared_fused_type_single_param_becomes_union():
 
 
 def test_cython_numeric_primitives_deduplicated():
-    """``int``, ``long``, ``long long`` all map to Python ``int`` and must be deduplicated."""
+    """C primitives that map to Python ``int`` (single- and multi-word spellings) must deduplicate."""
     result = _stubgen().convert_str(
         _cy("""
         ctypedef fused integral_t:
@@ -264,25 +264,31 @@ def test_cython_numeric_primitives_deduplicated():
             long
             long long
             unsigned int
+            unsigned char
+            unsigned short
+            unsigned long
+            unsigned long long
+            signed char
+            size_t
 
         cpdef integral_t f(integral_t x, integral_t y):
             pass
     """)
     )
-    assert "integral_t" in result
-    assert "x: ..." not in result
-    assert "-> ..." not in result
-    assert "TypeVar('integral_t', int, int" not in result
+    assert "integral_t = TypeVar('integral_t', int)" in result
+    assert "def f(x: integral_t, y: integral_t) -> integral_t" in result
+    assert "int, int" not in result
 
 
 def test_cython_float_primitives_deduplicated():
-    """``float`` and ``double`` both map to Python ``float`` and must be deduplicated."""
+    """C primitives that map to Python ``float`` (including multi-word ``long double``) must deduplicate."""
     result = _stubgen().convert_str(
         _cy("""
         ctypedef fused numeric_t:
             int
             float
             double
+            long double
 
         cpdef numeric_t f(numeric_t x):
             pass
@@ -292,8 +298,24 @@ def test_cython_float_primitives_deduplicated():
     assert "-> ..." not in result
     assert "numeric_t = TypeVar('numeric_t', int, float)" in result
     assert "def f(x: numeric_t) -> numeric_t" in result
-    assert "TypeVar('numeric_t', int, float, float" not in result
-    assert "TypeVar('numeric_t', float, float" not in result
+    assert "float, float" not in result
+
+
+def test_fused_unicode_and_str_deduplicated():
+    """``unicode`` maps to Python ``str`` and must deduplicate against a sibling ``str`` member."""
+    result = _stubgen().convert_str(
+        _cy("""
+        ctypedef fused string_t:
+            unicode
+            str
+
+        cpdef string_t f(string_t x):
+            pass
+    """)
+    )
+    assert "string_t = TypeVar('string_t', str)" in result
+    assert "def f(x: string_t) -> string_t" in result
+    assert "str, str" not in result
 
 
 def test_fused_typed_memoryview_annotation_preserved():

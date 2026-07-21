@@ -22,6 +22,7 @@ from ..models.pyi_elements import (
     PyiEnum,
     PyiSignature,
 )
+from ..postprocessing.normalize_names import _CYTHON_TRANSLATIONS
 from .signature import get_signature
 from .source_extraction import get_decorators, get_bases, get_metaclass, get_source
 from .declarators import get_enum_names, get_cdef_variables
@@ -30,21 +31,6 @@ from .docstrings import docstring_to_string
 from .type_parsing import extract_type_from_base_type
 
 _CIMPORT_RE = re.compile(r"\bcimport\b")
-
-_C_TO_PYTHON = {
-    "char": "int",
-    "double": "float",
-    "long": "int",
-    "long double": "float",
-    "long long": "int",
-    "short": "int",
-    "signed char": "int",
-    "unsigned char": "int",
-    "unsigned int": "int",
-    "unsigned long": "int",
-    "unsigned long long": "int",
-    "unsigned short": "int",
-}
 
 
 @dataclass
@@ -315,7 +301,7 @@ class Converter:
             type_nodes = getattr(node, "types")
             concrete_types = tuple(
                 dict.fromkeys(
-                    _C_TO_PYTHON.get(type_name, type_name)
+                    _CYTHON_TRANSLATIONS.get(type_name, type_name)
                     for type_name in (_type_name(type_node) for type_node in type_nodes)
                     if type_name is not None
                 )
