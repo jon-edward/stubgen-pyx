@@ -136,6 +136,47 @@ def foo(vector[int32_t] v):
 """,
         expected="def foo(v: ...): ...\n",
     ),
+    Probe(
+        id="probe_11_libcpp_memory_unique_ptr",
+        pyx="""\
+from libcpp.memory cimport unique_ptr
+
+cpdef void take_ptr(unique_ptr[int] value):
+    pass
+""",
+        expected="def take_ptr(value: ...) -> None: ...\n",
+    ),
+    Probe(
+        id="probe_12_libcpp_vector",
+        pyx="""\
+from libcpp.vector cimport vector
+
+cpdef void take_vector(vector[int] value):
+    pass
+""",
+        expected="def take_vector(value: ...) -> None: ...\n",
+    ),
+    Probe(
+        id="probe_13_libcpp_string",
+        pyx="""\
+from libcpp.string cimport string
+
+cpdef void take_string(string value):
+    pass
+""",
+        expected="def take_string(value: bytes) -> None: ...\n",
+    ),
+    Probe(
+        id="probe_14_mixed_libcpp_and_normal",
+        pyx="""\
+from libcpp cimport bool
+from some_module cimport Foo
+
+cpdef Foo convert(bool x):
+    pass
+""",
+        expected="from some_module import Foo\ndef convert(x: bool) -> Foo: ...\n",
+    ),
 ]
 
 
