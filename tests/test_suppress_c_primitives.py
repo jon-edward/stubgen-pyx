@@ -9,16 +9,16 @@ from stubgen_pyx.config import StubgenPyxConfig
 
 
 @dataclass(frozen=True)
-class Probe:
+class Case:
     id: str
     pyx: str
     expected: str
     pxd: str | None = None
 
 
-PROBES = [
-    Probe(
-        id="probe_01_libc_stdint_int32",
+CASES = [
+    Case(
+        id="case_01_libc_stdint_int32",
         pyx="""\
 from libc.stdint cimport int32_t
 
@@ -27,8 +27,8 @@ def foo(int32_t x):
 """,
         expected="def foo(x: int): ...\n",
     ),
-    Probe(
-        id="probe_02_libc_stddef_size_t",
+    Case(
+        id="case_02_libc_stddef_size_t",
         pyx="""\
 from libc.stddef cimport size_t
 
@@ -37,8 +37,8 @@ def foo() -> size_t:
 """,
         expected="def foo() -> int: ...\n",
     ),
-    Probe(
-        id="probe_03_libcpp_string",
+    Case(
+        id="case_03_libcpp_string",
         pyx="""\
 from libcpp.string cimport string
 
@@ -47,8 +47,8 @@ def foo(string s):
 """,
         expected="def foo(s: bytes): ...\n",
     ),
-    Probe(
-        id="probe_04_cdef_enum_from_module",
+    Case(
+        id="case_04_cdef_enum_from_module",
         pyx="""\
 from helper cimport MyCEnum
 
@@ -62,8 +62,8 @@ cdef enum MyCEnum:
 """,
         expected="from helper import MyCEnum\ndef foo(x: MyCEnum): ...\n",
     ),
-    Probe(
-        id="probe_05_cpdef_enum_from_module",
+    Case(
+        id="case_05_cpdef_enum_from_module",
         pyx="""\
 from helper cimport MyCpdefEnum
 
@@ -77,8 +77,8 @@ cpdef enum MyCpdefEnum:
 """,
         expected="from helper import MyCpdefEnum\ndef foo(x: MyCpdefEnum): ...\n",
     ),
-    Probe(
-        id="probe_06_ctypedef_from_module",
+    Case(
+        id="case_06_ctypedef_from_module",
         pyx="""\
 from helper cimport my_id_t
 
@@ -91,8 +91,8 @@ ctypedef uint32_t my_id_t
 """,
         expected="from helper import my_id_t\ndef foo(x: my_id_t): ...\n",
     ),
-    Probe(
-        id="probe_07_libcpp_bool_baseline",
+    Case(
+        id="case_07_libcpp_bool_baseline",
         pyx="""\
 from libcpp cimport bool
 
@@ -101,8 +101,8 @@ def foo(bool x):
 """,
         expected="def foo(x: bool): ...\n",
     ),
-    Probe(
-        id="probe_08_compound_cimport",
+    Case(
+        id="case_08_compound_cimport",
         pyx="""\
 from libc.stdint cimport int32_t, uint64_t
 
@@ -111,8 +111,8 @@ def foo(int32_t x, uint64_t y):
 """,
         expected="def foo(x: int, y: int): ...\n",
     ),
-    Probe(
-        id="probe_09_aliased_cimport",
+    Case(
+        id="case_09_aliased_cimport",
         pyx="""\
 from libc.stdint cimport int32_t as i32
 
@@ -121,8 +121,8 @@ def foo(i32 x):
 """,
         expected="def foo(x: int): ...\n",
     ),
-    Probe(
-        id="probe_10_template_param",
+    Case(
+        id="case_10_template_param",
         pyx="""\
 from libcpp.vector cimport vector
 from libc.stdint cimport int32_t
@@ -132,8 +132,8 @@ def foo(vector[int32_t] v):
 """,
         expected="def foo(v: ...): ...\n",
     ),
-    Probe(
-        id="probe_11_libcpp_memory_unique_ptr",
+    Case(
+        id="case_11_libcpp_memory_unique_ptr",
         pyx="""\
 from libcpp.memory cimport unique_ptr
 
@@ -142,8 +142,8 @@ cpdef void take_ptr(unique_ptr[int] value):
 """,
         expected="def take_ptr(value: ...) -> None: ...\n",
     ),
-    Probe(
-        id="probe_12_libcpp_vector",
+    Case(
+        id="case_12_libcpp_vector",
         pyx="""\
 from libcpp.vector cimport vector
 
@@ -152,8 +152,8 @@ cpdef void take_vector(vector[int] value):
 """,
         expected="def take_vector(value: ...) -> None: ...\n",
     ),
-    Probe(
-        id="probe_13_libcpp_string",
+    Case(
+        id="case_13_libcpp_string",
         pyx="""\
 from libcpp.string cimport string
 
@@ -162,8 +162,8 @@ cpdef void take_string(string value):
 """,
         expected="def take_string(value: bytes) -> None: ...\n",
     ),
-    Probe(
-        id="probe_14_mixed_libcpp_and_normal",
+    Case(
+        id="case_14_mixed_libcpp_and_normal",
         pyx="""\
 from libcpp cimport bool
 from some_module cimport Foo
@@ -180,15 +180,15 @@ def _stubgen() -> StubgenPyx:
     return StubgenPyx(StubgenPyxConfig(exclude_attribution=True, sort_imports=False))
 
 
-def _convert_probe(probe: Probe, tmp_path) -> str:
-    pyx_path = tmp_path / f"{probe.id}.pyx"
-    if probe.pxd:
-        (tmp_path / "helper.pxd").write_text(probe.pxd, encoding="utf-8")
-    return _stubgen().convert_str(probe.pyx, pyx_path=pyx_path)
+def _convert_case(case: Case, tmp_path) -> str:
+    pyx_path = tmp_path / f"{case.id}.pyx"
+    if case.pxd:
+        (tmp_path / "helper.pxd").write_text(case.pxd, encoding="utf-8")
+    return _stubgen().convert_str(case.pyx, pyx_path=pyx_path)
 
 
-@pytest.mark.parametrize("probe", PROBES, ids=lambda probe: probe.id)
-def test_suppress_c_primitives_current_behavior(probe: Probe, tmp_path):
-    result = _convert_probe(probe, tmp_path)
+@pytest.mark.parametrize("case", CASES, ids=lambda case: case.id)
+def test_suppress_c_primitives_current_behavior(case: Case, tmp_path):
+    result = _convert_case(case, tmp_path)
 
-    assert result == probe.expected
+    assert result == case.expected
