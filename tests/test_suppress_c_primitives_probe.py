@@ -14,7 +14,6 @@ class Probe:
     pyx: str
     expected: str
     pxd: str | None = None
-    pxd_name: str | None = None
 
 
 PROBES = [
@@ -51,7 +50,7 @@ def foo(string s):
     Probe(
         id="probe_04_cdef_enum_from_module",
         pyx="""\
-from probe_04_helper cimport MyCEnum
+from helper cimport MyCEnum
 
 def foo(MyCEnum x):
     pass
@@ -61,13 +60,12 @@ cdef enum MyCEnum:
     A = 0
     B = 1
 """,
-        pxd_name="probe_04_helper.pxd",
-        expected="from probe_04_helper import MyCEnum\ndef foo(x: MyCEnum): ...\n",
+        expected="from helper import MyCEnum\ndef foo(x: MyCEnum): ...\n",
     ),
     Probe(
         id="probe_05_cpdef_enum_from_module",
         pyx="""\
-from probe_05_helper cimport MyCpdefEnum
+from helper cimport MyCpdefEnum
 
 def foo(MyCpdefEnum x):
     pass
@@ -77,13 +75,12 @@ cpdef enum MyCpdefEnum:
     X = 0
     Y = 1
 """,
-        pxd_name="probe_05_helper.pxd",
-        expected="from probe_05_helper import MyCpdefEnum\ndef foo(x: MyCpdefEnum): ...\n",
+        expected="from helper import MyCpdefEnum\ndef foo(x: MyCpdefEnum): ...\n",
     ),
     Probe(
         id="probe_06_ctypedef_from_module",
         pyx="""\
-from probe_06_helper cimport my_id_t
+from helper cimport my_id_t
 
 def foo(my_id_t x):
     pass
@@ -92,8 +89,7 @@ def foo(my_id_t x):
 from libc.stdint cimport uint32_t
 ctypedef uint32_t my_id_t
 """,
-        pxd_name="probe_06_helper.pxd",
-        expected="from probe_06_helper import my_id_t\ndef foo(x: my_id_t): ...\n",
+        expected="from helper import my_id_t\ndef foo(x: my_id_t): ...\n",
     ),
     Probe(
         id="probe_07_libcpp_bool_baseline",
@@ -186,8 +182,8 @@ def _stubgen() -> StubgenPyx:
 
 def _convert_probe(probe: Probe, tmp_path) -> str:
     pyx_path = tmp_path / f"{probe.id}.pyx"
-    if probe.pxd_name and probe.pxd:
-        (tmp_path / probe.pxd_name).write_text(probe.pxd, encoding="utf-8")
+    if probe.pxd:
+        (tmp_path / "helper.pxd").write_text(probe.pxd, encoding="utf-8")
     return _stubgen().convert_str(probe.pyx, pyx_path=pyx_path)
 
 
