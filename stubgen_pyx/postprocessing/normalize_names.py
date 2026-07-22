@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import ast
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 def normalize_names(tree: ast.AST) -> ast.AST:
@@ -48,6 +48,7 @@ _CYTHON_COMPLEXES: tuple[str, ...] = (
 
 _CYTHON_TRANSLATIONS: dict[str, str] = {
     "bint": "bool",
+    "string": "bytes",
     "unicode": "str",
     "void": "None",
 }
@@ -64,6 +65,10 @@ for complex_type in _CYTHON_COMPLEXES:
 class _NameNormalizer(ast.NodeTransformer):
     """Transform Cython type names to Python equivalents."""
 
+    extra_translations: dict[str, str] = field(default_factory=dict)
+
     def visit_Name(self, node: ast.Name) -> ast.Name:
-        name = _CYTHON_TRANSLATIONS.get(node.id, node.id)
+        name = _CYTHON_TRANSLATIONS.get(node.id) or self.extra_translations.get(
+            node.id, node.id
+        )
         return ast.Name(id=name, ctx=node.ctx)
