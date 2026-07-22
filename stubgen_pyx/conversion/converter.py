@@ -116,7 +116,7 @@ class Converter:
     ) -> PyiClass:
         """Convert a C struct or union definition node to PyiClass."""
         attributes = []
-        for attribute in getattr(node, "attributes"):
+        for attribute in node.attributes:
             if isinstance(attribute, Nodes.CVarDefNode):
                 attributes.extend(
                     [
@@ -124,10 +124,10 @@ class Converter:
                         for name, base_type in get_cdef_variables(attribute)
                     ]
                 )
-        is_union = getattr(node, "kind") == "union"
+        is_union = node.kind == "union"
         keywords = {"total": "False"} if is_union else {}
         return PyiClass(
-            name=getattr(node, "name"),
+            name=node.name,
             bases=["TypedDict"],
             keywords=keywords,
             scope=PyiScope(assignments=attributes),
@@ -309,7 +309,7 @@ class Converter:
 
     def convert_enum(self, node: Nodes.CEnumDefNode) -> PyiEnum | PyiAssignment:
         """Convert a Cython enum definition to PyiEnum."""
-        if getattr(node, "create_wrapper"):
+        if node.create_wrapper:  # type: ignore
             name: str | None = node.name  # type: ignore
             return PyiEnum(enum_name=name, names=get_enum_names(node))
         # Make it usable as an alias for int
