@@ -83,10 +83,19 @@ class StubgenPyx:
         Raises:
             Various exceptions from parsing, conversion, or building.
         """
-        module = self.compile_str_to_module(pyx_str, pxd_str, pyx_path)
+        converter = self._make_converter()
+        module = self._compile_with_converter(converter, pyx_str, pxd_str, pyx_path)
         builder = self._make_builder()
         content = builder.build_module(module)
-        return postprocessing_pipeline(content, self.config, pyx_path).strip() + "\n"
+        return (
+            postprocessing_pipeline(
+                content,
+                self.config,
+                pyx_path,
+                extra_translations=converter.cimport_alias_map,
+            ).strip()
+            + "\n"
+        )
 
     def compile_str_to_module(
         self, pyx_str: str, pxd_str: str | None = None, pyx_path: Path | None = None
@@ -104,8 +113,17 @@ class StubgenPyx:
         Raises:
             Various exceptions from parsing, conversion, or building.
         """
-        converter = self._make_converter()
+        return self._compile_with_converter(
+            self._make_converter(), pyx_str, pxd_str, pyx_path
+        )
 
+    def _compile_with_converter(
+        self,
+        converter: Converter,
+        pyx_str: str,
+        pxd_str: str | None = None,
+        pyx_path: Path | None = None,
+    ) -> PyiModule:
         module_name = path_to_module_name(pyx_path) if pyx_path else None
         parse_result = parse_pyx(pyx_str, module_name=module_name, pyx_path=pyx_path)
 

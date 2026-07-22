@@ -6,7 +6,7 @@ from __future__ import annotations
 import ast
 import re
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from Cython.Compiler import Nodes
 
@@ -26,8 +26,13 @@ from .declarators import get_enum_names, get_cdef_variables
 from .unparse import unparse_expr
 from .docstrings import docstring_to_string
 from .type_parsing import extract_type_from_base_type
+from ..postprocessing.normalize_names import _CYTHON_TRANSLATIONS
 
 _CIMPORT_RE = re.compile(r"\bcimport\b")
+_CXX_FROM_CIMPORT_RE = re.compile(
+    r"^\s*from\s+(?:libcpp|libc)(?:\.[^\s]+)?\s+cimport\b"
+)
+_CXX_CIMPORT_RE = re.compile(r"^\s*cimport\s+(?:libcpp|libc)(?:\.|\b)")
 
 
 @dataclass
@@ -37,6 +42,8 @@ class Converter:
     Transforms Cython Compiler AST nodes (as collected by visitors) into
     intermediate PyiElement representations for building .pyi stub files.
     """
+
+    cimport_alias_map: dict[str, str] = field(default_factory=dict)
 
     def _type_comment_for(
         self, node: Nodes.Node, type_comments: dict[int, str]
@@ -78,15 +85,34 @@ class Converter:
         self, visitor: ImportVisitor, source_code: str
     ) -> list[PyiImport]:
         """Convert import visitor nodes to PyiImport objects."""
-        return [self.convert_import(node, source_code) for node in visitor.imports]
+        self.cimport_alias_map = {}
+        imports = []
+        for node in visitor.imports:
+            raw = get_source(source_code, node)
+            if _is_cxx_cimport(raw):
+                self._collect_cimport_aliases(node)
+                continue
+            imports.append(self.convert_import(node, source_code, raw))
+        return imports
 
-    def convert_import(self, node: Nodes.Node, source_code: str) -> PyiImport:
+    def _collect_cimport_aliases(self, node: Nodes.Node) -> None:
+        if not isinstance(node, Nodes.FromCImportStatNode):
+            return
+        for _, original, alias in node.imported_names or ():
+            if alias and alias != original:
+                python_type = _CYTHON_TRANSLATIONS.get(original)
+                if python_type:
+                    self.cimport_alias_map[alias] = python_type
+
+    def convert_import(
+        self, node: Nodes.Node, source_code: str, raw: str | None = None
+    ) -> PyiImport:
         """Convert a single import node to PyiImport, rewriting cimport -> import."""
-        raw = get_source(source_code, node)
+        raw = raw if raw is not None else get_source(source_code, node)
         return PyiImport(_CIMPORT_RE.sub("import", raw))
 
     def convert_struct_or_union(
-        self, node: Nodes.CStructOrUnionDefNode, source_code: str
+        self, node: Nodes.CStructOrUnionDefNode, _source_code: str
     ) -> PyiClass:
         """Convert a C struct or union definition node to PyiClass."""
         attributes = []
@@ -250,7 +276,7 @@ class Converter:
         """Convert an assignment node to PyiAssignment, extracting type annotations."""
         if isinstance(assignment, Nodes.SingleAssignmentNode):
             expr = unparse_expr(assignment.rhs)
-            name: str = assignment.lhs.name  # type: ignore
+            name: str = assignment.lhs.name
             if expr != "...":
                 annotation = (
                     assignment.lhs.annotation.string.value
@@ -288,3 +314,7 @@ class Converter:
             return PyiEnum(enum_name=name, names=get_enum_names(node))
         # Make it usable as an alias for int
         return PyiAssignment(f"{node.name}: TypeAlias = int")  # type: ignore
+
+
+def _is_cxx_cimport(raw: str) -> bool:
+    return bool(_CXX_FROM_CIMPORT_RE.search(raw) or _CXX_CIMPORT_RE.search(raw))
