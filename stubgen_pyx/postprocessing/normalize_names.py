@@ -50,6 +50,14 @@ _CYTHON_TRANSLATIONS: dict[str, str] = {
     "bint": "bool",
     "unicode": "str",
     "void": "None",
+    "long double": "float",
+    "long long": "int",
+    "signed char": "int",
+    "unsigned char": "int",
+    "unsigned int": "int",
+    "unsigned long": "int",
+    "unsigned long long": "int",
+    "unsigned short": "int",
 }
 
 for int_type in _CYTHON_INTS:
