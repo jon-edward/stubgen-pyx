@@ -25,7 +25,10 @@ logger = logging.getLogger(__name__)
 
 
 def postprocessing_pipeline(
-    pyi_code: str, config: StubgenPyxConfig, pyx_path: Path | None = None
+    pyi_code: str,
+    config: StubgenPyxConfig,
+    pyx_path: Path | None = None,
+    extra_translations: dict[str, str] | None = None,
 ) -> str:
     """Apply post-processing transformations to .pyi code.
 
@@ -38,7 +41,7 @@ def postprocessing_pipeline(
         Processed .pyi code after all enabled transformations.
     """
     pyi_ast = ast.parse(pyi_code, type_comments=True)
-    pyi_ast = _ast_transforms(pyi_ast, config)
+    pyi_ast = _ast_transforms(pyi_ast, config, extra_translations)
     pyi_code = ast.unparse(pyi_ast)
 
     pyi_code = collapse_funcdefs(pyi_code)
@@ -53,13 +56,17 @@ def postprocessing_pipeline(
     return pyi_code
 
 
-def _ast_transforms(tree: ast.AST, config: StubgenPyxConfig) -> ast.AST:
+def _ast_transforms(
+    tree: ast.AST,
+    config: StubgenPyxConfig,
+    extra_translations: dict[str, str] | None = None,
+) -> ast.AST:
     """Apply all enabled AST-level transforms in the correct order."""
     if config.deduplicate_imports:
         tree = _DuplicateImportRemover().visit(tree)
 
     if config.normalize_names:
-        tree = _NameNormalizer().visit(tree)
+        tree = _NameNormalizer(extra_translations=extra_translations or {}).visit(tree)
 
     tree = remove_identity_assignment(tree)
 
