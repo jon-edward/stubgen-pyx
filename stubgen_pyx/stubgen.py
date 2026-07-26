@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from fnmatch import fnmatch
 import glob
 import logging
 import os
@@ -201,7 +202,7 @@ class StubgenPyx:
             exclude_patterns = [exclude_patterns]
 
         output = tuple(
-            f for f in gen if not any(f.full_match(p) for p in exclude_patterns)
+            f for f in gen if not any(fnmatch(str(f), str(p)) for p in exclude_patterns)
         )
         if output:
             logger.info(f"Found {len(output)} file(s) to convert")
