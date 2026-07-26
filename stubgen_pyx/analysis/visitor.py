@@ -19,6 +19,7 @@ class ScopeVisitor(TreeVisitor):
         cdef_functions: Collected Cython (cdef) function definitions.
         classes: Collected class definitions.
         enums: Collected enum definitions.
+        fused_types: Collected Cython fused type definitions.
     """
 
     node: Nodes.Node
@@ -30,6 +31,7 @@ class ScopeVisitor(TreeVisitor):
     cdef_functions: list[Nodes.CFuncDefNode] = field(default_factory=list, init=False)
     classes: list[ClassVisitor] = field(default_factory=list, init=False)
     enums: list[Nodes.CEnumDefNode] = field(default_factory=list, init=False)
+    fused_types: list[Nodes.FusedTypeNode] = field(default_factory=list, init=False)
     cdef_variables: list[Nodes.CVarDefNode] = field(default_factory=list, init=False)
     cdef_structs_or_unions: list[Nodes.CStructOrUnionDefNode] = field(
         default_factory=list, init=False
@@ -112,6 +114,11 @@ class ScopeVisitor(TreeVisitor):
         """Collect simple Cython type definitions."""
         if isinstance(node.declarator, Nodes.CNameDeclaratorNode):
             self.assignments.append(node)
+        return node
+
+    def visit_FusedTypeNode(self, node):
+        """Collect Cython fused type definitions."""
+        self.fused_types.append(node)
         return node
 
     def visit_CVarDefNode(self, node: Nodes.CVarDefNode):
@@ -240,7 +247,7 @@ def _collect_attribute(node) -> str:
         attribute = attribute.obj
 
     if isinstance(attribute, ExprNodes.NameNode):
-        names.append(attribute.name)  # type: ignore
+        names.append(attribute.name)
 
     names.reverse()
 
