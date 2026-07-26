@@ -17,7 +17,7 @@ def stubgen_attribution(pyx_path: Path | None) -> str:
         A comment line with generation tool info.
     """
     if pyx_path is not None:
-        source_desc = f" from {pyx_path}"
+        source_desc = f" from {pyx_path.as_posix()}"
     else:
         source_desc = ""
 
