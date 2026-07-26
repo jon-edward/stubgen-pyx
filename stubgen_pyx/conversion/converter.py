@@ -86,9 +86,7 @@ class Converter:
             inherited_fused_types,
             emit_inherited_fused_typevars=True,
         )
-        typing_import = (
-            "from typing import Any, Any as _Any, TypeAlias as _TypeAlias, TypedDict"
-        )
+        typing_import = "from typing import Any, TypeAlias, TypedDict"
         if any("TypeVar(" in assignment.statement for assignment in scope.assignments):
             typing_import += ", TypeVar"
         return PyiModule(
@@ -181,7 +179,7 @@ class Converter:
         cdef_assignments: list[PyiAssignment] = []
         for cdef_variable in visitor.cdef_variables:
             for name, base_type in get_cdef_variables(cdef_variable):
-                resolved_type = base_type if base_type else "_Any"
+                resolved_type = base_type if base_type else "Any"
                 cdef_assignments.append(PyiAssignment(f"{name}: {resolved_type}"))
 
         # Preserve source order across cdef and def functions
@@ -409,7 +407,7 @@ class Converter:
             name: str | None = node.name  # type: ignore
             return PyiEnum(enum_name=name, names=get_enum_names(node))
         # Make it usable as an alias for int
-        return PyiAssignment(f"{node.name}: _TypeAlias = int")  # type: ignore
+        return PyiAssignment(f"{node.name}: TypeAlias = int")  # type: ignore
 
 
 def _is_cxx_cimport(raw: str) -> bool:
