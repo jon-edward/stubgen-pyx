@@ -167,7 +167,9 @@ class StubgenPyx:
 
         return module
 
-    def resolve_glob(self, pyx_file_pattern: str) -> Iterable[Path]:
+    def resolve_glob(
+        self, pyx_file_pattern: str, exclude_patterns: list[str] | str | None = None
+    ) -> tuple[Path, ...]:
         """Resolve given glob pattern.
 
         Args:
@@ -189,19 +191,28 @@ class StubgenPyx:
                 if Path(pxd_path).with_suffix("") not in pyx_stems:
                     file_paths.append(pxd_path)
 
-        if len(file_paths) == 0:
-            logger.warning(f"No files matched pattern: {pyx_file_pattern}")
-        else:
-            logger.info(f"Found {len(file_paths)} file(s) to convert")
-
         unique_paths = list(dict.fromkeys(file_paths))
-        return (Path(p) for p in unique_paths)
+        gen = (Path(p) for p in unique_paths)
+
+        if not exclude_patterns:
+            return tuple(gen)
+
+        if isinstance(exclude_patterns, str):
+            exclude_patterns = [exclude_patterns]
+
+        output = tuple(
+            f for f in gen if not any(f.full_match(p) for p in exclude_patterns)
+        )
+        if output:
+            logger.info(f"Found {len(output)} file(s) to convert")
+        return output
 
     def convert_glob(
         self,
         pyx_file_pattern: str,
         output_dir: Path | None = None,
         dry_run: bool = False,
+        exclude_patterns: list[str] | str | None = None,
     ) -> list[ConversionResult]:
         """Convert multiple .pyx files matching a glob pattern.
 
@@ -214,7 +225,14 @@ class StubgenPyx:
         Returns:
             List of ConversionResult objects with status for each file.
         """
-        pyx_files = self.resolve_glob(pyx_file_pattern)
+        pyx_files = self.resolve_glob(
+            pyx_file_pattern, exclude_patterns=exclude_patterns
+        )
+
+        if not pyx_files:
+            logger.warning("No files found to convert")
+            return []
+
         return self.convert_multiple_files(
             pyx_files, output_dir=output_dir, dry_run=dry_run
         )

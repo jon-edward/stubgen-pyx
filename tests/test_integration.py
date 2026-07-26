@@ -558,3 +558,43 @@ def test_convert_single_file_in_output_dir_dry_run(temp_dir, temp_outdir):
     # Verify the .pyi file do not exist
     assert not pyx_file.with_suffix(".pyi").exists()
     assert not pyi_file.exists()
+
+
+def test_exclude_patterns(temp_dir):
+    """Test glob conversion with exclude patterns."""
+    pyx_file = temp_dir / "test1.pyx"
+    pyx_file.write_text("def func1(): pass")
+
+    stubgen = StubgenPyx()
+    result = stubgen.convert_glob(
+        str(temp_dir / "*.pyx"), exclude_patterns=[str(temp_dir / "**")]
+    )
+    assert len(result) == 0  # recursive exclude should work
+
+    result = stubgen.convert_glob(
+        str(temp_dir / "*.pyx"), exclude_patterns=[str(temp_dir / "test1.pyx")]
+    )
+    assert len(result) == 0  # explicit exclude should work
+
+    result = stubgen.convert_glob(str(temp_dir / "*.pyx"))
+    assert len(result) == 1  # no exclude should work
+
+    nested_dir = temp_dir / "nested"
+    nested_dir.mkdir()
+    nested_file = nested_dir / "test2.pyx"
+    nested_file.write_text("def func2(): pass")
+
+    result = stubgen.convert_glob(str(temp_dir / "**" / "*.pyx"))
+    assert len(result) == 2  # recursive glob without exclude matches both files
+
+    result = stubgen.convert_glob(
+        str(temp_dir / "**" / "*.pyx"),
+        exclude_patterns=[str(temp_dir / "nested" / "*")],
+    )
+    assert len(result) == 1  # explicit exclude should work
+
+    result = stubgen.convert_glob(
+        str(temp_dir / "**" / "*.pyx"),
+        exclude_patterns=[str(temp_dir / "test1.pyx"), str(temp_dir / "nested" / "*")],
+    )
+    assert len(result) == 0  # multiple excludes should be additive
