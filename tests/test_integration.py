@@ -579,6 +579,11 @@ def test_exclude_patterns(temp_dir):
     result = stubgen.convert_glob(str(temp_dir / "*.pyx"))
     assert len(result) == 1  # no exclude should work
 
+    result = stubgen.convert_glob(
+        str(temp_dir / "*.pyx"), exclude_patterns=str(temp_dir / "test1.pyx")
+    )
+    assert len(result) == 0  # passing a single exclude should work
+
     nested_dir = temp_dir / "nested"
     nested_dir.mkdir()
     nested_file = nested_dir / "test2.pyx"
