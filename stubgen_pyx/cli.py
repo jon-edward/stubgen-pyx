@@ -56,6 +56,14 @@ Examples:
     )
 
     parser.add_argument(
+        "--exclude-pattern",
+        help="Glob pattern for files to exclude from conversion. This option can be used multiple times (default: None)",
+        type=str,
+        nargs="*",
+        default=None,
+    )
+
+    parser.add_argument(
         "--output-dir",
         help="Directory to write .pyi files (default: same as source). "
         "This option cannot be used with option '--output-file'.",
@@ -211,7 +219,7 @@ def main() -> None:
 
     stubgen = StubgenPyx(config=config)
 
-    pyx_files = tuple(stubgen.resolve_glob(pyx_file_pattern))
+    pyx_files = tuple(stubgen.resolve_glob(pyx_file_pattern, args.exclude_pattern))
 
     # Validate no-files before single-file check to give clearer error messages
     if not pyx_files:

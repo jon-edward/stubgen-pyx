@@ -118,6 +118,9 @@ stubgen-pyx . --output-dir stubs/
 # Convert a single .pyx file to a specific output path
 # (requires exactly one matching input file)
 stubgen-pyx . --file mymodule.pyx --output-file output/mymodule.pyi
+
+# Exclude certain files from conversion
+stubgen-pyx . --exclude-pattern "**/tests/**" --exclude-pattern "vendor/**"
 ```
 
 **Disable specific transformations:**
@@ -252,10 +255,7 @@ While mypy's `stubgen` can generate stubs for compiled extension modules through
 - Typed memoryviews (e.g. `double[:, :]` → `numpy.typing.NDArray[numpy.double]`)
 - Fixed-size C arrays (e.g. `char[100]` → `bytes`, `int[100][100]` → `list[list[int]]`)
 - Pointer-to-char declarations (`char *` → `bytes`)
-
-### Limitations
-
-- Fused types (generics) have basic support
+- Fused types (e.g. `FooOrBar` → `TypeVar('FooOrBar', Foo, Bar)` or `Foo | Bar` as appropriate)
 
 ## Configuration Options
 
