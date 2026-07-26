@@ -29,7 +29,6 @@ from .declarators import get_enum_names, get_cdef_variables
 from .unparse import unparse_expr
 from .docstrings import docstring_to_string
 from .type_parsing import extract_type_from_base_type
-from ..postprocessing.normalize_names import _CYTHON_TRANSLATIONS
 
 _CIMPORT_RE = re.compile(r"\bcimport\b")
 _CXX_FROM_CIMPORT_RE = re.compile(
