@@ -6,7 +6,7 @@ from __future__ import annotations
 import ast
 import re
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from collections.abc import Iterator
 
 from Cython.Compiler import Nodes
