@@ -106,14 +106,17 @@ class _NameCollector(ast.NodeVisitor):
 
     def visit_Assign(self, node: ast.Assign) -> ast.Assign:
         """Special case for __all__ assignment."""
-        if isinstance(node.targets[0], ast.Name) and node.targets[0].id == "__all__":
-            if isinstance(node.value, (ast.List, ast.Tuple)):
-                for item in node.value.elts:
-                    if isinstance(item, ast.Constant):
-                        str_constant = self._get_str_constant(item)
-                        if str_constant:
-                            self._try_parsed_visit(str_constant)
-                return node  # don't recurse
+        if (
+            isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == "__all__"
+            and isinstance(node.value, (ast.List, ast.Tuple))
+        ):
+            for item in node.value.elts:
+                if isinstance(item, ast.Constant):
+                    str_constant = self._get_str_constant(item)
+                    if str_constant:
+                        self._try_parsed_visit(str_constant)
+            return node  # don't recurse
 
         self.visit(node.value)
         return node

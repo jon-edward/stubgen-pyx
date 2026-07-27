@@ -64,7 +64,7 @@ class _DuplicateImportRemover(ast.NodeTransformer):
 
     def _mark_duplicates_for_removal(self):
         """Mark all but the last import of each name for removal."""
-        for _, imports in self.name_to_imports.items():
+        for imports in self.name_to_imports.values():
             if len(imports) <= 1:
                 continue
 

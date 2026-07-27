@@ -508,15 +508,15 @@ def _resolved_fused_annotation(
 ) -> str:
     """Resolve a single annotation string using per-name fused usage and definitions."""
     resolved = annotation
-    for name in fused_types:
+    for name, value in fused_types.items():
         if not _annotation_uses_name(resolved, name):
             continue
         param_count, used_as_return = usage[name]
         replacement = name
-        if "object" in fused_types[name].concrete_types:
+        if "object" in value.concrete_types:
             replacement = "object"
         elif (not used_as_return and param_count <= 1) or param_count == 0:
-            replacement = " | ".join(fused_types[name].concrete_types)
+            replacement = " | ".join(value.concrete_types)
         resolved = " | ".join(
             replacement if part == name else part
             for part in _annotation_parts(resolved)

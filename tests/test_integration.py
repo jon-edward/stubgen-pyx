@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+import tokenize
 from pathlib import Path
 
 import pytest
@@ -231,7 +232,7 @@ def test_convert_glob_no_continue_on_error(temp_dir):
     config = StubgenPyxConfig(continue_on_error=False)
     stubgen = StubgenPyx(config=config)
 
-    with pytest.raises(Exception):
+    with pytest.raises(tokenize.TokenError):
         stubgen.convert_glob(str(temp_dir / "invalid.pyx"))
 
 
