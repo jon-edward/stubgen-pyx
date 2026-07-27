@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 from stubgen_pyx.conversion import (
     docstrings,
     unparse,

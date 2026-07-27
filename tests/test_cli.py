@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from stubgen_pyx import cli

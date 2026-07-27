@@ -9,7 +9,7 @@ import re
 import tokenize
 from typing import Callable
 
-from .utils import remove_indices, tokenize_py, Tokens, LineColConverter
+from .utils import LineColConverter, Tokens, remove_indices, tokenize_py
 
 _PreprocessTransform = Callable[[str], str]
 

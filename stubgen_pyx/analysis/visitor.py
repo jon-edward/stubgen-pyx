@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from Cython.Compiler import Nodes, ExprNodes, ModuleNode
+from Cython.Compiler import ExprNodes, ModuleNode, Nodes
 from Cython.Compiler.Visitor import TreeVisitor
 
 

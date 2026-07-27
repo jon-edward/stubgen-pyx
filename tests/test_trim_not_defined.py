@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 
-
 from stubgen_pyx.postprocessing.trim_not_defined import trim_not_defined
 
 

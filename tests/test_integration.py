@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from stubgen_pyx.stubgen import StubgenPyx
 from stubgen_pyx.config import StubgenPyxConfig
+from stubgen_pyx.stubgen import StubgenPyx
 
 
 @pytest.fixture

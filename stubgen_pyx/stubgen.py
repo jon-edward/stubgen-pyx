@@ -2,22 +2,21 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from fnmatch import fnmatch
 import glob
 import logging
 import os
-from typing import Iterable
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+from fnmatch import fnmatch
 from pathlib import Path
 
-from .config import StubgenPyxConfig
 from .analysis.visitor import ModuleVisitor
-from .conversion.converter import Converter
 from .builders.builder import Builder
+from .config import StubgenPyxConfig
+from .conversion.converter import Converter
+from .models.pyi_elements import PyiClass, PyiModule
 from .parsing.parser import parse_pyx, path_to_module_name
 from .postprocessing.pipeline import postprocessing_pipeline
-from .models.pyi_elements import PyiModule, PyiClass
-
 
 logger = logging.getLogger(__name__)
 
@@ -347,8 +346,8 @@ class StubgenPyx:
                 try:
                     pyi_file_path.write_text(pyi_content, encoding="utf-8")
                     logger.debug(f"Wrote pyi file: {pyi_file_path}")
-                except IOError as e:
-                    raise IOError(f"Failed to write {pyi_file_path}: {e}") from e
+                except OSError as e:
+                    raise OSError(f"Failed to write {pyi_file_path}: {e}") from e
             else:
                 logger.info(f"Would create output file: {pyi_file_path}")
 

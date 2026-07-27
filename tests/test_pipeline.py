@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import ast
 
-from stubgen_pyx.postprocessing.pipeline import postprocessing_pipeline, _ast_transforms
 from stubgen_pyx.config import StubgenPyxConfig
+from stubgen_pyx.postprocessing.pipeline import _ast_transforms, postprocessing_pipeline
 
 
 def test_pipeline_with_all_disabled():

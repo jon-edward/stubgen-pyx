@@ -7,9 +7,9 @@ import logging
 import sys
 from pathlib import Path
 
-from .stubgen import ConversionResult, StubgenPyx
-from .config import StubgenPyxConfig
 from ._version import __version__
+from .config import StubgenPyxConfig
+from .stubgen import ConversionResult, StubgenPyx
 
 logger = logging.getLogger(__name__)
 

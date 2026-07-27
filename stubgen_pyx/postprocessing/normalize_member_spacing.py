@@ -39,12 +39,12 @@ is converted to:
 from __future__ import annotations
 
 import ast
-from dataclasses import dataclass, field
 import enum
 import tokenize
+from dataclasses import dataclass, field
 from typing import Union
 
-from ..parsing.utils import LineColConverter, tokenize_py, remove_indices
+from ..parsing.utils import LineColConverter, remove_indices, tokenize_py
 
 
 def normalize_member_spacing(code: str) -> str:

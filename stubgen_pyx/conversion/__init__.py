@@ -2,20 +2,20 @@
 
 from . import (
     converter,
-    signature,
     declarators,
-    type_parsing,
-    source_extraction,
     docstrings,
+    signature,
+    source_extraction,
+    type_parsing,
     unparse,
 )
 
 __all__ = [
     "converter",
-    "signature",
     "declarators",
-    "type_parsing",
-    "source_extraction",
     "docstrings",
+    "signature",
+    "source_extraction",
+    "type_parsing",
     "unparse",
 ]

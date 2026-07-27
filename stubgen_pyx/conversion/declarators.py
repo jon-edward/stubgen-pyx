@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+
 from Cython.Compiler import Nodes
 
 from .type_parsing import extract_type_from_base_type

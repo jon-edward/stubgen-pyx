@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import ast
-from dataclasses import dataclass, field
 import itertools
+from dataclasses import dataclass, field
 
 
 def collect_names(tree: ast.AST) -> set[str]:

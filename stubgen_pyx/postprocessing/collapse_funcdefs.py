@@ -20,8 +20,7 @@ is converted to:
 
 import tokenize
 
-from ..parsing.utils import LineColConverter, tokenize_py, remove_indices
-
+from ..parsing.utils import LineColConverter, remove_indices, tokenize_py
 
 _SKIP_TYPES = (tokenize.INDENT, tokenize.DEDENT)
 

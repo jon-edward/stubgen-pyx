@@ -3,32 +3,32 @@ Converts Cython AST nodes to PyiElements.
 """
 
 from __future__ import annotations
+
 import ast
 import re
-
-from dataclasses import dataclass, field
 from collections.abc import Iterator
+from dataclasses import dataclass, field
 
 from Cython.Compiler import Nodes
 
-from ..analysis.visitor import ScopeVisitor, ClassVisitor, ModuleVisitor, ImportVisitor
+from ..analysis.visitor import ClassVisitor, ImportVisitor, ModuleVisitor, ScopeVisitor
 from ..models.pyi_elements import (
-    PyiScope,
-    PyiClass,
-    PyiModule,
-    PyiImport,
     PyiAssignment,
-    PyiFunction,
+    PyiClass,
     PyiEnum,
+    PyiFunction,
+    PyiImport,
+    PyiModule,
+    PyiScope,
     PyiSignature,
 )
 from ..postprocessing.normalize_names import _CYTHON_TRANSLATIONS
-from .signature import get_signature
-from .source_extraction import get_decorators, get_bases, get_metaclass, get_source
-from .declarators import get_enum_names, get_cdef_variables
-from .unparse import unparse_expr
+from .declarators import get_cdef_variables, get_enum_names
 from .docstrings import docstring_to_string
+from .signature import get_signature
+from .source_extraction import get_bases, get_decorators, get_metaclass, get_source
 from .type_parsing import extract_type_from_base_type
+from .unparse import unparse_expr
 
 _CIMPORT_RE = re.compile(r"\bcimport\b")
 _CXX_FROM_CIMPORT_RE = re.compile(
@@ -320,8 +320,8 @@ class Converter:
     ) -> dict[str, PyiFusedType]:
         fused_types: dict[str, PyiFusedType] = {}
         for node in fused_type_nodes:
-            name = getattr(node, "name")
-            type_nodes = getattr(node, "types")
+            name = node.name
+            type_nodes = node.types
             concrete_types = tuple(
                 dict.fromkeys(
                     _CYTHON_TRANSLATIONS.get(type_name, type_name)
@@ -546,7 +546,7 @@ def _annotation_parts(annotation: str) -> list[str]:
 def _type_name(node: Nodes.Node) -> str | None:
     """Return a dotted type name for a simple or templated base-type node, or None."""
     while isinstance(node, Nodes.TemplatedTypeNode):
-        node = getattr(node, "base_type_node")
+        node = node.base_type_node
     if isinstance(node, Nodes.CSimpleBaseTypeNode):
-        return ".".join(getattr(node, "module_path") + [getattr(node, "name")])
+        return ".".join(node.module_path + [node.name])
     return None

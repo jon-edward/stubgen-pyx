@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-
 from stubgen_pyx.builders.builder import Builder
 from stubgen_pyx.models.pyi_elements import (
-    PyiModule,
-    PyiClass,
-    PyiFunction,
+    PyiArgument,
     PyiAssignment,
+    PyiClass,
+    PyiEnum,
+    PyiFunction,
     PyiImport,
+    PyiModule,
     PyiScope,
     PyiSignature,
-    PyiArgument,
-    PyiEnum,
 )
 
 

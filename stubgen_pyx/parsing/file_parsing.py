@@ -5,14 +5,14 @@ File-specific parsing logic.
 from __future__ import annotations
 
 import ast
-from dataclasses import dataclass
 import hashlib
 import logging
 import os
-from pathlib import Path
 import tokenize
+from dataclasses import dataclass
+from pathlib import Path
 
-from .preprocess import remove_indices, tokenize_py, LineColConverter
+from .preprocess import LineColConverter, remove_indices, tokenize_py
 
 _STUBGEN_MAX_INCLUDE_DEPTH = int(
     os.environ.get("STUBGEN_MAX_INCLUDE_DEPTH", 100)
