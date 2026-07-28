@@ -5,10 +5,11 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
+
 import pytest
 
-from stubgen_pyx.stubgen import StubgenPyx, ConversionResult
 from stubgen_pyx.config import StubgenPyxConfig
+from stubgen_pyx.stubgen import ConversionResult, StubgenPyx
 
 
 class TestStubgenErrorHandling:
@@ -43,7 +44,7 @@ class TestStubgenErrorHandling:
 
             # Create a mock output dir that can't be written to
             with patch.object(
-                Path, "write_text", side_effect=IOError("Permission denied")
+                Path, "write_text", side_effect=OSError("Permission denied")
             ):
                 config = StubgenPyxConfig(continue_on_error=True)
                 stubgen = StubgenPyx(config=config)

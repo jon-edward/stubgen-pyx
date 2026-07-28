@@ -6,21 +6,21 @@ See `preprocess.py` for preprocessing details.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import hashlib
+from dataclasses import dataclass, field
 from io import StringIO
 from pathlib import Path
 
-from Cython.Compiler.TreeFragment import StringParseContext
 from Cython.Compiler import Errors, Parsing
 from Cython.Compiler.ModuleNode import ModuleNode
 from Cython.Compiler.Scanning import PyrexScanner, StringSourceDescriptor
+from Cython.Compiler.TreeFragment import StringParseContext
 
 from .file_parsing import file_parsing_preprocess
 from .preprocess import (
-    preprocess,
     extract_type_comments,
     get_lines_with_newlines_in_brackets,
+    preprocess,
 )
 
 Errors.init_thread()

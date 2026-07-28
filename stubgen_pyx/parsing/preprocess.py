@@ -9,7 +9,7 @@ import re
 import tokenize
 from typing import Callable
 
-from .utils import remove_indices, tokenize_py, Tokens, LineColConverter
+from .utils import LineColConverter, Tokens, remove_indices, tokenize_py
 
 _PreprocessTransform = Callable[[str], str]
 
@@ -226,12 +226,13 @@ def _get_line_segments(
 
         buffer.append(token)
 
-        if token.type in break_types or (
-            token.type == tokenize.OP and token.string == ";"
+        if (
+            token.type in break_types
+            or (token.type == tokenize.OP and token.string == ";")
+            and buffer
         ):
-            if buffer:
-                segments.append(buffer)
-                buffer = []
+            segments.append(buffer)
+            buffer = []
 
     if buffer:
         segments.append(buffer)

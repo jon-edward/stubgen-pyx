@@ -2,8 +2,8 @@
 Profile the stubgen-pyx package
 """
 
-import cProfile
 import argparse
+import cProfile
 
 from stubgen_pyx.stubgen import StubgenPyx
 

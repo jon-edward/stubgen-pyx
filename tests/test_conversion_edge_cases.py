@@ -7,17 +7,17 @@ from pathlib import Path
 
 import pytest
 
+from stubgen_pyx.builders.builder import Builder
 from stubgen_pyx.models.pyi_elements import (
     PyiArgument,
-    PyiSignature,
-    PyiFunction,
-    PyiClass,
-    PyiScope,
-    PyiModule,
     PyiAssignment,
+    PyiClass,
     PyiEnum,
+    PyiFunction,
+    PyiModule,
+    PyiScope,
+    PyiSignature,
 )
-from stubgen_pyx.builders.builder import Builder
 from stubgen_pyx.parsing.file_parsing import MaxIncludeDepthError
 
 

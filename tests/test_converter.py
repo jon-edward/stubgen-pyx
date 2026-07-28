@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-
+from stubgen_pyx.analysis.visitor import ModuleVisitor
 from stubgen_pyx.conversion.converter import Converter
 from stubgen_pyx.models.pyi_elements import (
-    PyiModule,
     PyiClass,
-    PyiFunction,
-    PyiScope,
     PyiEnum,
+    PyiFunction,
+    PyiModule,
+    PyiScope,
 )
 from stubgen_pyx.parsing.parser import parse_pyx
-from stubgen_pyx.analysis.visitor import ModuleVisitor
 
 
 class TestConverterInitialization:
@@ -613,9 +612,9 @@ class TestConverterStateless:
 
     def test_converter_reusable_across_calls(self):
         """A single Converter instance must be safely reusable."""
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
         from stubgen_pyx.parsing.parser import parse_pyx
-        from stubgen_pyx.analysis.visitor import ModuleVisitor
 
         converter = Converter()
 
@@ -627,9 +626,9 @@ class TestConverterStateless:
 
     def test_type_comments_not_shared_between_calls(self):
         """type_comments from one parse must not affect a second call."""
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
         from stubgen_pyx.parsing.parser import parse_pyx
-        from stubgen_pyx.analysis.visitor import ModuleVisitor
 
         converter = Converter()
 
@@ -646,9 +645,9 @@ class TestConverterStateless:
 
 class TestExcludeDocstrings:
     def test_docstrings_excluded(self):
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
         from stubgen_pyx.parsing.parser import parse_pyx
-        from stubgen_pyx.analysis.visitor import ModuleVisitor
 
         converter = Converter()
 
@@ -676,9 +675,9 @@ def foo():
 
 class TestTupleBaseType:
     def test_tuple_base_type(self):
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
         from stubgen_pyx.parsing.parser import parse_pyx
-        from stubgen_pyx.analysis.visitor import ModuleVisitor
 
         converter = Converter()
 
@@ -693,9 +692,9 @@ cpdef (int, int) foo(int x, int y):
         assert module.scope.functions[0].signature.return_type == "tuple[int, int]"
 
     def test_tuple_base_type_nested(self):
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
         from stubgen_pyx.parsing.parser import parse_pyx
-        from stubgen_pyx.analysis.visitor import ModuleVisitor
 
         converter = Converter()
 
@@ -715,9 +714,9 @@ cpdef ((int, int), int) foo(int x, int y):
 
 class TestCinitInitHandling:
     def test_cinit_to_init_absent_init(self):
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
         from stubgen_pyx.parsing.parser import parse_pyx
-        from stubgen_pyx.analysis.visitor import ModuleVisitor
 
         converter = Converter()
 
@@ -733,9 +732,9 @@ cdef class Foo:
         assert module.scope.classes[0].scope.functions[0].name == "__init__"
 
     def test_drop_cinit_present_init(self):
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
         from stubgen_pyx.parsing.parser import parse_pyx
-        from stubgen_pyx.analysis.visitor import ModuleVisitor
 
         converter = Converter()
 
@@ -756,9 +755,9 @@ cdef class Foo:
 
 class TestReadonlyVisibility:
     def test_readonly_visibility(self):
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
         from stubgen_pyx.parsing.parser import parse_pyx
-        from stubgen_pyx.analysis.visitor import ModuleVisitor
 
         converter = Converter()
 
@@ -775,9 +774,9 @@ cdef class Foo:
 
 class TestInferredNoneUnion:
     def test_inferred_none_union(self):
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
         from stubgen_pyx.parsing.parser import parse_pyx
-        from stubgen_pyx.analysis.visitor import ModuleVisitor
 
         converter = Converter()
 
@@ -796,9 +795,9 @@ cdef class Foo:
         )
 
     def test_inferred_none_no_annotation(self):
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
         from stubgen_pyx.parsing.parser import parse_pyx
-        from stubgen_pyx.analysis.visitor import ModuleVisitor
 
         converter = Converter()
 
@@ -820,9 +819,9 @@ cdef class Foo:
 
 class TestStructOrUnionType:
     def test_struct_or_union_type(self):
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
         from stubgen_pyx.parsing.parser import parse_pyx
-        from stubgen_pyx.analysis.visitor import ModuleVisitor
 
         converter = Converter()
 
@@ -851,9 +850,9 @@ cdef union Foo:
         assert module.scope.classes[0].keywords["total"] == "False"
 
     def test_cdef_ptr_attributes(self):
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
         from stubgen_pyx.parsing.parser import parse_pyx
-        from stubgen_pyx.analysis.visitor import ModuleVisitor
 
         converter = Converter()
 
@@ -873,9 +872,9 @@ cdef struct Foo:
         )
 
     def test_cfunc_ptr_attribute(self):
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
         from stubgen_pyx.parsing.parser import parse_pyx
-        from stubgen_pyx.analysis.visitor import ModuleVisitor
 
         converter = Converter()
 
@@ -892,9 +891,9 @@ cdef struct Foo:
 
 class TestMemoryviewConversion:
     def test_memoryview_to_numpy(self):
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
         from stubgen_pyx.parsing.parser import parse_pyx
-        from stubgen_pyx.analysis.visitor import ModuleVisitor
 
         converter = Converter()
 
@@ -921,9 +920,9 @@ cdef class Foo:
 
 class TestTemplateTypeConversion:
     def test_template_type_conversion(self):
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
         from stubgen_pyx.parsing.parser import parse_pyx
-        from stubgen_pyx.analysis.visitor import ModuleVisitor
 
         converter = Converter()
 
@@ -953,9 +952,9 @@ cpdef imported.array[list[int]] foo():
 
 class TestCdefEnumConversion:
     def test_cdef_enum_no_wrapper(self):
+        from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
         from stubgen_pyx.parsing.parser import parse_pyx
-        from stubgen_pyx.analysis.visitor import ModuleVisitor
 
         converter = Converter()
 

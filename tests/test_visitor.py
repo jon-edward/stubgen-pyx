@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-
-from stubgen_pyx.parsing.parser import parse_pyx
 from stubgen_pyx.analysis.visitor import (
-    ScopeVisitor,
+    ClassVisitor,
     ImportVisitor,
     ModuleVisitor,
-    ClassVisitor,
+    ScopeVisitor,
 )
+from stubgen_pyx.parsing.parser import parse_pyx
 
 
 class TestScopeVisitorBasics:

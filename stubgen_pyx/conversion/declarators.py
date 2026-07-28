@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import logging
+
 from Cython.Compiler import Nodes
 
 from .type_parsing import extract_type_from_base_type
+
+_logger = logging.getLogger(__name__)
 
 
 def _declarator_name(
@@ -45,7 +48,7 @@ def get_cdef_variables(node: Nodes.CVarDefNode) -> list[tuple[str, str | None]]:
         if isinstance(decl, accepted):
             declarators.append(decl)
         else:
-            logging.warning("Unknown declarator type: %s", type(decl).__name__)
+            _logger.warning("Unknown declarator type: %s", type(decl).__name__)
 
     results = []
     for d in declarators:

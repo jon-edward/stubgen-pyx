@@ -4,19 +4,19 @@ Generates Python code from PyiElements.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import textwrap
+from dataclasses import dataclass
 
 from ..models.pyi_elements import (
-    PyiModule,
-    PyiClass,
-    PyiFunction,
+    PyiArgument,
     PyiAssignment,
+    PyiClass,
+    PyiEnum,
+    PyiFunction,
     PyiImport,
+    PyiModule,
     PyiScope,
     PyiSignature,
-    PyiArgument,
-    PyiEnum,
 )
 
 

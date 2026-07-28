@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import textwrap
-from Cython.Compiler import Nodes, ExprNodes
+
+from Cython.Compiler import ExprNodes, Nodes
 
 
 def get_source(source: str, node: Nodes.Node) -> str:

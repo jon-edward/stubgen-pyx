@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 
-
 from stubgen_pyx.postprocessing import (
     sort_imports,
     trim_imports,

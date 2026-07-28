@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import io
 import tokenize
-from typing import Generator
-
+from collections.abc import Generator
 
 Tokens = tuple[tokenize.TokenInfo, ...]
 

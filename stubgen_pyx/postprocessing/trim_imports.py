@@ -5,7 +5,6 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 
-
 _RESERVED_MODULES = {"__future__", "asyncio"}
 
 

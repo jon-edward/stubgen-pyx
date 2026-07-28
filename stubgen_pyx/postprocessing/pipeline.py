@@ -10,16 +10,16 @@ import logging
 from pathlib import Path
 
 from ..config import StubgenPyxConfig
-from .collect_names import collect_names
-from .normalize_names import _NameNormalizer
-from .trim_imports import _UnusedImportRemover
-from .deduplicate_imports import _DuplicateImportRemover
-from .trim_not_defined import trim_not_defined
-from .sort_imports import sort_imports
 from .attribution import stubgen_attribution
-from .remove_identity_assignment import remove_identity_assignment
 from .collapse_funcdefs import collapse_funcdefs
+from .collect_names import collect_names
+from .deduplicate_imports import _DuplicateImportRemover
 from .normalize_member_spacing import normalize_member_spacing
+from .normalize_names import _NameNormalizer
+from .remove_identity_assignment import remove_identity_assignment
+from .sort_imports import sort_imports
+from .trim_imports import _UnusedImportRemover
+from .trim_not_defined import trim_not_defined
 
 logger = logging.getLogger(__name__)
 

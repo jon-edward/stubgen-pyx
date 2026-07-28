@@ -20,9 +20,9 @@ class _IdentityAssignmentRemover(ast.NodeTransformer):
             len(node.targets) == 1
             and isinstance(node.targets[0], ast.Name)
             and isinstance(node.value, ast.Name)
+            and node.targets[0].id == node.value.id
         ):
-            if node.targets[0].id == node.value.id:
-                return None
+            return None
         return node
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> Any:

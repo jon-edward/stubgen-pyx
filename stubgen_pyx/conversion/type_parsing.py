@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from Cython.Compiler import Nodes, ExprNodes
+from Cython.Compiler import ExprNodes, Nodes
 
 _CYTHON_TO_NUMPY_SCALAR: dict[str, str] = {
     "bint": "bool_",

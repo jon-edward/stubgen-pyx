@@ -20,8 +20,7 @@ is converted to:
 
 import tokenize
 
-from ..parsing.utils import LineColConverter, tokenize_py, remove_indices
-
+from ..parsing.utils import LineColConverter, remove_indices, tokenize_py
 
 _SKIP_TYPES = (tokenize.INDENT, tokenize.DEDENT)
 
@@ -43,17 +42,18 @@ def _get_colon_newline_ellipsis_indices(code: str) -> list[tuple[int, int]]:
         if token.type in _SKIP_TYPES:
             continue
 
-        if last_token is not None and last_last_token is not None:
-            if (
-                last_last_token.type == tokenize.OP
-                and last_last_token.string == ":"
-                and last_token.type == tokenize.NEWLINE
-                and token.type == tokenize.OP
-                and token.string == "..."
-            ):
-                start = line_converter.line_col_to_offset(last_last_token.end)
-                end = line_converter.line_col_to_offset(token.start)
-                results.append((start, end))
+        if (
+            last_token is not None
+            and last_last_token is not None
+            and last_last_token.type == tokenize.OP
+            and last_last_token.string == ":"
+            and last_token.type == tokenize.NEWLINE
+            and token.type == tokenize.OP
+            and token.string == "..."
+        ):
+            start = line_converter.line_col_to_offset(last_last_token.end)
+            end = line_converter.line_col_to_offset(token.start)
+            results.append((start, end))
 
         last_last_token = last_token
         last_token = token

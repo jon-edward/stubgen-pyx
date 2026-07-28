@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+import tokenize
 from pathlib import Path
 
 import pytest
@@ -20,7 +21,7 @@ class TestParsingEdgeCases:
             pyx_file = Path(tmpdir) / "bad_syntax.pyx"
             pyx_file.write_text("def broken( pass")
 
-            with pytest.raises(Exception):
+            with pytest.raises(tokenize.TokenError):
                 parse_pyx(pyx_file.read_text(), pyx_path=pyx_file)
 
     def test_parse_file_with_complex_code(self):
