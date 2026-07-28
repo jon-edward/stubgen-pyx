@@ -5,6 +5,7 @@ from collections.abc import Callable
 
 
 def strip_artifacts(tree: ast.AST) -> ast.AST:
+    """Remove Cython-generated stub artifacts that are not meaningful in Python stubs."""
     return ast.fix_missing_locations(_ArtifactStripper().visit(tree))
 
 

@@ -9,6 +9,7 @@ _BUILTIN_NAMES.update({"None"})
 
 
 def validate_annotations(tree: ast.AST) -> ast.AST:
+    """Replace unresolved annotation names with Any."""
     defined_names = _DefinedCollector.collect(tree) | _BUILTIN_NAMES
     validator = _AnnotationValidator(defined_names)
     tree = validator.visit(tree)
