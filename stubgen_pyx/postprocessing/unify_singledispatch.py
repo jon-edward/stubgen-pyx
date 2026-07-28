@@ -81,14 +81,19 @@ def _collect_group(base: _Base, body: list[ast.stmt]) -> list[_Variant]:
             continue
         for decorator in stmt.decorator_list:
             type_expr = _register_type(base.name, decorator)
-            if type_expr is not None or _is_bare_register(base.name, decorator):
-                type_expr = type_expr or _first_arg_annotation(stmt)
-                variants.append(
-                    _Variant(
-                        stmt, ast.unparse(type_expr) if type_expr else None, type_expr
-                    )
-                )
-                break
+            if type_expr is not None:
+                # Form A/C: decorator provides the type; always use it
+                pass
+            elif _is_register(base.name, decorator):
+                # Form B: bare @foo.register attribute; fall back to param annotation
+                type_expr = _first_arg_annotation(stmt)
+            else:
+                # Empty @foo.register() call or unrelated decorator — skip
+                continue
+            variants.append(
+                _Variant(stmt, ast.unparse(type_expr) if type_expr else None, type_expr)
+            )
+            break
     return variants
 
 
@@ -126,7 +131,7 @@ def _overload_function(name: str, variant: _Variant) -> ast.FunctionDef:
     stmt.decorator_list = [ast.Name(id="overload", ctx=ast.Load())]
     stmt.body = [ast.Expr(value=ast.Constant(...))]
     args = stmt.args.posonlyargs + stmt.args.args
-    if args and args[0].annotation is None and variant.type_expr is not None:
+    if args and variant.type_expr is not None:
         args[0].annotation = copy.deepcopy(variant.type_expr)
     return stmt
 
