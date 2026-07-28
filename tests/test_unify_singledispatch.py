@@ -207,6 +207,33 @@ def test_overload_import_is_injected_when_needed():
     assert "from typing import overload" in result
 
 
+def test_missing_variant_return_annotation_defaults_to_any():
+    result = _unify(
+        "import functools\n"
+        "@functools.singledispatch\n"
+        "def convert(x): ...\n"
+        "@convert.register(int)\n"
+        "def _from_int(x): ..."
+    )
+
+    assert "from typing import overload, Any" in result
+    assert "@overload\ndef convert(x: int) -> Any" in result
+
+
+def test_explicit_variant_return_annotation_is_preserved_without_any_import():
+    result = _unify(
+        "import functools\n"
+        "@functools.singledispatch\n"
+        "def convert(x): ...\n"
+        "@convert.register(int)\n"
+        "def _from_int(x) -> str: ..."
+    )
+
+    assert "from typing import overload" in result
+    assert "from typing import overload, Any" not in result
+    assert "@overload\ndef convert(x: int) -> str" in result
+
+
 def test_existing_overload_import_is_not_duplicated():
     result = _unify(
         "from typing import overload\n"

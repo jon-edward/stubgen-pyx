@@ -11,6 +11,8 @@ def unify_singledispatch(tree: ast.AST) -> ast.AST:
     tree = unifier.visit(tree)
     if unifier.emitted_overloads and not _has_typing_name(tree, "overload"):
         _insert_typing_import(tree, "overload")
+    if unifier.emitted_any and not _has_typing_name(tree, "Any"):
+        _insert_typing_import(tree, "Any")
     return ast.fix_missing_locations(tree)
 
 
@@ -31,6 +33,7 @@ class _Variant:
 @dataclass
 class _SingledispatchUnifier(ast.NodeTransformer):
     emitted_overloads: bool = False
+    emitted_any: bool = False
     _skip: set[int] = field(default_factory=set, init=False)
 
     def visit_Module(self, node: ast.Module) -> ast.Module:
@@ -39,6 +42,7 @@ class _SingledispatchUnifier(ast.NodeTransformer):
         replacements = {
             base.index: _unified_group(base, groups[base.name]) for base in bases
         }
+        base_by_index = {base.index: base for base in bases}
         self._skip = {
             id(variant.stmt)
             for base in bases
@@ -55,6 +59,10 @@ class _SingledispatchUnifier(ast.NodeTransformer):
                 body.append(stmt)
             else:
                 self.emitted_overloads = True
+                base = base_by_index[idx]
+                self.emitted_any |= any(
+                    variant.stmt.returns is None for variant in groups[base.name]
+                )
                 body.extend(replacement)
         node.body = body
         return node
@@ -130,6 +138,8 @@ def _overload_function(name: str, variant: _Variant) -> ast.FunctionDef:
     stmt.name = name
     stmt.decorator_list = [ast.Name(id="overload", ctx=ast.Load())]
     stmt.body = [ast.Expr(value=ast.Constant(...))]
+    if stmt.returns is None:
+        stmt.returns = ast.Name(id="Any", ctx=ast.Load())
     args = stmt.args.posonlyargs + stmt.args.args
     if args and variant.type_expr is not None:
         args[0].annotation = copy.deepcopy(variant.type_expr)
@@ -245,6 +255,9 @@ def _insert_typing_import(tree: ast.AST, name: str) -> None:
         return
     insert_at = 0
     for idx, stmt in enumerate(tree.body):
+        if isinstance(stmt, ast.ImportFrom) and stmt.module == "typing":
+            stmt.names.append(ast.alias(name=name))
+            return
         if isinstance(stmt, ast.ImportFrom) and stmt.module == "__future__":
             insert_at = idx + 1
     tree.body.insert(
