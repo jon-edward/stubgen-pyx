@@ -23,6 +23,7 @@ from .sort_imports import sort_imports
 from .strip_artifacts import strip_artifacts
 from .trim_imports import _UnusedImportRemover
 from .trim_not_defined import trim_not_defined
+from .validate_annotations import validate_annotations
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,9 @@ def _ast_transforms(
 
     if config.strip_artifacts:
         tree = strip_artifacts(tree)
+
+    if config.strip_artifacts:
+        tree = validate_annotations(tree)
 
     if config.trim_imports:
         used_names = collect_names(tree)
