@@ -55,6 +55,7 @@ class _ArtifactStripper(ast.NodeTransformer):
         return (
             len(node.targets) == 1
             and isinstance(node.value, (ast.Call, ast.Attribute))
+            # TypeVar assignments are preserved; they carry useful stub type info.
             and not _is_typevar_call(node.value)
         )
 
