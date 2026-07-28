@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 
 def unify_singledispatch(tree: ast.AST) -> ast.AST:
+    """Rewrite singledispatch variants into overload stubs."""
     unifier = _SingledispatchUnifier()
     tree = unifier.visit(tree)
     if unifier.emitted_overloads and not _has_typing_name(tree, "overload"):
@@ -197,12 +198,6 @@ def _register_type(base_name: str, node: ast.expr) -> ast.expr | None:
     ):
         return node.args[0]
     return None
-
-
-def _is_bare_register(base_name: str, node: ast.expr) -> bool:
-    return _is_register(base_name, node) or (
-        isinstance(node, ast.Call) and _is_register(base_name, node.func)
-    )
 
 
 def _is_register(base_name: str, node: ast.expr) -> bool:
