@@ -20,6 +20,7 @@ from .overload_singledispatch import overload_singledispatch
 from .remove_identity_assignment import remove_identity_assignment
 from .remove_overload_implementations import remove_overload_implementations
 from .sort_imports import sort_imports
+from .strip_artifacts import strip_artifacts
 from .trim_imports import _UnusedImportRemover
 from .trim_not_defined import trim_not_defined
 
@@ -80,6 +81,9 @@ def _ast_transforms(
         trim_not_defined(tree)
 
     tree = overload_singledispatch(tree)
+
+    if config.strip_artifacts:
+        tree = strip_artifacts(tree)
 
     if config.trim_imports:
         used_names = collect_names(tree)
