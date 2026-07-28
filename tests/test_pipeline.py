@@ -224,6 +224,27 @@ def test_pipeline_trim_not_defined_disabled_preserves():
     assert "UndefinedType" in result
 
 
+def test_pipeline_unifies_singledispatch_when_strip_artifacts_enabled():
+    pyi_code = (
+        "import functools\n"
+        "@functools.singledispatch\n"
+        "def convert(x): ...\n"
+        "@convert.register(int)\n"
+        "def _from_int(x): ..."
+    )
+
+    config = StubgenPyxConfig(
+        trim_imports=False,
+        sort_imports=False,
+        exclude_attribution=True,
+    )
+    result = postprocessing_pipeline(pyi_code, config)
+
+    assert "from typing import overload" in result
+    assert "def convert(x: int)" in result
+    assert "_from_int" not in result
+
+
 def test_pipeline_transform_order_trim_before_trim_not_defined():
     """trim_imports must run before trim_not_defined so imports define what's available."""
     # SomeType is imported; trim_imports must not remove it before trim_not_defined

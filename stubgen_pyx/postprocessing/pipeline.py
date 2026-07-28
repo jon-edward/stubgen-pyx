@@ -20,6 +20,7 @@ from .remove_identity_assignment import remove_identity_assignment
 from .sort_imports import sort_imports
 from .trim_imports import _UnusedImportRemover
 from .trim_not_defined import trim_not_defined
+from .unify_singledispatch import unify_singledispatch
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,9 @@ def _ast_transforms(
 
     if config.trim_not_defined:
         trim_not_defined(tree)
+
+    if config.strip_artifacts:
+        tree = unify_singledispatch(tree)
 
     if config.trim_imports:
         used_names = collect_names(tree)
