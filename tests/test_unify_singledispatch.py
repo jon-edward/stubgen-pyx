@@ -11,6 +11,10 @@ def _unify(code: str) -> str:
     return ast.unparse(unify_singledispatch(ast.parse(code)))
 
 
+def _assert_ast_unchanged(code: str, result: str) -> None:
+    assert ast.dump(ast.parse(result)) == ast.dump(ast.parse(code))
+
+
 def test_form_a_decorator_base_and_registered_type():
     result = _unify(
         "import functools\n"
@@ -68,6 +72,51 @@ def test_conflicting_registration_warns_and_leaves_group_unchanged():
     assert "@functools.singledispatch" in result
     assert "def a" in result
     assert "def b" in result
+
+
+def test_multi_arg_register_is_unhandled_and_left_unchanged():
+    code = (
+        "import functools\n"
+        "@functools.singledispatch\n"
+        "def convert(x): ...\n"
+        "@convert.register(int, str)\n"
+        "def from_int(x): ..."
+    )
+
+    with pytest.warns(UserWarning, match="no overloads"):
+        result = _unify(code)
+
+    _assert_ast_unchanged(code, result)
+
+
+def test_keyword_register_is_unhandled_and_left_unchanged():
+    code = (
+        "import functools\n"
+        "@functools.singledispatch\n"
+        "def convert(x): ...\n"
+        "@convert.register(int, alt=str)\n"
+        "def from_int(x): ..."
+    )
+
+    with pytest.warns(UserWarning, match="no overloads"):
+        result = _unify(code)
+
+    _assert_ast_unchanged(code, result)
+
+
+def test_empty_register_call_is_unhandled_and_left_unchanged():
+    code = (
+        "import functools\n"
+        "@functools.singledispatch\n"
+        "def convert(x): ...\n"
+        "@convert.register()\n"
+        "def from_int(x): ..."
+    )
+
+    with pytest.warns(UserWarning, match="no overloads"):
+        result = _unify(code)
+
+    _assert_ast_unchanged(code, result)
 
 
 def test_multiple_groups_are_unified():

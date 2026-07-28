@@ -179,11 +179,13 @@ def _is_singledispatch(node: ast.expr) -> bool:
 
 
 def _register_type(base_name: str, node: ast.expr) -> ast.expr | None:
-    if isinstance(node, ast.Call) and _is_register(base_name, node.func):
-        if node.args:
-            return node.args[0]
-        if node.keywords:
-            return node.keywords[0].value
+    if (
+        isinstance(node, ast.Call)
+        and _is_register(base_name, node.func)
+        and len(node.args) == 1
+        and not node.keywords
+    ):
+        return node.args[0]
     return None
 
 
