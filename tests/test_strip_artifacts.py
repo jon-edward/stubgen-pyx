@@ -11,12 +11,22 @@ def _strip(code: str) -> str:
     return ast.unparse(tree)
 
 
-def test_strip_artifacts_removes_dunder_all_assignment():
+def test_strip_artifacts_preserves_dunder_all_list_assignment():
     code = "__all__ = ['Foo', 'Bar']\nclass Foo: pass"
 
     result = _strip(code)
 
-    assert "__all__" not in result
+    assert "__all__ = ['Foo', 'Bar']" in result
+    assert "class Foo" in result
+
+
+def test_strip_artifacts_preserves_dunder_all_tuple_assignment():
+    code = "__all__ = ('foo',)\nclass Foo: pass"
+
+    result = _strip(code)
+
+    assert "__all__" in result
+    assert "'foo'" in result
     assert "class Foo" in result
 
 
@@ -97,7 +107,7 @@ def test_strip_artifacts_removes_all_supported_artifacts_together():
 
     result = _strip(code)
 
-    assert "__all__" not in result
+    assert "__all__ = ['Foo']" in result
     assert "__hash__" not in result
     assert "cython" not in result
     assert "cpython" not in result
@@ -115,3 +125,21 @@ def test_strip_artifacts_empty_module_result_is_valid_python():
     result = _strip(code)
 
     ast.parse(result)
+
+
+def test_strip_artifacts_preserves_dunder_all_call_assignment():
+    code = "__all__ = build_all()\nclass Foo: pass"
+
+    result = _strip(code)
+
+    assert "__all__" in result
+    assert "class Foo" in result
+
+
+def test_strip_artifacts_preserves_dunder_all_attribute_assignment():
+    code = "__all__ = exports.ALL\nclass Foo: pass"
+
+    result = _strip(code)
+
+    assert "__all__" in result
+    assert "class Foo" in result

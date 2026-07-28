@@ -50,8 +50,9 @@ class _ArtifactStripper(ast.NodeTransformer):
     def _is_module_artifact(node: ast.stmt) -> bool:
         if not isinstance(node, ast.Assign):
             return False
+        # __all__ is always user-authored; preserve it unconditionally.
         if _is_name_assignment(node, "__all__"):
-            return True
+            return False
         return (
             len(node.targets) == 1
             and isinstance(node.value, (ast.Call, ast.Attribute))
