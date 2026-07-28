@@ -51,3 +51,12 @@ def test_existing_any_import_is_not_duplicated():
 
     assert result.count("from typing import Any") == 1
     assert "def f(x: Any) -> Any" in result
+
+
+def test_dangling_decorator_argument_is_replaced_with_any():
+    result = _validate(
+        "some_decorator = None\n@some_decorator(UndefinedType)\ndef foo() -> None: ..."
+    )
+
+    assert "from typing import Any" in result
+    assert "@some_decorator(Any)" in result
