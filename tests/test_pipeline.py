@@ -224,7 +224,7 @@ def test_pipeline_trim_not_defined_disabled_preserves():
     assert "UndefinedType" in result
 
 
-def test_pipeline_unifies_singledispatch():
+def test_pipeline_emits_singledispatch_overloads():
     pyi_code = (
         "import functools\n"
         "@functools.singledispatch\n"

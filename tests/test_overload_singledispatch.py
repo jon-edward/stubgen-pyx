@@ -4,11 +4,11 @@ import ast
 
 import pytest
 
-from stubgen_pyx.postprocessing.unify_singledispatch import unify_singledispatch
+from stubgen_pyx.postprocessing.overload_singledispatch import overload_singledispatch
 
 
-def _unify(code: str) -> str:
-    return ast.unparse(unify_singledispatch(ast.parse(code)))
+def _overload(code: str) -> str:
+    return ast.unparse(overload_singledispatch(ast.parse(code)))
 
 
 def _assert_ast_unchanged(code: str, result: str) -> None:
@@ -16,7 +16,7 @@ def _assert_ast_unchanged(code: str, result: str) -> None:
 
 
 def test_form_a_decorator_base_and_registered_type():
-    result = _unify(
+    result = _overload(
         "import functools\n"
         "@functools.singledispatch\n"
         "def convert(x): ...\n"
@@ -31,7 +31,7 @@ def test_form_a_decorator_base_and_registered_type():
 
 
 def test_form_b_assignment_base_and_registered_type():
-    result = _unify(
+    result = _overload(
         "import functools\n"
         "convert = functools.singledispatch(lambda x: x)\n"
         "@convert.register(str)\n"
@@ -44,7 +44,7 @@ def test_form_b_assignment_base_and_registered_type():
 
 
 def test_form_c_bare_register_uses_annotation():
-    result = _unify(
+    result = _overload(
         "from functools import singledispatch\n"
         "@singledispatch\n"
         "def convert(x): ...\n"
@@ -67,7 +67,7 @@ def test_conflicting_registration_warns_and_leaves_group_unchanged():
     )
 
     with pytest.warns(UserWarning, match="duplicate"):
-        result = _unify(code)
+        result = _overload(code)
 
     assert "@functools.singledispatch" in result
     assert "def a" in result
@@ -84,7 +84,7 @@ def test_multi_arg_register_is_unhandled_and_left_unchanged():
     )
 
     with pytest.warns(UserWarning, match="no overloads"):
-        result = _unify(code)
+        result = _overload(code)
 
     _assert_ast_unchanged(code, result)
 
@@ -99,7 +99,7 @@ def test_keyword_register_is_unhandled_and_left_unchanged():
     )
 
     with pytest.warns(UserWarning, match="no overloads"):
-        result = _unify(code)
+        result = _overload(code)
 
     _assert_ast_unchanged(code, result)
 
@@ -114,13 +114,13 @@ def test_empty_register_call_is_unhandled_and_left_unchanged():
     )
 
     with pytest.warns(UserWarning, match="no overloads"):
-        result = _unify(code)
+        result = _overload(code)
 
     _assert_ast_unchanged(code, result)
 
 
 def test_multiple_groups_are_unified():
-    result = _unify(
+    result = _overload(
         "import functools\n"
         "@functools.singledispatch\n"
         "def one(x): ...\n"
@@ -139,7 +139,7 @@ def test_multiple_groups_are_unified():
 
 
 def test_dotted_singledispatch_attr_is_recognized():
-    result = _unify(
+    result = _overload(
         "import functools\n"
         "@functools.singledispatch\n"
         "def convert(x): ...\n"
@@ -154,7 +154,7 @@ def test_fallback_no_overloads_warns_and_leaves_group_unchanged():
     code = "import functools\n@functools.singledispatch\ndef convert(x): ..."
 
     with pytest.warns(UserWarning, match="no overloads"):
-        result = _unify(code)
+        result = _overload(code)
 
     assert "@functools.singledispatch" in result
     assert "def convert" in result
@@ -170,7 +170,7 @@ def test_fallback_unresolvable_warns_and_leaves_group_unchanged():
     )
 
     with pytest.warns(UserWarning, match="untyped"):
-        result = _unify(code)
+        result = _overload(code)
 
     assert "@convert.register" in result
     assert "def unknown" in result
@@ -188,7 +188,7 @@ def test_fallback_mixed_warns_and_leaves_whole_group_unchanged():
     )
 
     with pytest.warns(UserWarning, match="untyped"):
-        result = _unify(code)
+        result = _overload(code)
 
     assert "def ok" in result
     assert "def bad" in result
@@ -196,7 +196,7 @@ def test_fallback_mixed_warns_and_leaves_whole_group_unchanged():
 
 
 def test_overload_import_is_injected_when_needed():
-    result = _unify(
+    result = _overload(
         "import functools\n"
         "@functools.singledispatch\n"
         "def convert(x): ...\n"
@@ -208,7 +208,7 @@ def test_overload_import_is_injected_when_needed():
 
 
 def test_missing_variant_return_annotation_defaults_to_any():
-    result = _unify(
+    result = _overload(
         "import functools\n"
         "@functools.singledispatch\n"
         "def convert(x): ...\n"
@@ -221,7 +221,7 @@ def test_missing_variant_return_annotation_defaults_to_any():
 
 
 def test_explicit_variant_return_annotation_is_preserved_without_any_import():
-    result = _unify(
+    result = _overload(
         "import functools\n"
         "@functools.singledispatch\n"
         "def convert(x): ...\n"
@@ -235,7 +235,7 @@ def test_explicit_variant_return_annotation_is_preserved_without_any_import():
 
 
 def test_existing_overload_import_is_not_duplicated():
-    result = _unify(
+    result = _overload(
         "from typing import overload\n"
         "import functools\n"
         "@functools.singledispatch\n"

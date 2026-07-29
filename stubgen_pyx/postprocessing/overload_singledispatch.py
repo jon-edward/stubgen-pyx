@@ -6,8 +6,8 @@ import warnings
 from dataclasses import dataclass, field
 
 
-def unify_singledispatch(tree: ast.AST) -> ast.AST:
-    """Rewrite singledispatch variants into overload stubs."""
+def overload_singledispatch(tree: ast.AST) -> ast.AST:
+    """Rewrite @singledispatch variants into @overload stubs."""
     unifier = _SingledispatchUnifier()
     tree = unifier.visit(tree)
     if unifier.emitted_overloads and not _has_typing_name(tree, "overload"):
