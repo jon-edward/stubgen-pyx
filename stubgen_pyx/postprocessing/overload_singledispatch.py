@@ -80,10 +80,43 @@ def overload_singledispatch(tree: ast.AST) -> ast.AST:
         body.extend(stmts)
     tree.body = body
 
-    if emitted_overloads and not _has_typing_name(tree, "overload"):
-        _insert_typing_import(tree, "overload")
-    if emitted_any and not _has_typing_name(tree, "Any"):
-        _insert_typing_import(tree, "Any")
+    needed = set()
+    if emitted_overloads:
+        needed.add("overload")
+    if emitted_any:
+        needed.add("Any")
+    if needed:
+        # One traversal: find the first `from typing import ...` (where new names
+        # get appended), the last `from __future__` import (fallback insert
+        # position for a fresh import), and every name already imported from
+        # typing across ALL typing imports (so we don't re-import it).
+        first_typing: ast.ImportFrom | None = None
+        insert_at = 0
+        already_imported: set[str] = set()
+        for idx, stmt in enumerate(tree.body):
+            if isinstance(stmt, ast.ImportFrom) and stmt.module == "typing":
+                if first_typing is None:
+                    first_typing = stmt
+                already_imported.update(
+                    alias.name for alias in stmt.names if alias.asname is None
+                )
+            elif isinstance(stmt, ast.ImportFrom) and stmt.module == "__future__":
+                insert_at = idx + 1
+        # `sorted` gives deterministic emission order regardless of set hashing.
+        to_add = sorted(needed - already_imported)
+        if to_add:
+            if first_typing is not None:
+                for name in to_add:
+                    first_typing.names.append(ast.alias(name=name))
+            else:
+                tree.body.insert(
+                    insert_at,
+                    ast.ImportFrom(
+                        module="typing",
+                        names=[ast.alias(name=name) for name in to_add],
+                        level=0,
+                    ),
+                )
     return ast.fix_missing_locations(tree)
 
 
@@ -287,30 +320,3 @@ def _dotted_name(node: ast.expr) -> str:
         prefix = _dotted_name(node.value)
         return f"{prefix}.{node.attr}" if prefix else node.attr
     return ""
-
-
-def _has_typing_name(tree: ast.AST, name: str) -> bool:
-    if not isinstance(tree, ast.Module):
-        return False
-    return any(
-        isinstance(stmt, ast.ImportFrom)
-        and stmt.module == "typing"
-        and any(alias.name == name and alias.asname is None for alias in stmt.names)
-        for stmt in tree.body
-    )
-
-
-def _insert_typing_import(tree: ast.AST, name: str) -> None:
-    if not isinstance(tree, ast.Module):
-        return
-    insert_at = 0
-    for idx, stmt in enumerate(tree.body):
-        if isinstance(stmt, ast.ImportFrom) and stmt.module == "typing":
-            stmt.names.append(ast.alias(name=name))
-            return
-        if isinstance(stmt, ast.ImportFrom) and stmt.module == "__future__":
-            insert_at = idx + 1
-    tree.body.insert(
-        insert_at,
-        ast.ImportFrom(module="typing", names=[ast.alias(name=name)], level=0),
-    )
