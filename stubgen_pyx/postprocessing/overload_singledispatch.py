@@ -110,23 +110,22 @@ def _unified_group(base: _Base, variants: list[_Variant]) -> list[ast.stmt] | No
     if not variants:
         warnings.warn(f"Cannot unify singledispatch group {base.name!r}: no overloads")
         return None
-    seen: set[str] = set()
     for variant in variants:
         if variant.type_key is None:
             warnings.warn(
                 f"Cannot unify singledispatch group {base.name!r}: untyped overload"
             )
             return None
-        if variant.type_key in seen:
-            warnings.warn(
-                f"Cannot unify singledispatch group {base.name!r}: duplicate "
-                f"registration for {variant.type_key}"
-            )
-            return None
-        seen.add(variant.type_key)
+
+    # Match runtime singledispatch semantics: duplicate @register(T) in the same
+    # group silently overwrites, so keep only the last variant per type key.
+    deduped: dict[str, _Variant] = {}
+    for variant in variants:
+        assert variant.type_key is not None
+        deduped[variant.type_key] = variant
 
     overloads: list[ast.stmt] = [
-        _overload_function(base.name, variant) for variant in variants
+        _overload_function(base.name, variant) for variant in deduped.values()
     ]
     fallback = _fallback_function(base)
     if fallback is not None:

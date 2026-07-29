@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import warnings
 
 import pytest
 
@@ -55,23 +56,31 @@ def test_form_c_bare_register_uses_annotation():
     assert "@overload\ndef convert(x: float)" in result
 
 
-def test_conflicting_registration_warns_and_leaves_group_unchanged():
+def test_duplicate_registration_keeps_last_matching_python_runtime_semantics():
+    # Pure Python `functools.singledispatch` silently overwrites when the same
+    # type is registered twice; the last @register(T) wins. Match that here:
+    # no warning, only the last handler survives as the @overload signature.
     code = (
         "import functools\n"
         "@functools.singledispatch\n"
         "def convert(x): ...\n"
         "@convert.register(int)\n"
-        "def a(x): ...\n"
+        "def a(x) -> str: ...\n"
         "@convert.register(int)\n"
-        "def b(x): ..."
+        "def b(x) -> bytes: ..."
     )
 
-    with pytest.warns(UserWarning, match="duplicate"):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
         result = _overload(code)
 
-    assert "@functools.singledispatch" in result
-    assert "def a" in result
-    assert "def b" in result
+    # Last @register(int) wins: return type is bytes, not str.
+    assert "@overload\ndef convert(x: int) -> bytes" in result
+    assert "-> str" not in result
+    # Original helper names are erased; @functools.singledispatch is gone.
+    assert "def a" not in result
+    assert "def b" not in result
+    assert "@functools.singledispatch" not in result
 
 
 def test_multi_arg_register_is_unhandled_and_left_unchanged():
