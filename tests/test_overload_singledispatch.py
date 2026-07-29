@@ -5,7 +5,10 @@ import warnings
 
 import pytest
 
-from stubgen_pyx.postprocessing.overload_singledispatch import overload_singledispatch
+from stubgen_pyx.postprocessing.overload_singledispatch import (
+    SingledispatchStubError,
+    overload_singledispatch,
+)
 
 
 def _overload(code: str) -> str:
@@ -83,7 +86,10 @@ def test_duplicate_registration_keeps_last_matching_python_runtime_semantics():
     assert "@functools.singledispatch" not in result
 
 
-def test_multi_arg_register_is_unhandled_and_left_unchanged():
+def test_multi_arg_register_is_unsupported_and_leaves_group_unchanged():
+    # @base.register(T, extra) is technically legal Python but produces nonsense
+    # at runtime (extra is treated as the handler). We can't emit a sensible
+    # overload; warn with a clear "unsupported form" message and leave input alone.
     code = (
         "import functools\n"
         "@functools.singledispatch\n"
@@ -92,13 +98,15 @@ def test_multi_arg_register_is_unhandled_and_left_unchanged():
         "def from_int(x): ..."
     )
 
-    with pytest.warns(UserWarning, match="no overloads"):
+    with pytest.warns(UserWarning, match="unsupported"):
         result = _overload(code)
 
     _assert_ast_unchanged(code, result)
 
 
-def test_keyword_register_is_unhandled_and_left_unchanged():
+def test_keyword_register_raises():
+    # @base.register(cls, kw=...) raises TypeError at import in pure Python.
+    # Refuse to emit a stub for source that cannot be imported.
     code = (
         "import functools\n"
         "@functools.singledispatch\n"
@@ -107,13 +115,13 @@ def test_keyword_register_is_unhandled_and_left_unchanged():
         "def from_int(x): ..."
     )
 
-    with pytest.warns(UserWarning, match="no overloads"):
-        result = _overload(code)
-
-    _assert_ast_unchanged(code, result)
+    with pytest.raises(SingledispatchStubError, match="keyword arguments"):
+        _overload(code)
 
 
-def test_empty_register_call_is_unhandled_and_left_unchanged():
+def test_empty_register_call_raises():
+    # @base.register() raises TypeError at import in pure Python (missing 'cls').
+    # Refuse to emit a stub for source that cannot be imported.
     code = (
         "import functools\n"
         "@functools.singledispatch\n"
@@ -122,10 +130,8 @@ def test_empty_register_call_is_unhandled_and_left_unchanged():
         "def from_int(x): ..."
     )
 
-    with pytest.warns(UserWarning, match="no overloads"):
-        result = _overload(code)
-
-    _assert_ast_unchanged(code, result)
+    with pytest.raises(SingledispatchStubError, match="no arguments"):
+        _overload(code)
 
 
 def test_multiple_groups_are_unified():
@@ -169,7 +175,9 @@ def test_fallback_no_overloads_warns_and_leaves_group_unchanged():
     assert "def convert" in result
 
 
-def test_fallback_unresolvable_warns_and_leaves_group_unchanged():
+def test_fallback_unresolvable_raises():
+    # Bare @base.register on an unannotated function raises TypeError at import
+    # in pure Python. Refuse to emit a stub for source that cannot be imported.
     code = (
         "import functools\n"
         "@functools.singledispatch\n"
@@ -178,14 +186,13 @@ def test_fallback_unresolvable_warns_and_leaves_group_unchanged():
         "def unknown(x): ..."
     )
 
-    with pytest.warns(UserWarning, match="untyped"):
-        result = _overload(code)
-
-    assert "@convert.register" in result
-    assert "def unknown" in result
+    with pytest.raises(SingledispatchStubError, match="has no type"):
+        _overload(code)
 
 
-def test_fallback_mixed_warns_and_leaves_whole_group_unchanged():
+def test_fallback_mixed_raises_when_any_variant_is_untyped():
+    # Same rationale: if any variant in the group is a bare untyped @register,
+    # the whole module is invalid Python at import time. Raise.
     code = (
         "import functools\n"
         "@functools.singledispatch\n"
@@ -196,12 +203,8 @@ def test_fallback_mixed_warns_and_leaves_whole_group_unchanged():
         "def bad(x): ..."
     )
 
-    with pytest.warns(UserWarning, match="untyped"):
-        result = _overload(code)
-
-    assert "def ok" in result
-    assert "def bad" in result
-    assert "@overload" not in result
+    with pytest.raises(SingledispatchStubError, match="has no type"):
+        _overload(code)
 
 
 def test_overload_import_is_injected_when_needed():

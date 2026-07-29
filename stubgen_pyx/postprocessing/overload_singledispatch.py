@@ -6,6 +6,19 @@ import warnings
 from dataclasses import dataclass, field
 
 
+class SingledispatchStubError(ValueError):
+    """Raised when a @singledispatch group in the input is invalid Python.
+
+    These forms would fail at import time in a real Python interpreter:
+    * ``@base.register()`` with no arguments (missing required ``cls``)
+    * ``@base.register(cls, kw=...)`` with keyword arguments
+    * bare ``@base.register`` on a function whose first parameter is unannotated
+
+    Emitting a stub for source that cannot be imported would be misleading, so
+    the pass fails loudly instead of trying to guess.
+    """
+
+
 def overload_singledispatch(tree: ast.AST) -> ast.AST:
     """Rewrite @singledispatch variants into @overload stubs."""
     unifier = _SingledispatchUnifier()
@@ -39,16 +52,18 @@ class _SingledispatchUnifier(ast.NodeTransformer):
 
     def visit_Module(self, node: ast.Module) -> ast.Module:
         bases = _find_bases(node.body)
-        groups = {base.name: _collect_group(base, node.body) for base in bases}
+        groups: dict[str, tuple[list[_Variant], list[str]]] = {
+            base.name: _collect_group(base, node.body) for base in bases
+        }
         replacements = {
-            base.index: _unified_group(base, groups[base.name]) for base in bases
+            base.index: _unified_group(base, *groups[base.name]) for base in bases
         }
         base_by_index = {base.index: base for base in bases}
         self._skip = {
             id(variant.stmt)
             for base in bases
             if replacements[base.index] is not None
-            for variant in groups[base.name]
+            for variant in groups[base.name][0]
         }
 
         body: list[ast.stmt] = []
@@ -62,7 +77,7 @@ class _SingledispatchUnifier(ast.NodeTransformer):
                 self.emitted_overloads = True
                 base = base_by_index[idx]
                 self.emitted_any |= any(
-                    variant.stmt.returns is None for variant in groups[base.name]
+                    variant.stmt.returns is None for variant in groups[base.name][0]
                 )
                 body.extend(replacement)
         node.body = body
@@ -83,39 +98,74 @@ def _find_bases(body: list[ast.stmt]) -> list[_Base]:
     return bases
 
 
-def _collect_group(base: _Base, body: list[ast.stmt]) -> list[_Variant]:
-    variants = []
+def _collect_group(
+    base: _Base, body: list[ast.stmt]
+) -> tuple[list[_Variant], list[str]]:
+    """Collect @register variants for a group.
+
+    Returns:
+        (variants, unsupported_forms)
+        - variants: successfully-typed variants ready for @overload emission.
+        - unsupported_forms: source of decorators we recognized as @base.register
+          calls but chose not to raise on (multi positional args). Used only to
+          produce a more informative 'no overloads' warning.
+
+    Raises:
+        SingledispatchStubError: on decorator forms that fail at import time in
+        pure Python (empty ``@base.register()``, keyword-arg ``@base.register(
+        cls, kw=...)``, bare ``@base.register`` on an unannotated function).
+    """
+    variants: list[_Variant] = []
+    unsupported_forms: list[str] = []
     for stmt in body[base.index + 1 :]:
         if not isinstance(stmt, ast.FunctionDef):
             continue
         for decorator in stmt.decorator_list:
+            _raise_if_invalid_register_call(base.name, decorator)
             type_expr = _register_type(base.name, decorator)
             if type_expr is not None:
                 # Form A/C: decorator provides the type; always use it
                 pass
             elif _is_register(base.name, decorator):
-                # Form B: bare @foo.register attribute; fall back to param annotation
+                # Form B: bare @foo.register attribute; require an annotated arg.
                 type_expr = _first_arg_annotation(stmt)
+                if type_expr is None:
+                    raise SingledispatchStubError(
+                        f"@{base.name}.register on {stmt.name!r} has no type: "
+                        f"pure Python raises TypeError at import for bare "
+                        f"@register on a function whose first parameter is "
+                        f"unannotated. Add a type annotation to the first "
+                        f"parameter or pass the type as @{base.name}.register(T)."
+                    )
+            elif _is_multi_arg_register_call(base.name, decorator):
+                # Legal-but-pathological form: @base.register(T, extra_positional).
+                # At runtime this registers T and treats the extras as the handler,
+                # producing nonsense. We can't emit a sensible overload; record it.
+                unsupported_forms.append(ast.unparse(decorator))
+                continue
             else:
-                # Empty @foo.register() call or unrelated decorator — skip
+                # Unrelated decorator on a nearby function — skip silently.
                 continue
             variants.append(
                 _Variant(stmt, ast.unparse(type_expr) if type_expr else None, type_expr)
             )
             break
-    return variants
+    return variants, unsupported_forms
 
 
-def _unified_group(base: _Base, variants: list[_Variant]) -> list[ast.stmt] | None:
+def _unified_group(
+    base: _Base, variants: list[_Variant], unsupported_forms: list[str]
+) -> list[ast.stmt] | None:
     if not variants:
-        warnings.warn(f"Cannot unify singledispatch group {base.name!r}: no overloads")
-        return None
-    for variant in variants:
-        if variant.type_key is None:
+        if unsupported_forms:
             warnings.warn(
-                f"Cannot unify singledispatch group {base.name!r}: untyped overload"
+                f"Cannot unify singledispatch group {base.name!r}: unsupported "
+                f"@{base.name}.register(...) form(s): {unsupported_forms!r}"
             )
-            return None
+        else:
+            msg = f"Cannot unify singledispatch group {base.name!r}: no overloads"
+            warnings.warn(msg)
+        return None
 
     # Match runtime singledispatch semantics: duplicate @register(T) in the same
     # group silently overwrites, so keep only the last variant per type key.
@@ -197,6 +247,36 @@ def _register_type(base_name: str, node: ast.expr) -> ast.expr | None:
     ):
         return node.args[0]
     return None
+
+
+def _raise_if_invalid_register_call(base_name: str, node: ast.expr) -> None:
+    """Raise if `node` is a syntactically-recognizable @base.register(...) call
+    whose form fails at import time in pure Python."""
+    if not isinstance(node, ast.Call) or not _is_register(base_name, node.func):
+        return
+    if not node.args and not node.keywords:
+        raise SingledispatchStubError(
+            f"@{base_name}.register() called with no arguments: pure Python "
+            f"raises TypeError at import (missing required 'cls' argument)."
+        )
+    if node.keywords:
+        raise SingledispatchStubError(
+            f"@{base_name}.register(...) called with keyword arguments "
+            f"{[kw.arg for kw in node.keywords]!r}: pure Python raises TypeError "
+            f"at import (register() takes no keyword arguments)."
+        )
+
+
+def _is_multi_arg_register_call(base_name: str, node: ast.expr) -> bool:
+    """True for @base.register(T, extra_positional) — legal at runtime but the
+    extras are treated as the handler, which produces nonsense; we can't emit a
+    sensible overload for this form."""
+    return (
+        isinstance(node, ast.Call)
+        and _is_register(base_name, node.func)
+        and len(node.args) > 1
+        and not node.keywords
+    )
 
 
 def _is_register(base_name: str, node: ast.expr) -> bool:
