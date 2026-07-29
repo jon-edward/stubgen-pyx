@@ -21,7 +21,6 @@ class StubgenPyxConfig:
         continue_on_error: Continue processing files that failed (default: False).
         include_private: Include private members (default: False).
         verbose: Enable verbose logging (default: False).
-        strip_artifacts: Remove Cython-generated artifacts like empty singledispatch stubs (default: True).
     """
 
     sort_imports: bool = True
@@ -35,7 +34,6 @@ class StubgenPyxConfig:
     continue_on_error: bool = False
     include_private: bool = False
     verbose: bool = False
-    strip_artifacts: bool = True
 
     def __post_init__(self):
         """Validate configuration and log warnings for unusual settings."""

@@ -83,8 +83,7 @@ def _ast_transforms(
 
     tree = overload_singledispatch(tree)
 
-    if config.strip_artifacts:
-        tree = strip_artifacts(tree)
+    tree = strip_artifacts(tree)
 
     tree = validate_annotations(tree)
 
