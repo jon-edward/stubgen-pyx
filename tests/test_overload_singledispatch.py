@@ -46,7 +46,7 @@ class RaiseCase:
 
 SUCCESS_CASES = [
     SuccessCase(
-        id="case_01_form_a_decorator_base_and_registered_type",
+        id="form_a_decorator_base_and_registered_type",
         # Also locks the -> Any default when a variant has no return annotation.
         pyx=(
             "import functools\n"
@@ -58,7 +58,7 @@ SUCCESS_CASES = [
         expected="from typing import Any\ndef convert(x: int) -> Any: ...\n",
     ),
     SuccessCase(
-        id="case_02_form_b_assignment_base_and_registered_type",
+        id="form_b_assignment_base_and_registered_type",
         pyx=(
             "import functools\n"
             "convert = functools.singledispatch(lambda x: x)\n"
@@ -68,7 +68,7 @@ SUCCESS_CASES = [
         expected="from typing import Any\ndef convert(x: str) -> Any: ...\n",
     ),
     SuccessCase(
-        id="case_03_form_c_bare_register_uses_annotation",
+        id="form_c_bare_register_uses_annotation",
         pyx=(
             "from functools import singledispatch\n"
             "@singledispatch\n"
@@ -79,7 +79,7 @@ SUCCESS_CASES = [
         expected="from typing import Any\ndef convert(x: float) -> Any: ...\n",
     ),
     SuccessCase(
-        id="case_04_duplicate_registration_keeps_last",
+        id="duplicate_registration_keeps_last",
         # Pure Python singledispatch silently overwrites; last @register(T) wins.
         pyx=(
             "import functools\n"
@@ -93,7 +93,7 @@ SUCCESS_CASES = [
         expected="def convert(x: int) -> bytes: ...\n",
     ),
     SuccessCase(
-        id="case_05_multiple_groups",
+        id="multiple_groups",
         pyx=(
             "import functools\n"
             "@functools.singledispatch\n"
@@ -112,7 +112,7 @@ SUCCESS_CASES = [
         ),
     ),
     SuccessCase(
-        id="case_06_dotted_singledispatch_attr",
+        id="dotted_singledispatch_attr",
         pyx=(
             "import functools\n"
             "@functools.singledispatch\n"
@@ -123,7 +123,7 @@ SUCCESS_CASES = [
         expected="from typing import Any\ndef convert(x: bytes) -> Any: ...\n",
     ),
     SuccessCase(
-        id="case_07_explicit_return_annotation_preserved_without_any_import",
+        id="explicit_return_annotation_preserved_without_any_import",
         pyx=(
             "import functools\n"
             "@functools.singledispatch\n"
@@ -134,7 +134,7 @@ SUCCESS_CASES = [
         expected="def convert(x: int) -> str: ...\n",
     ),
     SuccessCase(
-        id="case_08_existing_overload_import_is_trimmed_when_unused",
+        id="existing_overload_import_is_trimmed_when_unused",
         # Input already has `from typing import overload`, but the single-variant
         # collapse doesn't emit any @overload. trim_imports (which runs after
         # overload_singledispatch in the pipeline) then removes the now-unused
@@ -150,7 +150,7 @@ SUCCESS_CASES = [
         expected="from typing import Any\ndef convert(x: int) -> Any: ...\n",
     ),
     SuccessCase(
-        id="case_09_multiple_variants_emit_overload_decorators",
+        id="multiple_variants_emit_overload_decorators",
         # >=2 typed variants per group: the spec's >=2-definitions rule is
         # satisfied, so each variant becomes an `@overload` and no plain-def
         # implementation stub is appended (stubs must not include one).
@@ -176,7 +176,7 @@ SUCCESS_CASES = [
 
 WARN_CASES = [
     WarnCase(
-        id="case_01_multi_arg_register_is_unsupported",
+        id="multi_arg_register_is_unsupported",
         # @base.register(T, extra) is legal Python but pathological at runtime.
         # The pass warns and leaves the group unchanged; trim_imports keeps
         # `import functools` because @functools.singledispatch still uses it.
@@ -197,7 +197,7 @@ WARN_CASES = [
         ),
     ),
     WarnCase(
-        id="case_02_no_overloads",
+        id="no_overloads",
         # @singledispatch alone with no @register — legal but nothing to unify.
         pyx="import functools\n@functools.singledispatch\ndef convert(x): ...\n",
         warning_match="no overloads",
@@ -208,7 +208,7 @@ WARN_CASES = [
 
 RAISE_CASES = [
     RaiseCase(
-        id="case_01_empty_register_call",
+        id="empty_register_call",
         # @base.register() raises TypeError at import in pure Python.
         pyx=(
             "import functools\n"
@@ -220,7 +220,7 @@ RAISE_CASES = [
         message_match="no arguments",
     ),
     RaiseCase(
-        id="case_02_keyword_register_call",
+        id="keyword_register_call",
         # @base.register(cls, kw=...) raises TypeError at import in pure Python.
         pyx=(
             "import functools\n"
@@ -232,7 +232,7 @@ RAISE_CASES = [
         message_match="keyword arguments",
     ),
     RaiseCase(
-        id="case_03_bare_register_on_untyped_function",
+        id="bare_register_on_untyped_function",
         # Bare @base.register on unannotated fn raises TypeError at import.
         pyx=(
             "import functools\n"
@@ -244,7 +244,7 @@ RAISE_CASES = [
         message_match="has no type",
     ),
     RaiseCase(
-        id="case_04_mixed_group_with_untyped_variant",
+        id="mixed_group_with_untyped_variant",
         # Same rationale: any untyped variant in a group makes the module invalid.
         pyx=(
             "import functools\n"
