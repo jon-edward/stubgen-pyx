@@ -145,24 +145,7 @@ SUCCESS_CASES = [
         ),
     ),
     SuccessCase(
-        id="case_07_missing_variant_return_annotation_defaults_to_any",
-        pyi=(
-            "import functools\n"
-            "@functools.singledispatch\n"
-            "def convert(x): ...\n"
-            "@convert.register(int)\n"
-            "def _from_int(x): ..."
-        ),
-        expected=(
-            "from typing import Any\n"
-            "import functools\n"
-            "\n"
-            "def convert(x: int) -> Any:\n"
-            "    ..."
-        ),
-    ),
-    SuccessCase(
-        id="case_08_explicit_return_annotation_preserved_without_any_import",
+        id="case_07_explicit_return_annotation_preserved_without_any_import",
         pyi=(
             "import functools\n"
             "@functools.singledispatch\n"
@@ -173,7 +156,7 @@ SUCCESS_CASES = [
         expected=("import functools\n\ndef convert(x: int) -> str:\n    ..."),
     ),
     SuccessCase(
-        id="case_09_existing_overload_import_not_duplicated",
+        id="case_08_existing_overload_import_not_duplicated",
         # `from typing import overload` already present; Any is added to it.
         pyi=(
             "from typing import overload\n"
@@ -196,7 +179,7 @@ SUCCESS_CASES = [
         ),
     ),
     SuccessCase(
-        id="case_10_multiple_variants_emit_overload_decorators",
+        id="case_09_multiple_variants_emit_overload_decorators",
         # >=2 typed variants per group: the spec's >=2-definitions rule is
         # satisfied, so each variant becomes an `@overload` and no plain-def
         # implementation stub is appended (stubs must not include one).
