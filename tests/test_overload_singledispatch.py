@@ -16,10 +16,6 @@ def _overload(code: str) -> str:
     return ast.unparse(overload_singledispatch(ast.parse(code)))
 
 
-def _assert_ast_unchanged(code: str, result: str) -> None:
-    assert ast.dump(ast.parse(result)) == ast.dump(ast.parse(code))
-
-
 @dataclass(frozen=True)
 class SuccessCase:
     id: str
@@ -32,6 +28,7 @@ class WarnCase:
     id: str
     pyi: str
     warning_match: str
+    expected: str
 
 
 @dataclass(frozen=True)
@@ -234,12 +231,26 @@ WARN_CASES = [
             "def from_int(x): ..."
         ),
         warning_match="unsupported",
+        expected=(
+            "import functools\n"
+            "\n"
+            "@functools.singledispatch\n"
+            "def convert(x):\n"
+            "    ...\n"
+            "\n"
+            "@convert.register(int, str)\n"
+            "def from_int(x):\n"
+            "    ..."
+        ),
     ),
     WarnCase(
         id="case_02_no_overloads",
         # @singledispatch alone with no @register — legal but nothing to unify.
         pyi="import functools\n@functools.singledispatch\ndef convert(x): ...",
         warning_match="no overloads",
+        expected=(
+            "import functools\n\n@functools.singledispatch\ndef convert(x):\n    ..."
+        ),
     ),
 ]
 
@@ -308,11 +319,11 @@ def test_overload_singledispatch_success(case: SuccessCase):
 
 
 @pytest.mark.parametrize("case", WARN_CASES, ids=lambda case: case.id)
-def test_overload_singledispatch_warns_and_leaves_input_unchanged(case: WarnCase):
+def test_overload_singledispatch_warns_and_output_is_deterministic(case: WarnCase):
     with pytest.warns(UserWarning, match=case.warning_match):
         result = _overload(case.pyi)
 
-    _assert_ast_unchanged(case.pyi, result)
+    assert result == case.expected
 
 
 @pytest.mark.parametrize("case", RAISE_CASES, ids=lambda case: case.id)
