@@ -224,7 +224,7 @@ def test_pipeline_trim_not_defined_disabled_preserves():
     assert "UndefinedType" in result
 
 
-def test_pipeline_emits_singledispatch_overloads():
+def test_pipeline_rewrites_singledispatch_group_to_plain_signature():
     pyi_code = (
         "import functools\n"
         "@functools.singledispatch\n"
@@ -240,8 +240,11 @@ def test_pipeline_emits_singledispatch_overloads():
     )
     result = postprocessing_pipeline(pyi_code, config)
 
-    assert "from typing import overload" in result
-    assert "def convert(x: int)" in result
+    # Single-variant @singledispatch groups collapse to a plain def (see
+    # overload_singledispatch.py: the >=2-definitions rule in the typing spec
+    # makes a lone @overload invalid).
+    assert "@overload" not in result
+    assert "def convert(x: int) -> Any:" in result
     assert "_from_int" not in result
 
 

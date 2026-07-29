@@ -78,12 +78,14 @@ class _SingledispatchUnifier(ast.NodeTransformer):
             if replacement is None:
                 body.append(stmt)
             else:
-                self.emitted_overloads = True
+                stmts, used_overload = replacement
+                if used_overload:
+                    self.emitted_overloads = True
                 base = base_by_index[idx]
                 self.emitted_any |= any(
                     variant.stmt.returns is None for variant in groups[base.name][0]
                 )
-                body.extend(replacement)
+                body.extend(stmts)
         node.body = body
         return node
 
@@ -157,7 +159,32 @@ def _collect_group(
 
 def _unified_group(
     base: _Base, variants: list[_Variant], unsupported_forms: list[str]
-) -> list[ast.stmt] | None:
+) -> tuple[list[ast.stmt], bool] | None:
+    """Return (emitted_statements, used_overload_decorator) or None to skip.
+
+    Emission strategy is driven by the Python type-system spec
+    (https://typing.python.org/en/latest/spec/overload.html):
+
+    * Groups with >=2 typed variants emit one ``@overload`` per variant. The
+      spec's rule that stub files must not include an overload implementation
+      is honored: no trailing plain ``def`` is emitted.
+    * Groups with exactly one typed variant collapse to a single plain ``def``
+      (no ``@overload`` decorator). The spec forbids a lone ``@overload``: it
+      requires at least two overload-decorated definitions per function, so a
+      single ``@overload`` would be reported as an error by type checkers.
+      A plain signature carries the same information without violating that
+      rule.
+
+    Tradeoff for the single-variant collapse: the base @singledispatch
+    function's fallback body is dropped. In real code that fallback is often
+    just ``raise NotImplementedError``, but it can also be a valid default
+    implementation for types not covered by any @register. Currently we
+    cannot distinguish these two intents from source, and stubgen-pyx has no
+    inline markup for the user to signal it. A future extension could add
+    such markup (e.g. a comment or config directive) to preserve the base
+    signature as a widening overload; for now, single-variant groups always
+    collapse to the registered type.
+    """
     if not variants:
         if unsupported_forms:
             warnings.warn(
@@ -175,13 +202,32 @@ def _unified_group(
     for variant in variants:
         deduped[variant.type_key] = variant
 
-    overloads: list[ast.stmt] = [
-        _overload_function(base.name, variant) for variant in deduped.values()
+    unique_variants = list(deduped.values())
+    if len(unique_variants) == 1:
+        return [_plain_function(base.name, unique_variants[0])], False
+
+    stmts: list[ast.stmt] = [
+        _overload_function(base.name, variant) for variant in unique_variants
     ]
-    fallback = _fallback_function(base)
-    if fallback is not None:
-        overloads.append(fallback)
-    return overloads
+    return stmts, True
+
+
+def _plain_function(name: str, variant: _Variant) -> ast.FunctionDef:
+    """Build a single non-@overload signature for a one-variant group.
+
+    Used when a @singledispatch group has exactly one @register variant, where
+    a lone @overload would violate the >=2-definitions rule in the typing spec.
+    """
+    stmt = copy.deepcopy(variant.stmt)
+    stmt.name = name
+    stmt.decorator_list = []
+    stmt.body = [ast.Expr(value=ast.Constant(...))]
+    if stmt.returns is None:
+        stmt.returns = ast.Name(id="Any", ctx=ast.Load())
+    args = stmt.args.posonlyargs + stmt.args.args
+    if args:
+        args[0].annotation = copy.deepcopy(variant.type_expr)
+    return stmt
 
 
 def _overload_function(name: str, variant: _Variant) -> ast.FunctionDef:
@@ -195,33 +241,6 @@ def _overload_function(name: str, variant: _Variant) -> ast.FunctionDef:
     if args:
         args[0].annotation = copy.deepcopy(variant.type_expr)
     return stmt
-
-
-def _fallback_function(base: _Base) -> ast.FunctionDef | None:
-    if isinstance(base.stmt, ast.FunctionDef):
-        if _is_ellipsis_body(base.stmt):
-            return None
-        stmt = copy.deepcopy(base.stmt)
-        stmt.decorator_list = [
-            decorator
-            for decorator in stmt.decorator_list
-            if not _is_singledispatch(decorator)
-        ]
-        return stmt
-
-    value = base.stmt.value
-    assert isinstance(value, ast.Call)
-    first_arg = value.args[0]
-    if not isinstance(first_arg, ast.Lambda):
-        return None
-    return ast.FunctionDef(
-        name=base.name,
-        args=copy.deepcopy(first_arg.args),
-        body=[ast.Expr(value=ast.Constant(...))],
-        decorator_list=[],
-        returns=None,
-        type_comment=None,
-    )
 
 
 def _is_singledispatch_assignment(stmt: ast.Assign) -> bool:
@@ -294,15 +313,6 @@ def _first_arg_annotation(stmt: ast.FunctionDef) -> ast.expr | None:
     if not args:
         return None
     return args[0].annotation
-
-
-def _is_ellipsis_body(stmt: ast.FunctionDef) -> bool:
-    return (
-        len(stmt.body) == 1
-        and isinstance(stmt.body[0], ast.Expr)
-        and isinstance(stmt.body[0].value, ast.Constant)
-        and stmt.body[0].value.value is Ellipsis
-    )
 
 
 def _dotted_name(node: ast.expr) -> str:

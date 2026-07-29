@@ -49,10 +49,9 @@ SUCCESS_CASES = [
             "def _from_int(x): ..."
         ),
         expected=(
-            "from typing import overload, Any\n"
+            "from typing import Any\n"
             "import functools\n"
             "\n"
-            "@overload\n"
             "def convert(x: int) -> Any:\n"
             "    ..."
         ),
@@ -66,14 +65,10 @@ SUCCESS_CASES = [
             "def _from_str(x): ..."
         ),
         expected=(
-            "from typing import overload, Any\n"
+            "from typing import Any\n"
             "import functools\n"
             "\n"
-            "@overload\n"
             "def convert(x: str) -> Any:\n"
-            "    ...\n"
-            "\n"
-            "def convert(x):\n"
             "    ..."
         ),
     ),
@@ -87,10 +82,9 @@ SUCCESS_CASES = [
             "def _from_float(x: float): ..."
         ),
         expected=(
-            "from typing import overload, Any\n"
+            "from typing import Any\n"
             "from functools import singledispatch\n"
             "\n"
-            "@overload\n"
             "def convert(x: float) -> Any:\n"
             "    ..."
         ),
@@ -107,14 +101,7 @@ SUCCESS_CASES = [
             "@convert.register(int)\n"
             "def b(x) -> bytes: ..."
         ),
-        expected=(
-            "from typing import overload\n"
-            "import functools\n"
-            "\n"
-            "@overload\n"
-            "def convert(x: int) -> bytes:\n"
-            "    ..."
-        ),
+        expected=("import functools\n\ndef convert(x: int) -> bytes:\n    ..."),
     ),
     SuccessCase(
         id="case_05_multiple_groups",
@@ -130,14 +117,12 @@ SUCCESS_CASES = [
             "def two_str(x): ..."
         ),
         expected=(
-            "from typing import overload, Any\n"
+            "from typing import Any\n"
             "import functools\n"
             "\n"
-            "@overload\n"
             "def one(x: int) -> Any:\n"
             "    ...\n"
             "\n"
-            "@overload\n"
             "def two(x: str) -> Any:\n"
             "    ..."
         ),
@@ -152,10 +137,9 @@ SUCCESS_CASES = [
             "def _from_bytes(x): ..."
         ),
         expected=(
-            "from typing import overload, Any\n"
+            "from typing import Any\n"
             "import functools\n"
             "\n"
-            "@overload\n"
             "def convert(x: bytes) -> Any:\n"
             "    ..."
         ),
@@ -170,10 +154,9 @@ SUCCESS_CASES = [
             "def _from_int(x): ..."
         ),
         expected=(
-            "from typing import overload, Any\n"
+            "from typing import Any\n"
             "import functools\n"
             "\n"
-            "@overload\n"
             "def convert(x: int) -> Any:\n"
             "    ..."
         ),
@@ -187,14 +170,7 @@ SUCCESS_CASES = [
             "@convert.register(int)\n"
             "def _from_int(x) -> str: ..."
         ),
-        expected=(
-            "from typing import overload\n"
-            "import functools\n"
-            "\n"
-            "@overload\n"
-            "def convert(x: int) -> str:\n"
-            "    ..."
-        ),
+        expected=("import functools\n\ndef convert(x: int) -> str:\n    ..."),
     ),
     SuccessCase(
         id="case_09_existing_overload_import_not_duplicated",
@@ -207,12 +183,42 @@ SUCCESS_CASES = [
             "@convert.register(int)\n"
             "def _from_int(x): ..."
         ),
+        # Existing `from typing import overload` is preserved verbatim (the pass
+        # never removes user imports); `Any` is appended to the same import line.
+        # No `@overload` decorator is emitted because a single-variant group
+        # collapses to a plain `def` (see docstring of overload_singledispatch).
         expected=(
             "from typing import overload, Any\n"
             "import functools\n"
             "\n"
-            "@overload\n"
             "def convert(x: int) -> Any:\n"
+            "    ..."
+        ),
+    ),
+    SuccessCase(
+        id="case_10_multiple_variants_emit_overload_decorators",
+        # >=2 typed variants per group: the spec's >=2-definitions rule is
+        # satisfied, so each variant becomes an `@overload` and no plain-def
+        # implementation stub is appended (stubs must not include one).
+        pyi=(
+            "import functools\n"
+            "@functools.singledispatch\n"
+            "def convert(x): ...\n"
+            "@convert.register(int)\n"
+            "def _from_int(x) -> str: ...\n"
+            "@convert.register(bytes)\n"
+            "def _from_bytes(x) -> bytes: ..."
+        ),
+        expected=(
+            "from typing import overload\n"
+            "import functools\n"
+            "\n"
+            "@overload\n"
+            "def convert(x: int) -> str:\n"
+            "    ...\n"
+            "\n"
+            "@overload\n"
+            "def convert(x: bytes) -> bytes:\n"
             "    ..."
         ),
     ),
