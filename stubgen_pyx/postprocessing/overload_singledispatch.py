@@ -9,6 +9,10 @@ from dataclasses import dataclass, field
 class SingledispatchStubError(ValueError):
     """Raised when a @singledispatch group in the input is invalid Python.
 
+    Subclasses ``ValueError``, so broad ``except ValueError`` handlers already
+    catch it. Catch this class specifically only if you need to distinguish
+    invalid singledispatch source from other input validation failures.
+
     These forms would fail at import time in a real Python interpreter:
     * ``@base.register()`` with no arguments (missing required ``cls``)
     * ``@base.register(cls, kw=...)`` with keyword arguments
