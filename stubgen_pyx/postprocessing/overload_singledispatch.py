@@ -157,11 +157,36 @@ def _collect_group(
         if not isinstance(stmt, ast.FunctionDef):
             continue
         for decorator in stmt.decorator_list:
-            _raise_if_invalid_register_call(base.name, decorator)
-            type_expr = _register_type(base.name, decorator)
-            if type_expr is not None:
-                # Form A/C: decorator provides the type; always use it.
-                pass
+            # Classify the decorator against @base.register in one cascade.
+            # Anything not shaped like @base.register(...) is an unrelated
+            # decorator on a nearby function and skipped silently.
+            if isinstance(decorator, ast.Call) and _is_register(
+                base.name, decorator.func
+            ):
+                if not decorator.args and not decorator.keywords:
+                    # @base.register() — pure Python raises TypeError at import.
+                    raise SingledispatchStubError(
+                        f"@{base.name}.register() called with no arguments: "
+                        f"pure Python raises TypeError at import (missing "
+                        f"required 'cls' argument)."
+                    )
+                if decorator.keywords:
+                    # @base.register(kw=...) — pure Python raises TypeError.
+                    raise SingledispatchStubError(
+                        f"@{base.name}.register(...) called with keyword "
+                        f"arguments {[kw.arg for kw in decorator.keywords]!r}: "
+                        f"pure Python raises TypeError at import (register() "
+                        f"takes no keyword arguments)."
+                    )
+                if len(decorator.args) == 1:
+                    # Form A/C: @base.register(T) — decorator provides the type.
+                    type_expr = decorator.args[0]
+                else:
+                    # Legal-but-pathological: @base.register(T, extra_positional).
+                    # At runtime this registers T and treats the extras as the
+                    # handler, producing nonsense. Record for a better warning.
+                    unsupported_forms.append(ast.unparse(decorator))
+                    continue
             elif _is_register(base.name, decorator):
                 # Form B: bare @foo.register attribute; require an annotated arg.
                 args = stmt.args.posonlyargs + stmt.args.args
@@ -174,17 +199,6 @@ def _collect_group(
                         f"unannotated. Add a type annotation to the first "
                         f"parameter or pass the type as @{base.name}.register(T)."
                     )
-            elif (
-                isinstance(decorator, ast.Call)
-                and _is_register(base.name, decorator.func)
-                and len(decorator.args) > 1
-                and not decorator.keywords
-            ):
-                # Legal-but-pathological form: @base.register(T, extra_positional).
-                # At runtime this registers T and treats the extras as the handler,
-                # producing nonsense. We can't emit a sensible overload; record it.
-                unsupported_forms.append(ast.unparse(decorator))
-                continue
             else:
                 # Unrelated decorator on a nearby function — skip silently.
                 continue
@@ -273,35 +287,6 @@ def _variant_function(
 
 def _is_singledispatch(node: ast.expr) -> bool:
     return _dotted_name(node).endswith("singledispatch")
-
-
-def _register_type(base_name: str, node: ast.expr) -> ast.expr | None:
-    if (
-        isinstance(node, ast.Call)
-        and _is_register(base_name, node.func)
-        and len(node.args) == 1
-        and not node.keywords
-    ):
-        return node.args[0]
-    return None
-
-
-def _raise_if_invalid_register_call(base_name: str, node: ast.expr) -> None:
-    """Raise if `node` is a syntactically-recognizable @base.register(...) call
-    whose form fails at import time in pure Python."""
-    if not isinstance(node, ast.Call) or not _is_register(base_name, node.func):
-        return
-    if not node.args and not node.keywords:
-        raise SingledispatchStubError(
-            f"@{base_name}.register() called with no arguments: pure Python "
-            f"raises TypeError at import (missing required 'cls' argument)."
-        )
-    if node.keywords:
-        raise SingledispatchStubError(
-            f"@{base_name}.register(...) called with keyword arguments "
-            f"{[kw.arg for kw in node.keywords]!r}: pure Python raises TypeError "
-            f"at import (register() takes no keyword arguments)."
-        )
 
 
 def _is_register(base_name: str, node: ast.expr) -> bool:
