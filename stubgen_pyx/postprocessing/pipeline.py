@@ -74,8 +74,7 @@ def _ast_transforms(
     if config.trim_not_defined:
         trim_not_defined(tree)
 
-    if config.strip_artifacts:
-        tree = unify_singledispatch(tree)
+    tree = unify_singledispatch(tree)
 
     if config.trim_imports:
         used_names = collect_names(tree)
