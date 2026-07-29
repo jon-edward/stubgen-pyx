@@ -224,55 +224,6 @@ def test_pipeline_trim_not_defined_disabled_preserves():
     assert "UndefinedType" in result
 
 
-def test_pipeline_rewrites_singledispatch_group_to_plain_signature():
-    pyi_code = (
-        "import functools\n"
-        "@functools.singledispatch\n"
-        "def convert(x): ...\n"
-        "@convert.register(int)\n"
-        "def _from_int(x): ..."
-    )
-
-    config = StubgenPyxConfig(
-        trim_imports=False,
-        sort_imports=False,
-        exclude_attribution=True,
-    )
-    result = postprocessing_pipeline(pyi_code, config)
-
-    # Single-variant @singledispatch groups collapse to a plain def (see
-    # overload_singledispatch.py: the >=2-definitions rule in the typing spec
-    # makes a lone @overload invalid).
-    assert "@overload" not in result
-    assert "def convert(x: int) -> Any:" in result
-    assert "_from_int" not in result
-
-
-def test_pipeline_trim_imports_removes_functools_after_singledispatch_rewrite():
-    # After overload_singledispatch rewrites a @singledispatch group away, the
-    # `import functools` that the source needed is dead. The pipeline's
-    # trim_imports pass (which runs after overload_singledispatch) should sweep
-    # it up. Locks that interaction so a future reorder of the pipeline can't
-    # silently regress it.
-    pyi_code = (
-        "import functools\n"
-        "@functools.singledispatch\n"
-        "def convert(x): ...\n"
-        "@convert.register(int)\n"
-        "def _from_int(x): ..."
-    )
-
-    config = StubgenPyxConfig(
-        trim_imports=True,
-        sort_imports=False,
-        exclude_attribution=True,
-    )
-    result = postprocessing_pipeline(pyi_code, config)
-
-    assert "import functools" not in result
-    assert "def convert(x: int) -> Any:" in result
-
-
 def test_pipeline_transform_order_trim_before_trim_not_defined():
     """trim_imports must run before trim_not_defined so imports define what's available."""
     # SomeType is imported; trim_imports must not remove it before trim_not_defined

@@ -244,12 +244,20 @@ def _overload_function(name: str, variant: _Variant) -> ast.FunctionDef:
 
 
 def _is_singledispatch_assignment(stmt: ast.Assign) -> bool:
+    """True for `name = functools.singledispatch(<anything>)`.
+
+    Deliberately does not check the shape of the first argument. The user's
+    source will have a real function or lambda there, but earlier pipeline
+    passes (e.g. trim_not_defined) may rewrite the body to ``...`` before
+    this pass runs. Since the collapse-to-plain-def path drops the base's
+    body entirely and the >=2-variant path never re-emits it, the argument's
+    shape is irrelevant to this pass.
+    """
     return (
         len(stmt.targets) == 1
         and isinstance(stmt.targets[0], ast.Name)
         and isinstance(stmt.value, ast.Call)
         and bool(stmt.value.args)
-        and isinstance(stmt.value.args[0], ast.Lambda)
         and _is_singledispatch(stmt.value.func)
     )
 
