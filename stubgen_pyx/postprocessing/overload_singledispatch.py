@@ -40,8 +40,8 @@ class _Base:
 @dataclass
 class _Variant:
     stmt: ast.FunctionDef
-    type_key: str | None
-    type_expr: ast.expr | None
+    type_key: str
+    type_expr: ast.expr
 
 
 @dataclass
@@ -146,9 +146,7 @@ def _collect_group(
             else:
                 # Unrelated decorator on a nearby function — skip silently.
                 continue
-            variants.append(
-                _Variant(stmt, ast.unparse(type_expr) if type_expr else None, type_expr)
-            )
+            variants.append(_Variant(stmt, ast.unparse(type_expr), type_expr))
             break
     return variants, unsupported_forms
 
@@ -171,7 +169,6 @@ def _unified_group(
     # group silently overwrites, so keep only the last variant per type key.
     deduped: dict[str, _Variant] = {}
     for variant in variants:
-        assert variant.type_key is not None
         deduped[variant.type_key] = variant
 
     overloads: list[ast.stmt] = [
@@ -191,7 +188,7 @@ def _overload_function(name: str, variant: _Variant) -> ast.FunctionDef:
     if stmt.returns is None:
         stmt.returns = ast.Name(id="Any", ctx=ast.Load())
     args = stmt.args.posonlyargs + stmt.args.args
-    if args and variant.type_expr is not None:
+    if args:
         args[0].annotation = copy.deepcopy(variant.type_expr)
     return stmt
 
