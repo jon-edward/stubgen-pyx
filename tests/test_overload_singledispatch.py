@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import warnings
+from dataclasses import dataclass
 
 import pytest
 
@@ -19,241 +20,302 @@ def _assert_ast_unchanged(code: str, result: str) -> None:
     assert ast.dump(ast.parse(result)) == ast.dump(ast.parse(code))
 
 
-def test_form_a_decorator_base_and_registered_type():
-    result = _overload(
-        "import functools\n"
-        "@functools.singledispatch\n"
-        "def convert(x): ...\n"
-        "@convert.register(int)\n"
-        "def _from_int(x): ..."
-    )
-
-    assert "from typing import overload" in result
-    assert "@overload\ndef convert(x: int)" in result
-    assert "_from_int" not in result
-    assert "singledispatch" not in result
+@dataclass(frozen=True)
+class SuccessCase:
+    id: str
+    pyi: str
+    expected: str
 
 
-def test_form_b_assignment_base_and_registered_type():
-    result = _overload(
-        "import functools\n"
-        "convert = functools.singledispatch(lambda x: x)\n"
-        "@convert.register(str)\n"
-        "def _from_str(x): ..."
-    )
-
-    assert "@overload\ndef convert(x: str)" in result
-    assert "def convert(x):" in result
-    assert "_from_str" not in result
+@dataclass(frozen=True)
+class WarnCase:
+    id: str
+    pyi: str
+    warning_match: str
 
 
-def test_form_c_bare_register_uses_annotation():
-    result = _overload(
-        "from functools import singledispatch\n"
-        "@singledispatch\n"
-        "def convert(x): ...\n"
-        "@convert.register\n"
-        "def _from_float(x: float): ..."
-    )
-
-    assert "@overload\ndef convert(x: float)" in result
+@dataclass(frozen=True)
+class RaiseCase:
+    id: str
+    pyi: str
+    message_match: str
 
 
-def test_duplicate_registration_keeps_last_matching_python_runtime_semantics():
-    # Pure Python `functools.singledispatch` silently overwrites when the same
-    # type is registered twice; the last @register(T) wins. Match that here:
-    # no warning, only the last handler survives as the @overload signature.
-    code = (
-        "import functools\n"
-        "@functools.singledispatch\n"
-        "def convert(x): ...\n"
-        "@convert.register(int)\n"
-        "def a(x) -> str: ...\n"
-        "@convert.register(int)\n"
-        "def b(x) -> bytes: ..."
-    )
+SUCCESS_CASES = [
+    SuccessCase(
+        id="case_01_form_a_decorator_base_and_registered_type",
+        pyi=(
+            "import functools\n"
+            "@functools.singledispatch\n"
+            "def convert(x): ...\n"
+            "@convert.register(int)\n"
+            "def _from_int(x): ..."
+        ),
+        expected=(
+            "from typing import overload, Any\n"
+            "import functools\n"
+            "\n"
+            "@overload\n"
+            "def convert(x: int) -> Any:\n"
+            "    ..."
+        ),
+    ),
+    SuccessCase(
+        id="case_02_form_b_assignment_base_and_registered_type",
+        pyi=(
+            "import functools\n"
+            "convert = functools.singledispatch(lambda x: x)\n"
+            "@convert.register(str)\n"
+            "def _from_str(x): ..."
+        ),
+        expected=(
+            "from typing import overload, Any\n"
+            "import functools\n"
+            "\n"
+            "@overload\n"
+            "def convert(x: str) -> Any:\n"
+            "    ...\n"
+            "\n"
+            "def convert(x):\n"
+            "    ..."
+        ),
+    ),
+    SuccessCase(
+        id="case_03_form_c_bare_register_uses_annotation",
+        pyi=(
+            "from functools import singledispatch\n"
+            "@singledispatch\n"
+            "def convert(x): ...\n"
+            "@convert.register\n"
+            "def _from_float(x: float): ..."
+        ),
+        expected=(
+            "from typing import overload, Any\n"
+            "from functools import singledispatch\n"
+            "\n"
+            "@overload\n"
+            "def convert(x: float) -> Any:\n"
+            "    ..."
+        ),
+    ),
+    SuccessCase(
+        id="case_04_duplicate_registration_keeps_last",
+        # Pure Python singledispatch silently overwrites; last @register(T) wins.
+        pyi=(
+            "import functools\n"
+            "@functools.singledispatch\n"
+            "def convert(x): ...\n"
+            "@convert.register(int)\n"
+            "def a(x) -> str: ...\n"
+            "@convert.register(int)\n"
+            "def b(x) -> bytes: ..."
+        ),
+        expected=(
+            "from typing import overload\n"
+            "import functools\n"
+            "\n"
+            "@overload\n"
+            "def convert(x: int) -> bytes:\n"
+            "    ..."
+        ),
+    ),
+    SuccessCase(
+        id="case_05_multiple_groups",
+        pyi=(
+            "import functools\n"
+            "@functools.singledispatch\n"
+            "def one(x): ...\n"
+            "@one.register(int)\n"
+            "def one_int(x): ...\n"
+            "@functools.singledispatch\n"
+            "def two(x): ...\n"
+            "@two.register(str)\n"
+            "def two_str(x): ..."
+        ),
+        expected=(
+            "from typing import overload, Any\n"
+            "import functools\n"
+            "\n"
+            "@overload\n"
+            "def one(x: int) -> Any:\n"
+            "    ...\n"
+            "\n"
+            "@overload\n"
+            "def two(x: str) -> Any:\n"
+            "    ..."
+        ),
+    ),
+    SuccessCase(
+        id="case_06_dotted_singledispatch_attr",
+        pyi=(
+            "import functools\n"
+            "@functools.singledispatch\n"
+            "def convert(x): ...\n"
+            "@convert.register(bytes)\n"
+            "def _from_bytes(x): ..."
+        ),
+        expected=(
+            "from typing import overload, Any\n"
+            "import functools\n"
+            "\n"
+            "@overload\n"
+            "def convert(x: bytes) -> Any:\n"
+            "    ..."
+        ),
+    ),
+    SuccessCase(
+        id="case_07_missing_variant_return_annotation_defaults_to_any",
+        pyi=(
+            "import functools\n"
+            "@functools.singledispatch\n"
+            "def convert(x): ...\n"
+            "@convert.register(int)\n"
+            "def _from_int(x): ..."
+        ),
+        expected=(
+            "from typing import overload, Any\n"
+            "import functools\n"
+            "\n"
+            "@overload\n"
+            "def convert(x: int) -> Any:\n"
+            "    ..."
+        ),
+    ),
+    SuccessCase(
+        id="case_08_explicit_return_annotation_preserved_without_any_import",
+        pyi=(
+            "import functools\n"
+            "@functools.singledispatch\n"
+            "def convert(x): ...\n"
+            "@convert.register(int)\n"
+            "def _from_int(x) -> str: ..."
+        ),
+        expected=(
+            "from typing import overload\n"
+            "import functools\n"
+            "\n"
+            "@overload\n"
+            "def convert(x: int) -> str:\n"
+            "    ..."
+        ),
+    ),
+    SuccessCase(
+        id="case_09_existing_overload_import_not_duplicated",
+        # `from typing import overload` already present; Any is added to it.
+        pyi=(
+            "from typing import overload\n"
+            "import functools\n"
+            "@functools.singledispatch\n"
+            "def convert(x): ...\n"
+            "@convert.register(int)\n"
+            "def _from_int(x): ..."
+        ),
+        expected=(
+            "from typing import overload, Any\n"
+            "import functools\n"
+            "\n"
+            "@overload\n"
+            "def convert(x: int) -> Any:\n"
+            "    ..."
+        ),
+    ),
+]
 
+
+WARN_CASES = [
+    WarnCase(
+        id="case_01_multi_arg_register_is_unsupported",
+        # @base.register(T, extra) is legal Python but pathological at runtime.
+        pyi=(
+            "import functools\n"
+            "@functools.singledispatch\n"
+            "def convert(x): ...\n"
+            "@convert.register(int, str)\n"
+            "def from_int(x): ..."
+        ),
+        warning_match="unsupported",
+    ),
+    WarnCase(
+        id="case_02_no_overloads",
+        # @singledispatch alone with no @register — legal but nothing to unify.
+        pyi="import functools\n@functools.singledispatch\ndef convert(x): ...",
+        warning_match="no overloads",
+    ),
+]
+
+
+RAISE_CASES = [
+    RaiseCase(
+        id="case_01_empty_register_call",
+        # @base.register() raises TypeError at import in pure Python.
+        pyi=(
+            "import functools\n"
+            "@functools.singledispatch\n"
+            "def convert(x): ...\n"
+            "@convert.register()\n"
+            "def from_int(x): ..."
+        ),
+        message_match="no arguments",
+    ),
+    RaiseCase(
+        id="case_02_keyword_register_call",
+        # @base.register(cls, kw=...) raises TypeError at import in pure Python.
+        pyi=(
+            "import functools\n"
+            "@functools.singledispatch\n"
+            "def convert(x): ...\n"
+            "@convert.register(int, alt=str)\n"
+            "def from_int(x): ..."
+        ),
+        message_match="keyword arguments",
+    ),
+    RaiseCase(
+        id="case_03_bare_register_on_untyped_function",
+        # Bare @base.register on unannotated fn raises TypeError at import.
+        pyi=(
+            "import functools\n"
+            "@functools.singledispatch\n"
+            "def convert(x): ...\n"
+            "@convert.register\n"
+            "def unknown(x): ..."
+        ),
+        message_match="has no type",
+    ),
+    RaiseCase(
+        id="case_04_mixed_group_with_untyped_variant",
+        # Same rationale: any untyped variant in a group makes the module invalid.
+        pyi=(
+            "import functools\n"
+            "@functools.singledispatch\n"
+            "def convert(x): ...\n"
+            "@convert.register(int)\n"
+            "def ok(x): ...\n"
+            "@convert.register\n"
+            "def bad(x): ..."
+        ),
+        message_match="has no type",
+    ),
+]
+
+
+@pytest.mark.parametrize("case", SUCCESS_CASES, ids=lambda case: case.id)
+def test_overload_singledispatch_success(case: SuccessCase):
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        result = _overload(code)
+        result = _overload(case.pyi)
 
-    # Last @register(int) wins: return type is bytes, not str.
-    assert "@overload\ndef convert(x: int) -> bytes" in result
-    assert "-> str" not in result
-    # Original helper names are erased; @functools.singledispatch is gone.
-    assert "def a" not in result
-    assert "def b" not in result
-    assert "@functools.singledispatch" not in result
+    assert result == case.expected
 
 
-def test_multi_arg_register_is_unsupported_and_leaves_group_unchanged():
-    # @base.register(T, extra) is technically legal Python but produces nonsense
-    # at runtime (extra is treated as the handler). We can't emit a sensible
-    # overload; warn with a clear "unsupported form" message and leave input alone.
-    code = (
-        "import functools\n"
-        "@functools.singledispatch\n"
-        "def convert(x): ...\n"
-        "@convert.register(int, str)\n"
-        "def from_int(x): ..."
-    )
+@pytest.mark.parametrize("case", WARN_CASES, ids=lambda case: case.id)
+def test_overload_singledispatch_warns_and_leaves_input_unchanged(case: WarnCase):
+    with pytest.warns(UserWarning, match=case.warning_match):
+        result = _overload(case.pyi)
 
-    with pytest.warns(UserWarning, match="unsupported"):
-        result = _overload(code)
-
-    _assert_ast_unchanged(code, result)
+    _assert_ast_unchanged(case.pyi, result)
 
 
-def test_keyword_register_raises():
-    # @base.register(cls, kw=...) raises TypeError at import in pure Python.
-    # Refuse to emit a stub for source that cannot be imported.
-    code = (
-        "import functools\n"
-        "@functools.singledispatch\n"
-        "def convert(x): ...\n"
-        "@convert.register(int, alt=str)\n"
-        "def from_int(x): ..."
-    )
-
-    with pytest.raises(SingledispatchStubError, match="keyword arguments"):
-        _overload(code)
-
-
-def test_empty_register_call_raises():
-    # @base.register() raises TypeError at import in pure Python (missing 'cls').
-    # Refuse to emit a stub for source that cannot be imported.
-    code = (
-        "import functools\n"
-        "@functools.singledispatch\n"
-        "def convert(x): ...\n"
-        "@convert.register()\n"
-        "def from_int(x): ..."
-    )
-
-    with pytest.raises(SingledispatchStubError, match="no arguments"):
-        _overload(code)
-
-
-def test_multiple_groups_are_unified():
-    result = _overload(
-        "import functools\n"
-        "@functools.singledispatch\n"
-        "def one(x): ...\n"
-        "@one.register(int)\n"
-        "def one_int(x): ...\n"
-        "@functools.singledispatch\n"
-        "def two(x): ...\n"
-        "@two.register(str)\n"
-        "def two_str(x): ..."
-    )
-
-    assert "def one(x: int)" in result
-    assert "def two(x: str)" in result
-    assert "one_int" not in result
-    assert "two_str" not in result
-
-
-def test_dotted_singledispatch_attr_is_recognized():
-    result = _overload(
-        "import functools\n"
-        "@functools.singledispatch\n"
-        "def convert(x): ...\n"
-        "@convert.register(bytes)\n"
-        "def _from_bytes(x): ..."
-    )
-
-    assert "def convert(x: bytes)" in result
-
-
-def test_fallback_no_overloads_warns_and_leaves_group_unchanged():
-    code = "import functools\n@functools.singledispatch\ndef convert(x): ..."
-
-    with pytest.warns(UserWarning, match="no overloads"):
-        result = _overload(code)
-
-    assert "@functools.singledispatch" in result
-    assert "def convert" in result
-
-
-def test_fallback_unresolvable_raises():
-    # Bare @base.register on an unannotated function raises TypeError at import
-    # in pure Python. Refuse to emit a stub for source that cannot be imported.
-    code = (
-        "import functools\n"
-        "@functools.singledispatch\n"
-        "def convert(x): ...\n"
-        "@convert.register\n"
-        "def unknown(x): ..."
-    )
-
-    with pytest.raises(SingledispatchStubError, match="has no type"):
-        _overload(code)
-
-
-def test_fallback_mixed_raises_when_any_variant_is_untyped():
-    # Same rationale: if any variant in the group is a bare untyped @register,
-    # the whole module is invalid Python at import time. Raise.
-    code = (
-        "import functools\n"
-        "@functools.singledispatch\n"
-        "def convert(x): ...\n"
-        "@convert.register(int)\n"
-        "def ok(x): ...\n"
-        "@convert.register\n"
-        "def bad(x): ..."
-    )
-
-    with pytest.raises(SingledispatchStubError, match="has no type"):
-        _overload(code)
-
-
-def test_overload_import_is_injected_when_needed():
-    result = _overload(
-        "import functools\n"
-        "@functools.singledispatch\n"
-        "def convert(x): ...\n"
-        "@convert.register(int)\n"
-        "def _from_int(x): ..."
-    )
-
-    assert "from typing import overload" in result
-
-
-def test_missing_variant_return_annotation_defaults_to_any():
-    result = _overload(
-        "import functools\n"
-        "@functools.singledispatch\n"
-        "def convert(x): ...\n"
-        "@convert.register(int)\n"
-        "def _from_int(x): ..."
-    )
-
-    assert "from typing import overload, Any" in result
-    assert "@overload\ndef convert(x: int) -> Any" in result
-
-
-def test_explicit_variant_return_annotation_is_preserved_without_any_import():
-    result = _overload(
-        "import functools\n"
-        "@functools.singledispatch\n"
-        "def convert(x): ...\n"
-        "@convert.register(int)\n"
-        "def _from_int(x) -> str: ..."
-    )
-
-    assert "from typing import overload" in result
-    assert "from typing import overload, Any" not in result
-    assert "@overload\ndef convert(x: int) -> str" in result
-
-
-def test_existing_overload_import_is_not_duplicated():
-    result = _overload(
-        "from typing import overload\n"
-        "import functools\n"
-        "@functools.singledispatch\n"
-        "def convert(x): ...\n"
-        "@convert.register(int)\n"
-        "def _from_int(x): ..."
-    )
-
-    assert result.count("from typing import overload") == 1
+@pytest.mark.parametrize("case", RAISE_CASES, ids=lambda case: case.id)
+def test_overload_singledispatch_raises_on_invalid_python(case: RaiseCase):
+    with pytest.raises(SingledispatchStubError, match=case.message_match):
+        _overload(case.pyi)
