@@ -3,7 +3,7 @@ from __future__ import annotations
 import ast
 import copy
 import warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 class SingledispatchStubError(ValueError):
@@ -25,11 +25,64 @@ class SingledispatchStubError(ValueError):
 
 def overload_singledispatch(tree: ast.AST) -> ast.AST:
     """Rewrite @singledispatch variants into @overload stubs."""
-    unifier = _SingledispatchUnifier()
-    tree = unifier.visit(tree)
-    if unifier.emitted_overloads and not _has_typing_name(tree, "overload"):
+    if not isinstance(tree, ast.Module):
+        return tree
+
+    # Locate @singledispatch bases: decorated `def` or `name = functools.singledispatch(...)`.
+    # The assignment form deliberately does not check the shape of the first
+    # argument: earlier pipeline passes (e.g. trim_not_defined) may have
+    # rewritten a lambda body to ``...``, and this pass drops the base body
+    # entirely either way.
+    bases: list[_Base] = []
+    for idx, stmt in enumerate(tree.body):
+        if isinstance(stmt, ast.FunctionDef) and any(
+            _is_singledispatch(d) for d in stmt.decorator_list
+        ):
+            bases.append(_Base(stmt.name, stmt, idx))
+        elif (
+            isinstance(stmt, ast.Assign)
+            and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], ast.Name)
+            and isinstance(stmt.value, ast.Call)
+            and stmt.value.args
+            and _is_singledispatch(stmt.value.func)
+        ):
+            bases.append(_Base(stmt.targets[0].id, stmt, idx))
+
+    groups = {base.name: _collect_group(base, tree.body) for base in bases}
+    replacements = {
+        base.index: _unified_group(base, *groups[base.name]) for base in bases
+    }
+    base_by_index = {base.index: base for base in bases}
+    skip = {
+        id(variant.stmt)
+        for base in bases
+        if replacements[base.index] is not None
+        for variant in groups[base.name][0]
+    }
+
+    body: list[ast.stmt] = []
+    emitted_overloads = False
+    emitted_any = False
+    for idx, stmt in enumerate(tree.body):
+        if id(stmt) in skip:
+            continue
+        replacement = replacements.get(idx)
+        if replacement is None:
+            body.append(stmt)
+            continue
+        stmts, used_overload = replacement
+        emitted_overloads |= used_overload
+        emitted_any |= any(
+            variant.stmt.returns is None
+            for variant in groups[base_by_index[idx].name][0]
+        )
+        body.extend(stmts)
+    tree.body = body
+
+    if emitted_overloads and not _has_typing_name(tree, "overload"):
         _insert_typing_import(tree, "overload")
-    if unifier.emitted_any and not _has_typing_name(tree, "Any"):
+    if emitted_any and not _has_typing_name(tree, "Any"):
         _insert_typing_import(tree, "Any")
     return ast.fix_missing_locations(tree)
 
@@ -46,62 +99,6 @@ class _Variant:
     stmt: ast.FunctionDef
     type_key: str
     type_expr: ast.expr
-
-
-@dataclass
-class _SingledispatchUnifier(ast.NodeTransformer):
-    emitted_overloads: bool = False
-    emitted_any: bool = False
-    _skip: set[int] = field(default_factory=set, init=False)
-
-    def visit_Module(self, node: ast.Module) -> ast.Module:
-        bases = _find_bases(node.body)
-        groups: dict[str, tuple[list[_Variant], list[str]]] = {
-            base.name: _collect_group(base, node.body) for base in bases
-        }
-        replacements = {
-            base.index: _unified_group(base, *groups[base.name]) for base in bases
-        }
-        base_by_index = {base.index: base for base in bases}
-        self._skip = {
-            id(variant.stmt)
-            for base in bases
-            if replacements[base.index] is not None
-            for variant in groups[base.name][0]
-        }
-
-        body: list[ast.stmt] = []
-        for idx, stmt in enumerate(node.body):
-            if id(stmt) in self._skip:
-                continue
-            replacement = replacements.get(idx)
-            if replacement is None:
-                body.append(stmt)
-            else:
-                stmts, used_overload = replacement
-                if used_overload:
-                    self.emitted_overloads = True
-                base = base_by_index[idx]
-                self.emitted_any |= any(
-                    variant.stmt.returns is None for variant in groups[base.name][0]
-                )
-                body.extend(stmts)
-        node.body = body
-        return node
-
-
-def _find_bases(body: list[ast.stmt]) -> list[_Base]:
-    bases = []
-    for idx, stmt in enumerate(body):
-        if isinstance(stmt, ast.FunctionDef) and any(
-            _is_singledispatch(decorator) for decorator in stmt.decorator_list
-        ):
-            bases.append(_Base(stmt.name, stmt, idx))
-        elif isinstance(stmt, ast.Assign) and _is_singledispatch_assignment(stmt):
-            target = stmt.targets[0]
-            assert isinstance(target, ast.Name)
-            bases.append(_Base(target.id, stmt, idx))
-    return bases
 
 
 def _collect_group(
@@ -130,11 +127,12 @@ def _collect_group(
             _raise_if_invalid_register_call(base.name, decorator)
             type_expr = _register_type(base.name, decorator)
             if type_expr is not None:
-                # Form A/C: decorator provides the type; always use it
+                # Form A/C: decorator provides the type; always use it.
                 pass
             elif _is_register(base.name, decorator):
                 # Form B: bare @foo.register attribute; require an annotated arg.
-                type_expr = _first_arg_annotation(stmt)
+                args = stmt.args.posonlyargs + stmt.args.args
+                type_expr = args[0].annotation if args else None
                 if type_expr is None:
                     raise SingledispatchStubError(
                         f"@{base.name}.register on {stmt.name!r} has no type: "
@@ -143,7 +141,12 @@ def _collect_group(
                         f"unannotated. Add a type annotation to the first "
                         f"parameter or pass the type as @{base.name}.register(T)."
                     )
-            elif _is_multi_arg_register_call(base.name, decorator):
+            elif (
+                isinstance(decorator, ast.Call)
+                and _is_register(base.name, decorator.func)
+                and len(decorator.args) > 1
+                and not decorator.keywords
+            ):
                 # Legal-but-pathological form: @base.register(T, extra_positional).
                 # At runtime this registers T and treats the extras as the handler,
                 # producing nonsense. We can't emit a sensible overload; record it.
@@ -192,8 +195,9 @@ def _unified_group(
                 f"@{base.name}.register(...) form(s): {unsupported_forms!r}"
             )
         else:
-            msg = f"Cannot unify singledispatch group {base.name!r}: no overloads"
-            warnings.warn(msg)
+            warnings.warn(
+                f"Cannot unify singledispatch group {base.name!r}: no overloads"
+            )
         return None
 
     # Match runtime singledispatch semantics: duplicate @register(T) in the same
@@ -204,23 +208,27 @@ def _unified_group(
 
     unique_variants = list(deduped.values())
     if len(unique_variants) == 1:
-        return [_plain_function(base.name, unique_variants[0])], False
+        return [_variant_function(base.name, unique_variants[0], overload=False)], False
 
     stmts: list[ast.stmt] = [
-        _overload_function(base.name, variant) for variant in unique_variants
+        _variant_function(base.name, variant, overload=True)
+        for variant in unique_variants
     ]
     return stmts, True
 
 
-def _plain_function(name: str, variant: _Variant) -> ast.FunctionDef:
-    """Build a single non-@overload signature for a one-variant group.
+def _variant_function(
+    name: str, variant: _Variant, *, overload: bool
+) -> ast.FunctionDef:
+    """Build one signature for a group.
 
-    Used when a @singledispatch group has exactly one @register variant, where
-    a lone @overload would violate the >=2-definitions rule in the typing spec.
+    ``overload=True`` decorates with ``@overload`` (>=2-variant groups);
+    ``overload=False`` emits a plain ``def`` (single-variant collapse — see
+    ``_unified_group`` for the spec rationale).
     """
     stmt = copy.deepcopy(variant.stmt)
     stmt.name = name
-    stmt.decorator_list = []
+    stmt.decorator_list = [ast.Name(id="overload", ctx=ast.Load())] if overload else []
     stmt.body = [ast.Expr(value=ast.Constant(...))]
     if stmt.returns is None:
         stmt.returns = ast.Name(id="Any", ctx=ast.Load())
@@ -228,38 +236,6 @@ def _plain_function(name: str, variant: _Variant) -> ast.FunctionDef:
     if args:
         args[0].annotation = copy.deepcopy(variant.type_expr)
     return stmt
-
-
-def _overload_function(name: str, variant: _Variant) -> ast.FunctionDef:
-    stmt = copy.deepcopy(variant.stmt)
-    stmt.name = name
-    stmt.decorator_list = [ast.Name(id="overload", ctx=ast.Load())]
-    stmt.body = [ast.Expr(value=ast.Constant(...))]
-    if stmt.returns is None:
-        stmt.returns = ast.Name(id="Any", ctx=ast.Load())
-    args = stmt.args.posonlyargs + stmt.args.args
-    if args:
-        args[0].annotation = copy.deepcopy(variant.type_expr)
-    return stmt
-
-
-def _is_singledispatch_assignment(stmt: ast.Assign) -> bool:
-    """True for `name = functools.singledispatch(<anything>)`.
-
-    Deliberately does not check the shape of the first argument. The user's
-    source will have a real function or lambda there, but earlier pipeline
-    passes (e.g. trim_not_defined) may rewrite the body to ``...`` before
-    this pass runs. Since the collapse-to-plain-def path drops the base's
-    body entirely and the >=2-variant path never re-emits it, the argument's
-    shape is irrelevant to this pass.
-    """
-    return (
-        len(stmt.targets) == 1
-        and isinstance(stmt.targets[0], ast.Name)
-        and isinstance(stmt.value, ast.Call)
-        and bool(stmt.value.args)
-        and _is_singledispatch(stmt.value.func)
-    )
 
 
 def _is_singledispatch(node: ast.expr) -> bool:
@@ -295,18 +271,6 @@ def _raise_if_invalid_register_call(base_name: str, node: ast.expr) -> None:
         )
 
 
-def _is_multi_arg_register_call(base_name: str, node: ast.expr) -> bool:
-    """True for @base.register(T, extra_positional) — legal at runtime but the
-    extras are treated as the handler, which produces nonsense; we can't emit a
-    sensible overload for this form."""
-    return (
-        isinstance(node, ast.Call)
-        and _is_register(base_name, node.func)
-        and len(node.args) > 1
-        and not node.keywords
-    )
-
-
 def _is_register(base_name: str, node: ast.expr) -> bool:
     return (
         isinstance(node, ast.Attribute)
@@ -314,13 +278,6 @@ def _is_register(base_name: str, node: ast.expr) -> bool:
         and isinstance(node.value, ast.Name)
         and node.value.id == base_name
     )
-
-
-def _first_arg_annotation(stmt: ast.FunctionDef) -> ast.expr | None:
-    args = stmt.args.posonlyargs + stmt.args.args
-    if not args:
-        return None
-    return args[0].annotation
 
 
 def _dotted_name(node: ast.expr) -> str:
