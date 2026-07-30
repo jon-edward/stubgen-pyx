@@ -9,17 +9,11 @@ from dataclasses import dataclass
 class SingledispatchStubError(ValueError):
     """Raised when a @singledispatch group in the input is invalid Python.
 
-    Subclasses ``ValueError``, so broad ``except ValueError`` handlers already
-    catch it. Catch this class specifically only if you need to distinguish
-    invalid singledispatch source from other input validation failures.
-
-    These forms would fail at import time in a real Python interpreter:
-    * ``@base.register()`` with no arguments (missing required ``cls``)
-    * ``@base.register(cls, kw=...)`` with keyword arguments
-    * bare ``@base.register`` on a function whose first parameter is unannotated
-
-    Emitting a stub for source that cannot be imported would be misleading, so
-    the pass fails loudly instead of trying to guess.
+    Emitted when attempting to generate a stub for source code that is actually invalid
+    at import time (e.g. a bare ``@base.register()`` with no arguments). Subclasses
+    ``ValueError``, so broad ``except ValueError`` handlers already catch it. Catch this
+    class specifically only if you need to distinguish invalid singledispatch source
+    from other input validation failures.
     """
 
 
@@ -29,10 +23,6 @@ def overload_singledispatch(tree: ast.AST) -> ast.AST:
         return tree
 
     # Locate @singledispatch bases: decorated `def` or `name = functools.singledispatch(...)`.
-    # The assignment form deliberately does not check the shape of the first
-    # argument: earlier pipeline passes (e.g. trim_not_defined) may have
-    # rewritten a lambda body to ``...``, and this pass drops the base body
-    # entirely either way.
     bases: list[_Base] = []
     for idx, stmt in enumerate(tree.body):
         if isinstance(stmt, ast.FunctionDef) and any(
@@ -47,6 +37,9 @@ def overload_singledispatch(tree: ast.AST) -> ast.AST:
             and stmt.value.args
             and _is_singledispatch(stmt.value.func)
         ):
+            # Earlier pipeline passes (e.g. trim_not_defined) may have rewritten a
+            # lambda body to ``...``, and this pass drops the base body entirely either
+            # way, so there's no need to check the shape of the first argument.
             bases.append(_Base(stmt.targets[0].id, idx))
 
     results = {base.index: _process_group(base, tree.body) for base in bases}
@@ -149,9 +142,8 @@ def _process_group(
     * Groups with exactly one typed variant collapse to a single plain ``def``
       (no ``@overload`` decorator). The spec forbids a lone ``@overload``: it
       requires at least two overload-decorated definitions per function, so a
-      single ``@overload`` would be reported as an error by type checkers.
-      A plain signature carries the same information without violating that
-      rule.
+      single ``@overload`` would be reported as an error by conforming type checkers. A
+      plain signature carries the same information without violating that rule.
 
     Tradeoff for the single-variant collapse: the base @singledispatch
     function's fallback body is dropped. In real code that fallback is often
@@ -179,19 +171,15 @@ def _process_group(
                     # @base.register() — pure Python raises TypeError at import.
                     raise SingledispatchStubError(
                         f"@{base.name}.register() called with no arguments: "
-                        f"pure Python raises TypeError at import (missing "
-                        f"required 'cls' argument)."
                     )
                 if decorator.keywords:
                     # @base.register(kw=...) — pure Python raises TypeError.
                     raise SingledispatchStubError(
-                        f"@{base.name}.register(...) called with keyword "
-                        f"arguments {[kw.arg for kw in decorator.keywords]!r}: "
-                        f"pure Python raises TypeError at import (register() "
-                        f"takes no keyword arguments)."
+                        f"@{base.name}.register(...) takes no keyword arguments but "
+                        f"was called with {[kw.arg for kw in decorator.keywords]!r}"
                     )
                 if len(decorator.args) == 1:
-                    # Form A/C: @base.register(T) — decorator provides the type.
+                    # @base.register(T) — decorator provides the type.
                     type_expr = decorator.args[0]
                 else:
                     # Legal-but-pathological: @base.register(T, extra_positional).
@@ -200,16 +188,14 @@ def _process_group(
                     unsupported_forms.append(ast.unparse(decorator))
                     continue
             elif _is_register(base.name, decorator):
-                # Form B: bare @foo.register attribute; require an annotated arg.
+                # Bare @foo.register attribute requires an annotated arg.
                 args = stmt.args.posonlyargs + stmt.args.args
                 type_expr = args[0].annotation if args else None
                 if type_expr is None:
                     raise SingledispatchStubError(
-                        f"@{base.name}.register on {stmt.name!r} has no type: "
-                        f"pure Python raises TypeError at import for bare "
-                        f"@register on a function whose first parameter is "
-                        f"unannotated. Add a type annotation to the first "
-                        f"parameter or pass the type as @{base.name}.register(T)."
+                        f"@{base.name}.register on {stmt.name!r} has no type. Add a "
+                        "type annotation to the first parameter or pass the type as "
+                        f"@{base.name}.register(T)."
                     )
             else:
                 # Unrelated decorator on a nearby function — skip silently.
