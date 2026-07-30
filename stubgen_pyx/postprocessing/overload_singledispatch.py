@@ -1,3 +1,5 @@
+"""Handling for singledispatch functions."""
+
 from __future__ import annotations
 
 import ast
