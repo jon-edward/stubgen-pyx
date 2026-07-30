@@ -49,16 +49,12 @@ def overload_singledispatch(tree: ast.AST) -> ast.AST:
         ):
             bases.append(_Base(stmt.targets[0].id, stmt, idx))
 
-    groups = {base.name: _collect_group(base, tree.body) for base in bases}
-    replacements = {
-        base.index: _unified_group(base, *groups[base.name]) for base in bases
-    }
-    base_by_index = {base.index: base for base in bases}
+    results = {base.index: _process_group(base, tree.body) for base in bases}
     skip = {
-        id(variant.stmt)
-        for base in bases
-        if replacements[base.index] is not None
-        for variant in groups[base.name][0]
+        id(stmt)
+        for result in results.values()
+        if result is not None
+        for stmt in result[1]
     }
 
     body: list[ast.stmt] = []
@@ -67,16 +63,13 @@ def overload_singledispatch(tree: ast.AST) -> ast.AST:
     for idx, stmt in enumerate(tree.body):
         if id(stmt) in skip:
             continue
-        replacement = replacements.get(idx)
-        if replacement is None:
+        result = results.get(idx)
+        if result is None:
             body.append(stmt)
             continue
-        stmts, used_overload = replacement
+        stmts, _consumed, used_overload, uses_any = result
         emitted_overloads |= used_overload
-        emitted_any |= any(
-            variant.stmt.returns is None
-            for variant in groups[base_by_index[idx].name][0]
-        )
+        emitted_any |= uses_any
         body.extend(stmts)
     tree.body = body
 
@@ -134,22 +127,52 @@ class _Variant:
     type_expr: ast.expr
 
 
-def _collect_group(
+def _process_group(
     base: _Base, body: list[ast.stmt]
-) -> tuple[list[_Variant], list[str]]:
-    """Collect @register variants for a group.
+) -> tuple[list[ast.stmt], list[ast.FunctionDef], bool, bool] | None:
+    """Collect @register variants for a group and produce replacement stmts.
 
     Returns:
-        (variants, unsupported_forms)
-        - variants: successfully-typed variants ready for @overload emission.
-        - unsupported_forms: source of decorators we recognized as @base.register
-          calls but chose not to raise on (multi positional args). Used only to
-          produce a more informative 'no overloads' warning.
+        On success:
+            (replacement_stmts, consumed_variant_stmts, used_overload, uses_any)
+            - replacement_stmts: statements that replace the base at its index.
+            - consumed_variant_stmts: the FunctionDefs for the variants; the
+              caller drops these from the module body.
+            - used_overload: whether the emitted stmts carry @overload (drives
+              typing import injection).
+            - uses_any: whether any variant has no return annotation (drives
+              typing import injection for `Any`).
+        None:
+            No usable variants were found. Emit a warning and leave the base
+            and its variant stmts untouched in the module body.
 
     Raises:
         SingledispatchStubError: on decorator forms that fail at import time in
         pure Python (empty ``@base.register()``, keyword-arg ``@base.register(
         cls, kw=...)``, bare ``@base.register`` on an unannotated function).
+
+    Emission strategy is driven by the Python type-system spec
+    (https://typing.python.org/en/latest/spec/overload.html):
+
+    * Groups with >=2 typed variants emit one ``@overload`` per variant. The
+      spec's rule that stub files must not include an overload implementation
+      is honored: no trailing plain ``def`` is emitted.
+    * Groups with exactly one typed variant collapse to a single plain ``def``
+      (no ``@overload`` decorator). The spec forbids a lone ``@overload``: it
+      requires at least two overload-decorated definitions per function, so a
+      single ``@overload`` would be reported as an error by type checkers.
+      A plain signature carries the same information without violating that
+      rule.
+
+    Tradeoff for the single-variant collapse: the base @singledispatch
+    function's fallback body is dropped. In real code that fallback is often
+    just ``raise NotImplementedError``, but it can also be a valid default
+    implementation for types not covered by any @register. Currently we
+    cannot distinguish these two intents from source, and stubgen-pyx has no
+    inline markup for the user to signal it. A future extension could add
+    such markup (e.g. a comment or config directive) to preserve the base
+    signature as a widening overload; for now, single-variant groups always
+    collapse to the registered type.
     """
     variants: list[_Variant] = []
     unsupported_forms: list[str] = []
@@ -204,37 +227,7 @@ def _collect_group(
                 continue
             variants.append(_Variant(stmt, ast.unparse(type_expr), type_expr))
             break
-    return variants, unsupported_forms
 
-
-def _unified_group(
-    base: _Base, variants: list[_Variant], unsupported_forms: list[str]
-) -> tuple[list[ast.stmt], bool] | None:
-    """Return (emitted_statements, used_overload_decorator) or None to skip.
-
-    Emission strategy is driven by the Python type-system spec
-    (https://typing.python.org/en/latest/spec/overload.html):
-
-    * Groups with >=2 typed variants emit one ``@overload`` per variant. The
-      spec's rule that stub files must not include an overload implementation
-      is honored: no trailing plain ``def`` is emitted.
-    * Groups with exactly one typed variant collapse to a single plain ``def``
-      (no ``@overload`` decorator). The spec forbids a lone ``@overload``: it
-      requires at least two overload-decorated definitions per function, so a
-      single ``@overload`` would be reported as an error by type checkers.
-      A plain signature carries the same information without violating that
-      rule.
-
-    Tradeoff for the single-variant collapse: the base @singledispatch
-    function's fallback body is dropped. In real code that fallback is often
-    just ``raise NotImplementedError``, but it can also be a valid default
-    implementation for types not covered by any @register. Currently we
-    cannot distinguish these two intents from source, and stubgen-pyx has no
-    inline markup for the user to signal it. A future extension could add
-    such markup (e.g. a comment or config directive) to preserve the base
-    signature as a widening overload; for now, single-variant groups always
-    collapse to the registered type.
-    """
     if not variants:
         if unsupported_forms:
             warnings.warn(
@@ -252,16 +245,21 @@ def _unified_group(
     deduped: dict[str, _Variant] = {}
     for variant in variants:
         deduped[variant.type_key] = variant
-
     unique_variants = list(deduped.values())
-    if len(unique_variants) == 1:
-        return [_variant_function(base.name, unique_variants[0], overload=False)], False
 
-    stmts: list[ast.stmt] = [
+    # Match prior behavior: `uses_any` is computed over the raw pre-dedup
+    # variants. A dropped duplicate's return annotation still contributes.
+    uses_any = any(variant.stmt.returns is None for variant in variants)
+    consumed = [variant.stmt for variant in variants]
+
+    if len(unique_variants) == 1:
+        stmts = [_variant_function(base.name, unique_variants[0], overload=False)]
+        return stmts, consumed, False, uses_any
+    stmts = [
         _variant_function(base.name, variant, overload=True)
         for variant in unique_variants
     ]
-    return stmts, True
+    return stmts, consumed, True, uses_any
 
 
 def _variant_function(
@@ -271,7 +269,7 @@ def _variant_function(
 
     ``overload=True`` decorates with ``@overload`` (>=2-variant groups);
     ``overload=False`` emits a plain ``def`` (single-variant collapse — see
-    ``_unified_group`` for the spec rationale).
+    ``_process_group`` for the spec rationale).
     """
     stmt = copy.deepcopy(variant.stmt)
     stmt.name = name
