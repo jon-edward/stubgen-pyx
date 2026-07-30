@@ -224,8 +224,8 @@ def _emit_group(
               caller drops these from the module body.
             - needed_imports: names to inject from `typing`.
         None:
-            No usable variants were found. Emit a warning and leave the base
-            and its variant stmts untouched in the module body.
+            No usable variants were found. Leave the base and its variant stmts
+            untouched in the module body, warning only for unsupported forms.
 
     Emission strategy is driven by the Python type-system spec
     (https://typing.python.org/en/latest/spec/overload.html):
@@ -250,12 +250,11 @@ def _emit_group(
     collapse to the registered type.
     """
     if not variants:
-        detail = (
-            f"unsupported @{base.name}.register(...) form(s): {unsupported_forms!r}"
-            if unsupported_forms
-            else "no overloads"
-        )
-        warnings.warn(f"Cannot unify singledispatch group {base.name!r}: {detail}")
+        if unsupported_forms:
+            warnings.warn(
+                f"Cannot unify singledispatch group {base.name!r}: "
+                f"unsupported @{base.name}.register(...) form(s): {unsupported_forms!r}"
+            )
         return None
 
     # Match runtime singledispatch semantics: duplicate @register(T) in the same
@@ -294,7 +293,7 @@ def _emit_group(
 
 
 def _is_singledispatch(node: ast.expr) -> bool:
-    return _dotted_name(node).endswith("singledispatch")
+    return _dotted_name(node).split(".")[-1] == "singledispatch"
 
 
 def _dotted_name(node: ast.expr) -> str:

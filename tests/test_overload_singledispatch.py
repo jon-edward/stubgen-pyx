@@ -189,6 +189,29 @@ SUCCESS_CASES = [
             "def convert(x: str) -> str: ...\n"
         ),
     ),
+    SuccessCase(
+        id="no_registered_variants_is_silent_noop",
+        # @singledispatch alone with no @register — legal but nothing to unify.
+        pyx="import functools\n@functools.singledispatch\ndef convert(x): ...\n",
+        expected="import functools\n@functools.singledispatch\ndef convert(x): ...\n",
+    ),
+    SuccessCase(
+        id="custom_singledispatch_suffix_is_not_matched",
+        pyx=(
+            "def custom_singledispatch(fn): ...\n"
+            "@custom_singledispatch\n"
+            "def convert(x): ...\n"
+            "@convert.register(int)\n"
+            "def from_int(x): ...\n"
+        ),
+        expected=(
+            "def custom_singledispatch(fn): ...\n"
+            "@custom_singledispatch\n"
+            "def convert(x): ...\n"
+            "@convert.register(int)\n"
+            "def from_int(x): ...\n"
+        ),
+    ),
 ]
 
 
@@ -213,13 +236,6 @@ WARN_CASES = [
             "@convert.register(int, str)\n"
             "def from_int(x): ...\n"
         ),
-    ),
-    WarnCase(
-        id="no_overloads",
-        # @singledispatch alone with no @register — legal but nothing to unify.
-        pyx="import functools\n@functools.singledispatch\ndef convert(x): ...\n",
-        warning_match="no overloads",
-        expected=("import functools\n@functools.singledispatch\ndef convert(x): ...\n"),
     ),
 ]
 
