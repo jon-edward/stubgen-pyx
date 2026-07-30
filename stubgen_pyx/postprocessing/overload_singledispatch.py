@@ -28,23 +28,19 @@ def overload_singledispatch(tree: ast.AST) -> ast.AST:
     #   * record every @singledispatch base (by name and index)
     #   * classify every FunctionDef's decorators against known bases and
     #     partition its variants into that base's list.
-    # A variant defined above its base is silently ignored (it would NameError
-    # at import in real Python, so we don't need to handle it).
+    # A variant defined above its base is silently ignored.
     bases: list[_Base] = []
     bases_by_name: dict[str, _Base] = {}
     variants_by_base: dict[str, list[_Variant]] = {}
     unsupported_by_base: dict[str, list[str]] = {}
     for idx, stmt in enumerate(tree.body):
-        if isinstance(stmt, ast.FunctionDef) and any(
-            _is_singledispatch(d) for d in stmt.decorator_list
-        ):
-            base = _Base(stmt.name, idx)
-            bases.append(base)
-            bases_by_name[base.name] = base
-            variants_by_base[base.name] = []
-            unsupported_by_base[base.name] = []
-            continue
         if (
+            is_decorated_base := isinstance(stmt, ast.FunctionDef)
+            and any(_is_singledispatch(d) for d in stmt.decorator_list)
+        ) or (
+            # Earlier pipeline passes (e.g. trim_not_defined) may have rewritten a
+            # lambda body to ``...``, and this pass drops the base body entirely either
+            # way, so there's no need to check the shape of the first argument.
             isinstance(stmt, ast.Assign)
             and len(stmt.targets) == 1
             and isinstance(stmt.targets[0], ast.Name)
@@ -52,16 +48,12 @@ def overload_singledispatch(tree: ast.AST) -> ast.AST:
             and stmt.value.args
             and _is_singledispatch(stmt.value.func)
         ):
-            # Earlier pipeline passes (e.g. trim_not_defined) may have rewritten a
-            # lambda body to ``...``, and this pass drops the base body entirely either
-            # way, so there's no need to check the shape of the first argument.
-            base = _Base(stmt.targets[0].id, idx)
+            base = _Base(stmt.name if is_decorated_base else stmt.targets[0].id, idx)
             bases.append(base)
             bases_by_name[base.name] = base
             variants_by_base[base.name] = []
             unsupported_by_base[base.name] = []
-            continue
-        if isinstance(stmt, ast.FunctionDef):
+        elif isinstance(stmt, ast.FunctionDef):
             for decorator in stmt.decorator_list:
                 _classify_decorator(
                     decorator,
@@ -77,7 +69,7 @@ def overload_singledispatch(tree: ast.AST) -> ast.AST:
         )
         for base in bases
     }
-    skip = {
+    overwritten_registrations = {
         id(stmt)
         for result in results.values()
         if result is not None
@@ -87,7 +79,7 @@ def overload_singledispatch(tree: ast.AST) -> ast.AST:
     body: list[ast.stmt] = []
     needed: set[str] = set()
     for idx, stmt in enumerate(tree.body):
-        if id(stmt) in skip:
+        if id(stmt) in overwritten_registrations:
             continue
         result = results.get(idx)
         if result is None:
@@ -115,7 +107,7 @@ def overload_singledispatch(tree: ast.AST) -> ast.AST:
                 )
             elif isinstance(stmt, ast.ImportFrom) and stmt.module == "__future__":
                 insert_at = idx + 1
-        # `sorted` gives deterministic emission order regardless of set hashing.
+        # `sorted` gives deterministic emission order regardless of set hashing
         to_add = sorted(needed - already_imported)
         if to_add:
             if first_typing is not None:
@@ -153,14 +145,16 @@ def _classify_decorator(
     variants_by_base: dict[str, list[_Variant]],
     unsupported_by_base: dict[str, list[str]],
 ) -> None:
-    """Classify one decorator against known bases and append to the right list."""
-    # Decorator shapes we accept, cascading from most specific to least:
-    #   * @base.register(T)              -> normal variant
-    #   * @base.register()               -> raise (invalid at import)
-    #   * @base.register(kw=...)         -> raise (invalid at import)
-    #   * @base.register(T, ...extras)   -> unsupported_forms (pathological)
-    #   * @base.register (bare)          -> variant, type from first arg annotation
-    # Anything else is an unrelated decorator on a nearby function; skip silently.
+    """Classify one decorator against known bases and append to the right list.
+
+    Decorator shapes we accept, cascading from most specific to least:
+      * @base.register(T)              -> normal variant
+      * @base.register()               -> raise (invalid at import)
+      * @base.register(kw=...)         -> raise (invalid at import)
+      * @base.register(T, ...extras)   -> unsupported_forms (pathological)
+      * @base.register (bare)          -> variant, type from first arg annotation
+    Anything else is an unrelated decorator on a nearby function; skip silently.
+    """
     if isinstance(decorator, ast.Call):
         base = _match_register(decorator.func, bases_by_name)
         if base is None:
@@ -218,16 +212,22 @@ def _emit_group(
 ) -> tuple[list[ast.stmt], list[ast.FunctionDef], set[str]] | None:
     """Aggregate pre-collected variants for one base into replacement stmts.
 
+    Args:
+        base: The @singledispatch base whose group is being emitted.
+        variants: Typed variants collected for this base, in source order.
+        unsupported_forms: Unparsed ``@base.register(...)`` decorators that
+            were syntactically legal but semantically pathological (e.g.
+            extra positional args). Used only for the warning message.
+
     Returns:
-        On success:
-            (replacement_stmts, consumed_variant_stmts, needed_imports)
-            - replacement_stmts: statements that replace the base at its index.
-            - consumed_variant_stmts: the FunctionDefs for the variants; the
-              caller drops these from the module body.
-            - needed_imports: names to inject from `typing`.
-        None:
-            No usable variants were found. Leave the base and its variant stmts
-            untouched in the module body, warning only for unsupported forms.
+        A ``(replacement_stmts, consumed_variant_stmts, needed_imports)``
+        tuple when the group has usable variants, where
+        ``replacement_stmts`` replace the base at its index,
+        ``consumed_variant_stmts`` are dropped from the module body by the
+        caller, and ``needed_imports`` are names to inject from ``typing``.
+        Returns ``None`` when no usable variants were found; the base and
+        its variant stmts are then left untouched in the module body, and a
+        warning is emitted only if ``unsupported_forms`` is non-empty.
 
     Emission strategy is driven by the Python type-system spec
     (https://typing.python.org/en/latest/spec/overload.html):
@@ -238,8 +238,9 @@ def _emit_group(
     * Groups with exactly one typed variant collapse to a single plain ``def``
       (no ``@overload`` decorator). The spec forbids a lone ``@overload``: it
       requires at least two overload-decorated definitions per function, so a
-      single ``@overload`` would be reported as an error by conforming type checkers. A
-      plain signature carries the same information without violating that rule.
+      single ``@overload`` would be reported as an error by conforming type
+      checkers. A plain signature carries the same information without
+      violating that rule.
 
     Tradeoff for the single-variant collapse: the base @singledispatch
     function's fallback body is dropped. In real code that fallback is often
