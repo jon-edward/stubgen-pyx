@@ -22,14 +22,27 @@ def overload_singledispatch(tree: ast.AST) -> ast.AST:
     if not isinstance(tree, ast.Module):
         return tree
 
-    # Locate @singledispatch bases: decorated `def` or `name = functools.singledispatch(...)`.
+    # Single linear pass over the module body:
+    #   * record every @singledispatch base (by name and index)
+    #   * classify every FunctionDef's decorators against known bases and
+    #     partition its variants into that base's list.
+    # A variant defined above its base is silently ignored (it would NameError
+    # at import in real Python, so we don't need to handle it).
     bases: list[_Base] = []
+    bases_by_name: dict[str, _Base] = {}
+    variants_by_base: dict[str, list[_Variant]] = {}
+    unsupported_by_base: dict[str, list[str]] = {}
     for idx, stmt in enumerate(tree.body):
         if isinstance(stmt, ast.FunctionDef) and any(
             _is_singledispatch(d) for d in stmt.decorator_list
         ):
-            bases.append(_Base(stmt.name, idx))
-        elif (
+            base = _Base(stmt.name, idx)
+            bases.append(base)
+            bases_by_name[base.name] = base
+            variants_by_base[base.name] = []
+            unsupported_by_base[base.name] = []
+            continue
+        if (
             isinstance(stmt, ast.Assign)
             and len(stmt.targets) == 1
             and isinstance(stmt.targets[0], ast.Name)
@@ -40,9 +53,28 @@ def overload_singledispatch(tree: ast.AST) -> ast.AST:
             # Earlier pipeline passes (e.g. trim_not_defined) may have rewritten a
             # lambda body to ``...``, and this pass drops the base body entirely either
             # way, so there's no need to check the shape of the first argument.
-            bases.append(_Base(stmt.targets[0].id, idx))
+            base = _Base(stmt.targets[0].id, idx)
+            bases.append(base)
+            bases_by_name[base.name] = base
+            variants_by_base[base.name] = []
+            unsupported_by_base[base.name] = []
+            continue
+        if isinstance(stmt, ast.FunctionDef):
+            for decorator in stmt.decorator_list:
+                _classify_decorator(
+                    decorator,
+                    stmt,
+                    bases_by_name,
+                    variants_by_base,
+                    unsupported_by_base,
+                )
 
-    results = {base.index: _process_group(base, tree.body) for base in bases}
+    results = {
+        base.index: _emit_group(
+            base, variants_by_base[base.name], unsupported_by_base[base.name]
+        )
+        for base in bases
+    }
     skip = {
         id(stmt)
         for result in results.values()
@@ -112,10 +144,77 @@ class _Variant:
     type_expr: ast.expr
 
 
-def _process_group(
-    base: _Base, body: list[ast.stmt]
+def _classify_decorator(
+    decorator: ast.expr,
+    stmt: ast.FunctionDef,
+    bases_by_name: dict[str, _Base],
+    variants_by_base: dict[str, list[_Variant]],
+    unsupported_by_base: dict[str, list[str]],
+) -> None:
+    """Classify one decorator against known bases and append to the right list."""
+    # Decorator shapes we accept, cascading from most specific to least:
+    #   * @base.register(T)              -> normal variant
+    #   * @base.register()               -> raise (invalid at import)
+    #   * @base.register(kw=...)         -> raise (invalid at import)
+    #   * @base.register(T, ...extras)   -> unsupported_forms (pathological)
+    #   * @base.register (bare)          -> variant, type from first arg annotation
+    # Anything else is an unrelated decorator on a nearby function; skip silently.
+    if isinstance(decorator, ast.Call):
+        base = _match_register(decorator.func, bases_by_name)
+        if base is None:
+            return
+        if not decorator.args and not decorator.keywords:
+            raise SingledispatchStubError(
+                f"@{base.name}.register() called with no arguments: "
+            )
+        if decorator.keywords:
+            raise SingledispatchStubError(
+                f"@{base.name}.register(...) takes no keyword arguments but "
+                f"was called with {[kw.arg for kw in decorator.keywords]!r}"
+            )
+        if len(decorator.args) == 1:
+            type_expr: ast.expr | None = decorator.args[0]
+        else:
+            # Legal-but-pathological: @base.register(T, extra_positional).
+            # At runtime this registers T and treats the extras as the
+            # handler, producing nonsense. Record for a better warning.
+            unsupported_by_base[base.name].append(ast.unparse(decorator))
+            return
+    else:
+        base = _match_register(decorator, bases_by_name)
+        if base is None:
+            return
+        # Bare @foo.register attribute requires an annotated arg.
+        args = stmt.args.posonlyargs + stmt.args.args
+        type_expr = args[0].annotation if args else None
+        if type_expr is None:
+            raise SingledispatchStubError(
+                f"@{base.name}.register on {stmt.name!r} has no type. Add a "
+                "type annotation to the first parameter or pass the type as "
+                f"@{base.name}.register(T)."
+            )
+    variants_by_base[base.name].append(
+        _Variant(stmt, ast.unparse(type_expr), type_expr)
+    )
+
+
+def _match_register(node: ast.expr, bases_by_name: dict[str, _Base]) -> _Base | None:
+    """Return the base whose `@<base>.register` this decorator names, or None."""
+    if (
+        isinstance(node, ast.Attribute)
+        and node.attr == "register"
+        and isinstance(node.value, ast.Name)
+    ):
+        return bases_by_name.get(node.value.id)
+    return None
+
+
+def _emit_group(
+    base: _Base,
+    variants: list[_Variant],
+    unsupported_forms: list[str],
 ) -> tuple[list[ast.stmt], list[ast.FunctionDef], set[str]] | None:
-    """Collect @register variants for a group and produce replacement stmts.
+    """Aggregate pre-collected variants for one base into replacement stmts.
 
     Returns:
         On success:
@@ -127,11 +226,6 @@ def _process_group(
         None:
             No usable variants were found. Emit a warning and leave the base
             and its variant stmts untouched in the module body.
-
-    Raises:
-        SingledispatchStubError: on decorator forms that fail at import time in
-        pure Python (empty ``@base.register()``, keyword-arg ``@base.register(
-        cls, kw=...)``, bare ``@base.register`` on an unannotated function).
 
     Emission strategy is driven by the Python type-system spec
     (https://typing.python.org/en/latest/spec/overload.html):
@@ -155,53 +249,6 @@ def _process_group(
     signature as a widening overload; for now, single-variant groups always
     collapse to the registered type.
     """
-    variants: list[_Variant] = []
-    unsupported_forms: list[str] = []
-    for stmt in body[base.index + 1 :]:
-        if not isinstance(stmt, ast.FunctionDef):
-            continue
-        for decorator in stmt.decorator_list:
-            # Classify the decorator against @base.register in one cascade.
-            # Anything not shaped like @base.register(...) is an unrelated
-            # decorator on a nearby function and skipped silently.
-            if isinstance(decorator, ast.Call) and _is_register(
-                base.name, decorator.func
-            ):
-                if not decorator.args and not decorator.keywords:
-                    # @base.register() — pure Python raises TypeError at import.
-                    raise SingledispatchStubError(
-                        f"@{base.name}.register() called with no arguments: "
-                    )
-                if decorator.keywords:
-                    # @base.register(kw=...) — pure Python raises TypeError.
-                    raise SingledispatchStubError(
-                        f"@{base.name}.register(...) takes no keyword arguments but "
-                        f"was called with {[kw.arg for kw in decorator.keywords]!r}"
-                    )
-                if len(decorator.args) == 1:
-                    # @base.register(T) — decorator provides the type.
-                    type_expr = decorator.args[0]
-                else:
-                    # Legal-but-pathological: @base.register(T, extra_positional).
-                    # At runtime this registers T and treats the extras as the
-                    # handler, producing nonsense. Record for a better warning.
-                    unsupported_forms.append(ast.unparse(decorator))
-                    continue
-            elif _is_register(base.name, decorator):
-                # Bare @foo.register attribute requires an annotated arg.
-                args = stmt.args.posonlyargs + stmt.args.args
-                type_expr = args[0].annotation if args else None
-                if type_expr is None:
-                    raise SingledispatchStubError(
-                        f"@{base.name}.register on {stmt.name!r} has no type. Add a "
-                        "type annotation to the first parameter or pass the type as "
-                        f"@{base.name}.register(T)."
-                    )
-            else:
-                # Unrelated decorator on a nearby function — skip silently.
-                continue
-            variants.append(_Variant(stmt, ast.unparse(type_expr), type_expr))
-
     if not variants:
         detail = (
             f"unsupported @{base.name}.register(...) form(s): {unsupported_forms!r}"
@@ -248,15 +295,6 @@ def _process_group(
 
 def _is_singledispatch(node: ast.expr) -> bool:
     return _dotted_name(node).endswith("singledispatch")
-
-
-def _is_register(base_name: str, node: ast.expr) -> bool:
-    return (
-        isinstance(node, ast.Attribute)
-        and node.attr == "register"
-        and isinstance(node.value, ast.Name)
-        and node.value.id == base_name
-    )
 
 
 def _dotted_name(node: ast.expr) -> str:
