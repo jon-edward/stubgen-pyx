@@ -252,35 +252,28 @@ def _process_group(
     uses_any = any(variant.stmt.returns is None for variant in variants)
     consumed = [variant.stmt for variant in variants]
 
-    if len(unique_variants) == 1:
-        stmts = [_variant_function(base.name, unique_variants[0], overload=False)]
-        return stmts, consumed, False, uses_any
-    stmts = [
-        _variant_function(base.name, variant, overload=True)
-        for variant in unique_variants
-    ]
-    return stmts, consumed, True, uses_any
-
-
-def _variant_function(
-    name: str, variant: _Variant, *, overload: bool
-) -> ast.FunctionDef:
-    """Build one signature for a group.
-
-    ``overload=True`` decorates with ``@overload`` (>=2-variant groups);
-    ``overload=False`` emits a plain ``def`` (single-variant collapse — see
-    ``_process_group`` for the spec rationale).
-    """
-    stmt = copy.deepcopy(variant.stmt)
-    stmt.name = name
-    stmt.decorator_list = [ast.Name(id="overload", ctx=ast.Load())] if overload else []
-    stmt.body = [ast.Expr(value=ast.Constant(...))]
-    if stmt.returns is None:
-        stmt.returns = ast.Name(id="Any", ctx=ast.Load())
-    args = stmt.args.posonlyargs + stmt.args.args
-    if args:
-        args[0].annotation = copy.deepcopy(variant.type_expr)
-    return stmt
+    use_overload = len(unique_variants) > 1
+    stmts: list[ast.stmt] = []
+    for variant in unique_variants:
+        # Rewrite the variant into a signature for the base name:
+        # * rename to base
+        # * apply chosen decorator list (@overload or none)
+        # * elide body to `...`
+        # * default return annotation to `Any`
+        # * force the first arg's annotation to the registered type
+        stmt = copy.deepcopy(variant.stmt)
+        stmt.name = base.name
+        stmt.decorator_list = (
+            [ast.Name(id="overload", ctx=ast.Load())] if use_overload else []
+        )
+        stmt.body = [ast.Expr(value=ast.Constant(...))]
+        if stmt.returns is None:
+            stmt.returns = ast.Name(id="Any", ctx=ast.Load())
+        args = stmt.args.posonlyargs + stmt.args.args
+        if args:
+            args[0].annotation = copy.deepcopy(variant.type_expr)
+        stmts.append(stmt)
+    return stmts, consumed, use_overload, uses_any
 
 
 def _is_singledispatch(node: ast.expr) -> bool:
