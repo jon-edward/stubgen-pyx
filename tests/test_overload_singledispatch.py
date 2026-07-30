@@ -171,6 +171,24 @@ SUCCESS_CASES = [
             "def convert(x: bytes) -> bytes: ...\n"
         ),
     ),
+    SuccessCase(
+        id="stacked_register_decorators_emit_multiple_overloads",
+        pyx=(
+            "import functools\n"
+            "@functools.singledispatch\n"
+            "def convert(x): ...\n"
+            "@convert.register(int)\n"
+            "@convert.register(str)\n"
+            "def from_scalar(x) -> str: ...\n"
+        ),
+        expected=(
+            "from typing import overload\n"
+            "@overload\n"
+            "def convert(x: int) -> str: ...\n"
+            "@overload\n"
+            "def convert(x: str) -> str: ...\n"
+        ),
+    ),
 ]
 
 

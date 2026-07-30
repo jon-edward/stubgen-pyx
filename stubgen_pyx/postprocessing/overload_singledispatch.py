@@ -215,7 +215,6 @@ def _process_group(
                 # Unrelated decorator on a nearby function — skip silently.
                 continue
             variants.append(_Variant(stmt, ast.unparse(type_expr), type_expr))
-            break
 
     if not variants:
         detail = (
