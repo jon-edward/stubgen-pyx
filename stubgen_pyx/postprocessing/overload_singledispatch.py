@@ -63,6 +63,9 @@ def overload_singledispatch(tree: ast.AST) -> ast.AST:
                     unsupported_by_base,
                 )
 
+    # Match each base with its collected variants and emit a replacement group of
+    # statements. The base's index is used to replace it in the module body, and
+    # the variant statements are dropped from the body by the caller.
     results = {
         base.index: _emit_group(
             base, variants_by_base[base.name], unsupported_by_base[base.name]
@@ -90,6 +93,7 @@ def overload_singledispatch(tree: ast.AST) -> ast.AST:
         body.extend(stmts)
     tree.body = body
 
+    # Patch in any needed imports from typing.
     if needed:
         # One traversal: find the first `from typing import ...` (where new names
         # get appended), the last `from __future__` import (fallback insert
