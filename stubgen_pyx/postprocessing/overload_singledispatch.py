@@ -38,7 +38,7 @@ def overload_singledispatch(tree: ast.AST) -> ast.AST:
         if isinstance(stmt, ast.FunctionDef) and any(
             _is_singledispatch(d) for d in stmt.decorator_list
         ):
-            bases.append(_Base(stmt.name, stmt, idx))
+            bases.append(_Base(stmt.name, idx))
         elif (
             isinstance(stmt, ast.Assign)
             and len(stmt.targets) == 1
@@ -47,7 +47,7 @@ def overload_singledispatch(tree: ast.AST) -> ast.AST:
             and stmt.value.args
             and _is_singledispatch(stmt.value.func)
         ):
-            bases.append(_Base(stmt.targets[0].id, stmt, idx))
+            bases.append(_Base(stmt.targets[0].id, idx))
 
     results = {base.index: _process_group(base, tree.body) for base in bases}
     skip = {
@@ -58,8 +58,7 @@ def overload_singledispatch(tree: ast.AST) -> ast.AST:
     }
 
     body: list[ast.stmt] = []
-    emitted_overloads = False
-    emitted_any = False
+    needed: set[str] = set()
     for idx, stmt in enumerate(tree.body):
         if id(stmt) in skip:
             continue
@@ -67,17 +66,11 @@ def overload_singledispatch(tree: ast.AST) -> ast.AST:
         if result is None:
             body.append(stmt)
             continue
-        stmts, _consumed, used_overload, uses_any = result
-        emitted_overloads |= used_overload
-        emitted_any |= uses_any
+        stmts, _consumed, needed_imports = result
+        needed.update(needed_imports)
         body.extend(stmts)
     tree.body = body
 
-    needed = set()
-    if emitted_overloads:
-        needed.add("overload")
-    if emitted_any:
-        needed.add("Any")
     if needed:
         # One traversal: find the first `from typing import ...` (where new names
         # get appended), the last `from __future__` import (fallback insert
@@ -116,7 +109,6 @@ def overload_singledispatch(tree: ast.AST) -> ast.AST:
 @dataclass
 class _Base:
     name: str
-    stmt: ast.FunctionDef | ast.Assign
     index: int
 
 
@@ -129,19 +121,16 @@ class _Variant:
 
 def _process_group(
     base: _Base, body: list[ast.stmt]
-) -> tuple[list[ast.stmt], list[ast.FunctionDef], bool, bool] | None:
+) -> tuple[list[ast.stmt], list[ast.FunctionDef], set[str]] | None:
     """Collect @register variants for a group and produce replacement stmts.
 
     Returns:
         On success:
-            (replacement_stmts, consumed_variant_stmts, used_overload, uses_any)
+            (replacement_stmts, consumed_variant_stmts, needed_imports)
             - replacement_stmts: statements that replace the base at its index.
             - consumed_variant_stmts: the FunctionDefs for the variants; the
               caller drops these from the module body.
-            - used_overload: whether the emitted stmts carry @overload (drives
-              typing import injection).
-            - uses_any: whether any variant has no return annotation (drives
-              typing import injection for `Any`).
+            - needed_imports: names to inject from `typing`.
         None:
             No usable variants were found. Emit a warning and leave the base
             and its variant stmts untouched in the module body.
@@ -229,30 +218,26 @@ def _process_group(
             break
 
     if not variants:
-        if unsupported_forms:
-            warnings.warn(
-                f"Cannot unify singledispatch group {base.name!r}: unsupported "
-                f"@{base.name}.register(...) form(s): {unsupported_forms!r}"
-            )
-        else:
-            warnings.warn(
-                f"Cannot unify singledispatch group {base.name!r}: no overloads"
-            )
+        detail = (
+            f"unsupported @{base.name}.register(...) form(s): {unsupported_forms!r}"
+            if unsupported_forms
+            else "no overloads"
+        )
+        warnings.warn(f"Cannot unify singledispatch group {base.name!r}: {detail}")
         return None
 
     # Match runtime singledispatch semantics: duplicate @register(T) in the same
     # group silently overwrites, so keep only the last variant per type key.
-    deduped: dict[str, _Variant] = {}
-    for variant in variants:
-        deduped[variant.type_key] = variant
-    unique_variants = list(deduped.values())
-
-    # Match prior behavior: `uses_any` is computed over the raw pre-dedup
-    # variants. A dropped duplicate's return annotation still contributes.
-    uses_any = any(variant.stmt.returns is None for variant in variants)
-    consumed = [variant.stmt for variant in variants]
+    unique_variants = list({variant.type_key: variant for variant in variants}.values())
 
     use_overload = len(unique_variants) > 1
+    needed_imports = {"overload"} if use_overload else set()
+    # Match prior behavior: `Any` is decided from raw pre-dedup variants.
+    # A dropped duplicate's return annotation still contributes.
+    if any(variant.stmt.returns is None for variant in variants):
+        needed_imports.add("Any")
+    consumed = [variant.stmt for variant in variants]
+
     stmts: list[ast.stmt] = []
     for variant in unique_variants:
         # Rewrite the variant into a signature for the base name:
@@ -273,7 +258,7 @@ def _process_group(
         if args:
             args[0].annotation = copy.deepcopy(variant.type_expr)
         stmts.append(stmt)
-    return stmts, consumed, use_overload, uses_any
+    return stmts, consumed, needed_imports
 
 
 def _is_singledispatch(node: ast.expr) -> bool:
