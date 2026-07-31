@@ -66,19 +66,13 @@ class _AnnotationValidator(ast.NodeTransformer):
     replaced: set[str] = field(default_factory=set, init=False)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
-        self._visit_function_signature(node)
-        self.generic_visit(node)
+        self._visit_function(node)
         return node
 
     def visit_AsyncFunctionDef(
         self, node: ast.AsyncFunctionDef
     ) -> ast.AsyncFunctionDef:
-        self._visit_function_signature(node)
-        self.generic_visit(node)
-        return node
-
-    def visit_ClassDef(self, node: ast.ClassDef) -> ast.ClassDef:
-        self.generic_visit(node)
+        self._visit_function(node)
         return node
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> ast.AnnAssign:
@@ -92,13 +86,20 @@ class _AnnotationValidator(ast.NodeTransformer):
         return ast.copy_location(ast.Name(id="Any", ctx=ast.Load()), node)
 
     def visit_Attribute(self, node: ast.Attribute) -> ast.expr:
-        root = _root_name(node)
+        value = node.value
+        while isinstance(value, ast.Attribute):
+            value = value.value
+        root = value.id if isinstance(value, ast.Name) else None
         if root is not None and root not in self.defined_names:
             self.replaced.add(root)
             return ast.copy_location(ast.Name(id="Any", ctx=ast.Load()), node)
         visited = self.generic_visit(node)
         assert isinstance(visited, ast.expr)
         return visited
+
+    def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        self._visit_function_signature(node)
+        self.generic_visit(node)
 
     def _visit_function_signature(
         self, node: ast.FunctionDef | ast.AsyncFunctionDef
@@ -112,15 +113,6 @@ class _AnnotationValidator(ast.NodeTransformer):
                 arg.annotation = self.visit(arg.annotation)
         if node.returns is not None:
             node.returns = self.visit(node.returns)
-
-
-def _root_name(node: ast.Attribute) -> str | None:
-    value = node.value
-    while isinstance(value, ast.Attribute):
-        value = value.value
-    if isinstance(value, ast.Name):
-        return value.id
-    return None
 
 
 def _has_typing_name(tree: ast.AST, name: str) -> bool:
