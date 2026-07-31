@@ -22,8 +22,14 @@ class _ArtifactStripper(ast.NodeTransformer):
         return node
 
     def visit_Import(self, node: ast.Import) -> ast.AST | None:
-        if any(name.name.startswith(("cython", "cpython")) for name in node.names):
+        kept = [
+            name
+            for name in node.names
+            if not name.name.startswith(("cython", "cpython"))
+        ]
+        if not kept:
             return None
+        node.names = kept
         return node
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> ast.AST | None:

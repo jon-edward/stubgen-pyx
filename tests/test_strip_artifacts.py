@@ -62,6 +62,17 @@ def test_strip_artifacts_removes_cython_and_cpython_imports():
     assert "class Foo" in result
 
 
+def test_strip_artifacts_import_filters_cython_names_but_keeps_siblings():
+    code = "import os, cython, sys\nclass Foo: pass"
+
+    result = _strip(code)
+
+    assert "cython" not in result
+    assert "import os" in result
+    assert "sys" in result
+    assert "class Foo" in result
+
+
 def test_strip_artifacts_removes_runtime_constant_call_rhs():
     code = "SIZE_TYPE = DataType(42)\nX = 42\nclass Foo: pass"
 
