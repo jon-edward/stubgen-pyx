@@ -58,37 +58,34 @@ class _ArtifactStripper(ast.NodeTransformer):
         if not isinstance(node, ast.Assign):
             return False
         # __all__ is always user-authored; preserve it unconditionally.
-        if _is_name_assignment(node, "__all__"):
+        if (
+            len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == "__all__"
+        ):
             return False
         return (
             len(node.targets) == 1
             and isinstance(node.value, (ast.Call, ast.Attribute))
             # TypeVar assignments are preserved; they carry useful stub type info.
-            and not _is_typevar_call(node.value)
+            and not (
+                isinstance(node.value, ast.Call)
+                and (
+                    isinstance(node.value.func, ast.Name)
+                    and node.value.func.id == "TypeVar"
+                    or isinstance(node.value.func, ast.Attribute)
+                    and node.value.func.attr == "TypeVar"
+                )
+            )
         )
 
     @staticmethod
     def _is_class_artifact(node: ast.stmt) -> bool:
         return (
             isinstance(node, ast.Assign)
-            and _is_name_assignment(node, "__hash__")
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == "__hash__"
             and isinstance(node.value, ast.Constant)
             and node.value.value is None
         )
-
-
-def _is_name_assignment(node: ast.Assign, name: str) -> bool:
-    return (
-        len(node.targets) == 1
-        and isinstance(node.targets[0], ast.Name)
-        and node.targets[0].id == name
-    )
-
-
-def _is_typevar_call(node: ast.expr) -> bool:
-    return isinstance(node, ast.Call) and (
-        isinstance(node.func, ast.Name)
-        and node.func.id == "TypeVar"
-        or isinstance(node.func, ast.Attribute)
-        and node.func.attr == "TypeVar"
-    )
