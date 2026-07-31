@@ -13,8 +13,8 @@ def validate_annotations(tree: ast.AST) -> ast.AST:
     defined_names = _DefinedCollector.collect(tree) | _BUILTIN_NAMES
     validator = _AnnotationValidator(defined_names)
     tree = validator.visit(tree)
-    if validator.replaced and not _has_typing_name(tree, "Any"):
-        _insert_typing_import(tree, "Any")
+    if validator.replaced:
+        _ensure_typing_import(tree, "Any")
     return ast.fix_missing_locations(tree)
 
 
@@ -115,25 +115,29 @@ class _AnnotationValidator(ast.NodeTransformer):
             node.returns = self.visit(node.returns)
 
 
-def _has_typing_name(tree: ast.AST, name: str) -> bool:
-    if not isinstance(tree, ast.Module):
-        return False
-    return any(
-        isinstance(stmt, ast.ImportFrom)
-        and stmt.module == "typing"
-        and any(alias.name == name and alias.asname is None for alias in stmt.names)
-        for stmt in tree.body
-    )
-
-
-def _insert_typing_import(tree: ast.AST, name: str) -> None:
+def _ensure_typing_import(tree: ast.AST, name: str) -> None:
     if not isinstance(tree, ast.Module):
         return
-    insert_at = 0
+    found = False
+    first_typing_idx: int | None = None
+    last_future_idx = -1
     for idx, stmt in enumerate(tree.body):
-        if isinstance(stmt, ast.ImportFrom) and stmt.module == "__future__":
-            insert_at = idx + 1
+        if isinstance(stmt, ast.ImportFrom) and stmt.module == "typing":
+            if first_typing_idx is None:
+                first_typing_idx = idx
+            found |= any(
+                alias.name == name and alias.asname is None for alias in stmt.names
+            )
+        elif isinstance(stmt, ast.ImportFrom) and stmt.module == "__future__":
+            last_future_idx = idx
+    if found:
+        return
+    if first_typing_idx is not None:
+        typing_import = tree.body[first_typing_idx]
+        assert isinstance(typing_import, ast.ImportFrom)
+        typing_import.names.insert(0, ast.alias(name=name))
+        return
     tree.body.insert(
-        insert_at,
+        last_future_idx + 1,
         ast.ImportFrom(module="typing", names=[ast.alias(name=name)], level=0),
     )
