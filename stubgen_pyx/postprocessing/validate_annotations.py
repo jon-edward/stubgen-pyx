@@ -28,10 +28,6 @@ class _DefinedCollector(ast.NodeVisitor):
         collector.visit(tree)
         return collector.defined_names
 
-    def visit_Module(self, node: ast.Module) -> None:
-        for stmt in node.body:
-            self.visit(stmt)
-
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self.defined_names.add(node.name)
 
