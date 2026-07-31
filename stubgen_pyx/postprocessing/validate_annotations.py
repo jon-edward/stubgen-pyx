@@ -69,6 +69,23 @@ def validate_annotations(tree: ast.AST) -> ast.AST:
                 node.returns = _rewrite(node.returns)
         elif isinstance(node, ast.AnnAssign):
             node.annotation = _rewrite(node.annotation)
+        elif isinstance(node, ast.ClassDef):
+            for child in node.body:
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    for dec in child.decorator_list:
+                        _rewrite(dec)
+                    for arg in (
+                        child.args.posonlyargs + child.args.args + child.args.kwonlyargs
+                    ):
+                        if arg.annotation:
+                            arg.annotation = _rewrite(arg.annotation)
+                    for arg in (child.args.vararg, child.args.kwarg):
+                        if arg and arg.annotation:
+                            arg.annotation = _rewrite(arg.annotation)
+                    if child.returns:
+                        child.returns = _rewrite(child.returns)
+                elif isinstance(child, ast.AnnAssign):
+                    child.annotation = _rewrite(child.annotation)
 
     if replaced[0]:
         last_future, first_typing = -1, None
