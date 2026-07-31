@@ -10,7 +10,9 @@ _BUILTIN_NAMES.update({"None"})
 
 def validate_annotations(tree: ast.AST) -> ast.AST:
     """Replace unresolved annotation names with Any."""
-    defined_names = _DefinedCollector.collect(tree) | _BUILTIN_NAMES
+    defined_names = (
+        _collect_defined_names(tree) if isinstance(tree, ast.Module) else set()
+    ) | _BUILTIN_NAMES
     validator = _AnnotationValidator(defined_names)
     tree = validator.visit(tree)
     if validator.replaced:
@@ -18,46 +20,31 @@ def validate_annotations(tree: ast.AST) -> ast.AST:
     return ast.fix_missing_locations(tree)
 
 
-@dataclass
-class _DefinedCollector(ast.NodeVisitor):
-    defined_names: set[str] = field(default_factory=set)
+def _collect_defined_names(tree: ast.Module) -> set[str]:
+    names: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                names.add(alias.asname or alias.name.split(".", 1)[0])
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                names.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                _add_name_targets(target, names)
+        elif isinstance(node, ast.AnnAssign):
+            _add_name_targets(node.target, names)
+    return names
 
-    @classmethod
-    def collect(cls, tree: ast.AST) -> set[str]:
-        collector = cls()
-        collector.visit(tree)
-        return collector.defined_names
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        self.defined_names.add(node.name)
-
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        self.defined_names.add(node.name)
-
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        self.defined_names.add(node.name)
-
-    def visit_Import(self, node: ast.Import) -> None:
-        for alias in node.names:
-            self.defined_names.add(alias.asname or alias.name.split(".", 1)[0])
-
-    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        for alias in node.names:
-            self.defined_names.add(alias.asname or alias.name)
-
-    def visit_Assign(self, node: ast.Assign) -> None:
-        for target in node.targets:
-            self._add_target(target)
-
-    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
-        self._add_target(node.target)
-
-    def _add_target(self, target: ast.expr) -> None:
-        if isinstance(target, ast.Name):
-            self.defined_names.add(target.id)
-        elif isinstance(target, (ast.Tuple, ast.List)):
-            for elt in target.elts:
-                self._add_target(elt)
+def _add_name_targets(target: ast.expr, names: set[str]) -> None:
+    if isinstance(target, ast.Name):
+        names.add(target.id)
+    elif isinstance(target, (ast.Tuple, ast.List)):
+        for elt in target.elts:
+            _add_name_targets(elt, names)
 
 
 @dataclass
