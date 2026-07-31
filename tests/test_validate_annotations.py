@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import ast
 
-from stubgen_pyx.postprocessing.validate_annotations import validate_annotations
+from stubgen_pyx.postprocessing.strip_artifacts import (
+    strip_artifacts as validate_annotations,
+)
 
 
 def _validate(code: str) -> str:

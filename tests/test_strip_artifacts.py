@@ -154,3 +154,11 @@ def test_strip_artifacts_preserves_dunder_all_attribute_assignment():
 
     assert "__all__" in result
     assert "class Foo" in result
+
+
+def test_strip_artifacts_rewrites_dangling_cython_annotation():
+    code = "from cython import bint\ndef f(x: bint) -> None: ..."
+    result = ast.unparse(strip_artifacts(ast.parse(code)))
+    assert "from typing import Any" in result
+    assert "bint" not in result
+    assert "def f(x: Any) -> None" in result
