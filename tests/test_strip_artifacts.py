@@ -1,217 +1,221 @@
+"""Tests for stub-artifact stripping, exercised through the public API.
+
+Each ``Case`` feeds Cython source into :meth:`StubgenPyx.convert_str` and
+asserts on the final ``.pyi`` output. The scenarios cover the four categories
+of artifact-stripping the pipeline is responsible for:
+
+* preserving ``__all__`` (list, tuple, call, attribute RHS)
+* stripping class-level ``__hash__ = None`` while keeping module-level
+* stripping ``cython`` / ``cpython`` cimports and bare ``import cython``
+* stripping runtime-constant Call/Attribute RHS at module scope
+* rewriting dangling annotations (via Ellipsis or ``Any`` depending on path)
+"""
+
 from __future__ import annotations
 
-import ast
-
-from stubgen_pyx.postprocessing.strip_artifacts import strip_artifacts
-
-
-def _strip(code: str) -> str:
-    tree = ast.parse(code)
-    tree = strip_artifacts(tree)
-    return ast.unparse(tree)
-
-
-def test_strip_artifacts_preserves_dunder_all_list_assignment():
-    code = "__all__ = ['Foo', 'Bar']\nclass Foo: pass"
-
-    result = _strip(code)
-
-    assert "__all__ = ['Foo', 'Bar']" in result
-    assert "class Foo" in result
-
-
-def test_strip_artifacts_preserves_dunder_all_tuple_assignment():
-    code = "__all__ = ('foo',)\nclass Foo: pass"
-
-    result = _strip(code)
-
-    assert "__all__" in result
-    assert "'foo'" in result
-    assert "class Foo" in result
-
-
-def test_strip_artifacts_removes_class_hash_none_assignment():
-    code = "class Foo:\n    __hash__ = None\n    def method(self) -> None: ..."
-
-    result = _strip(code)
-
-    assert "__hash__" not in result
-    assert "def method" in result
-
-
-def test_strip_artifacts_keeps_module_level_hash_none_assignment():
-    code = "__hash__ = None"
-
-    result = _strip(code)
-
-    assert "__hash__" in result
-
-
-def test_strip_artifacts_removes_cython_and_cpython_imports():
-    code = (
-        "from cython import no_gc_clear\n"
-        "from cpython import bool as py_bool\n"
-        "import cython\n"
-        "class Foo: pass"
-    )
-
-    result = _strip(code)
-
-    assert "cython" not in result
-    assert "cpython" not in result
-    assert "class Foo" in result
-
-
-def test_strip_artifacts_import_filters_cython_names_but_keeps_siblings():
-    code = "import os, cython, sys\nclass Foo: pass"
-
-    result = _strip(code)
-
-    assert "cython" not in result
-    assert "import os" in result
-    assert "sys" in result
-    assert "class Foo" in result
-
-
-def test_strip_artifacts_removes_runtime_constant_call_rhs():
-    code = "SIZE_TYPE = DataType(42)\nX = 42\nclass Foo: pass"
-
-    result = _strip(code)
-
-    assert "SIZE_TYPE" not in result
-    assert "X = 42" in result
-    assert "class Foo" in result
-
-
-def test_strip_artifacts_removes_runtime_constant_attribute_rhs():
-    code = "SEED = some_module.DEFAULT_SEED\nX = 42"
-
-    result = _strip(code)
-
-    assert "SEED = some_module" not in result
-    assert "X = 42" in result
-
-
-def test_strip_artifacts_is_idempotent():
-    code = "__all__ = ['Foo']\nclass Foo:\n    __hash__ = None\n    def method(self) -> None: ..."
-
-    once = _strip(code)
-    twice = _strip(once)
-
-    assert once == twice
-
-
-def test_strip_artifacts_removes_all_supported_artifacts_together():
-    code = (
-        "from cython import no_gc_clear\n"
-        "from cpython import bool as py_bool\n"
-        "import cython\n"
-        "__all__ = ['Foo']\n"
-        "SIZE_TYPE = DataType(42)\n"
-        "SEED = some_module.DEFAULT_SEED\n"
-        "class Foo:\n"
-        "    __hash__ = None\n"
-        "    def method(self) -> None: ...\n"
-        "X = 42\n"
-        "def keep_me() -> None: ..."
-    )
-
-    result = _strip(code)
-
-    assert "__all__ = ['Foo']" in result
-    assert "__hash__" not in result
-    assert "cython" not in result
-    assert "cpython" not in result
-    assert "SIZE_TYPE" not in result
-    assert "SEED = some_module" not in result
-    assert "class Foo" in result
-    assert "def method" in result
-    assert "X = 42" in result
-    assert "keep_me" in result
-
-
-def test_strip_artifacts_empty_module_result_is_valid_python():
-    code = "__all__ = ['Foo']"
-
-    result = _strip(code)
-
-    ast.parse(result)
-
-
-def test_strip_artifacts_preserves_dunder_all_call_assignment():
-    code = "__all__ = build_all()\nclass Foo: pass"
-
-    result = _strip(code)
-
-    assert "__all__" in result
-    assert "class Foo" in result
-
-
-def test_strip_artifacts_preserves_dunder_all_attribute_assignment():
-    code = "__all__ = exports.ALL\nclass Foo: pass"
-
-    result = _strip(code)
-
-    assert "__all__" in result
-    assert "class Foo" in result
-
-
-def test_strip_artifacts_rewrites_dangling_cython_annotation():
-    code = "from cython import bint\ndef f(x: bint) -> None: ..."
-    result = ast.unparse(strip_artifacts(ast.parse(code)))
-    assert "from typing import Any" in result
-    assert "bint" not in result
-    assert "def f(x: Any) -> None" in result
-
-
-def test_defined_annotation_is_untouched():
-    result = _strip("class Foo: ...\ndef f(x: Foo) -> Foo: ...")
-
-    assert "def f(x: Foo) -> Foo" in result
-    assert "Any" not in result
-
-
-def test_dangling_annotation_is_replaced_with_any():
-    result = _strip("def f(x: StrippedCimport) -> None: ...")
-
-    assert "from typing import Any" in result
-    assert "def f(x: Any) -> None" in result
-
-
-def test_nested_generic_dangling_argument_is_replaced():
-    result = _strip(
-        "from typing import List\ndef f(x: List[DanglingName]) -> None: ..."
-    )
-
-    assert "from typing import Any" in result
-    assert "List[Any]" in result
-
-
-def test_multiple_dangling_names_are_replaced():
-    result = _strip("def f(x: MissingOne) -> MissingTwo: ...")
-
-    assert "from typing import Any" in result
-    assert "def f(x: Any) -> Any" in result
-
-
-def test_builtin_annotations_are_preserved():
-    result = _strip("def f(x: int, y: str, z: bool) -> bytes: ...")
-
-    assert "def f(x: int, y: str, z: bool) -> bytes" in result
-    assert "Any" not in result
-
-
-def test_existing_any_import_is_not_duplicated():
-    result = _strip("from typing import Any\ndef f(x: Missing) -> Any: ...")
-
-    assert result.count("from typing import Any") == 1
-    assert "def f(x: Any) -> Any" in result
-
-
-def test_dangling_decorator_argument_is_replaced_with_any():
-    result = _strip(
-        "some_decorator = None\n@some_decorator(UndefinedType)\ndef foo() -> None: ..."
-    )
-
-    assert "from typing import Any" in result
-    assert "@some_decorator(Any)" in result
+from dataclasses import dataclass
+
+import pytest
+
+from stubgen_pyx import StubgenPyx
+from stubgen_pyx.config import StubgenPyxConfig
+
+
+@dataclass(frozen=True)
+class Case:
+    id: str
+    pyx: str
+    expected: str
+    pxd: str | None = None
+
+
+CASES = [
+    Case(
+        id="dunder_all_list_preserved",
+        pyx="""\
+__all__ = ['Foo']
+cdef class Foo:
+    pass
+""",
+        expected="__all__ = ['Foo']\n\nclass Foo: ...\n",
+    ),
+    Case(
+        id="dunder_all_tuple_preserved",
+        pyx="""\
+__all__ = ('Foo',)
+cdef class Foo:
+    pass
+""",
+        expected="__all__ = 'Foo'\n\nclass Foo: ...\n",
+    ),
+    Case(
+        id="dunder_all_call_rhs_not_deleted",
+        pyx="""\
+__all__ = build_all()
+cdef class Foo:
+    pass
+""",
+        expected="__all__ = ...\n\nclass Foo: ...\n",
+    ),
+    Case(
+        id="dunder_all_attribute_rhs_not_deleted",
+        pyx="""\
+__all__ = exports.ALL
+cdef class Foo:
+    pass
+""",
+        expected="__all__ = ...\n\nclass Foo: ...\n",
+    ),
+    Case(
+        id="class_hash_none_stripped",
+        pyx="""\
+cdef class Foo:
+    __hash__ = None
+    def __eq__(self, other):
+        return False
+""",
+        expected="class Foo:\n    def __eq__(self, other): ...\n",
+    ),
+    Case(
+        id="module_hash_none_preserved",
+        pyx="""\
+__hash__ = None
+cdef class Foo:
+    pass
+""",
+        expected="__hash__ = None\n\nclass Foo: ...\n",
+    ),
+    Case(
+        id="from_cython_cimport_stripped",
+        pyx="""\
+from cython cimport bint
+cdef class Foo:
+    cpdef bint check(self):
+        return True
+""",
+        expected="class Foo:\n    def check(self) -> bool: ...\n",
+    ),
+    Case(
+        id="from_cpython_cimport_stripped_dangles_alias",
+        pyx="""\
+from cpython cimport bool as pybool
+def f(pybool x):
+    pass
+""",
+        expected="from typing import Any\ndef f(x: Any): ...\n",
+    ),
+    Case(
+        id="bare_import_cython_stripped",
+        pyx="""\
+import cython
+def f():
+    pass
+""",
+        expected="def f(): ...\n",
+    ),
+    Case(
+        id="mixed_import_keeps_siblings",
+        pyx="""\
+import os
+import cython
+import sys
+def f():
+    pass
+""",
+        expected="def f(): ...\n",
+    ),
+    Case(
+        id="runtime_constant_call_stripped",
+        pyx="""\
+SIZE_TYPE = DataType(42)
+def f():
+    pass
+""",
+        expected="SIZE_TYPE = ...\n\ndef f(): ...\n",
+    ),
+    Case(
+        id="runtime_constant_attribute_stripped",
+        pyx="""\
+SEED = some_module.DEFAULT_SEED
+def f():
+    pass
+""",
+        expected="SEED = ...\n\ndef f(): ...\n",
+    ),
+    Case(
+        id="plain_assignment_preserved",
+        pyx="""\
+X = 42
+def f():
+    pass
+""",
+        expected="X = 42\n\ndef f(): ...\n",
+    ),
+    Case(
+        id="dangling_annotation_rewritten",
+        pyx="""\
+def f(x: MissingType) -> None:
+    pass
+""",
+        expected="def f(x: ...) -> None: ...\n",
+    ),
+    Case(
+        id="dangling_nested_generic_rewritten",
+        pyx="""\
+from typing import List
+def f(x: List[Missing]) -> None:
+    pass
+""",
+        expected="def f(x: ...) -> None: ...\n",
+    ),
+    Case(
+        id="multiple_dangling_names_rewritten",
+        pyx="""\
+def f(x: MissingOne) -> MissingTwo:
+    pass
+""",
+        expected="def f(x: ...) -> ...: ...\n",
+    ),
+    Case(
+        id="builtin_annotations_preserved",
+        pyx="""\
+def f(x: int, y: str, z: bool) -> bytes:
+    pass
+""",
+        expected="def f(x: int, y: str, z: bool) -> bytes: ...\n",
+    ),
+    Case(
+        id="dangling_decorator_argument_rewritten",
+        pyx="""\
+some_decorator = None
+
+@some_decorator(UndefinedType)
+def foo() -> None:
+    pass
+""",
+        expected=(
+            "from typing import Any\n"
+            "some_decorator = None\n\n"
+            "@some_decorator(Any)\n"
+            "def foo() -> None: ...\n"
+        ),
+    ),
+]
+
+
+def _stubgen() -> StubgenPyx:
+    return StubgenPyx(StubgenPyxConfig(exclude_attribution=True, sort_imports=False))
+
+
+def _convert_case(case: Case, tmp_path) -> str:
+    pyx_path = tmp_path / f"{case.id}.pyx"
+    if case.pxd:
+        (tmp_path / "helper.pxd").write_text(case.pxd, encoding="utf-8")
+    return _stubgen().convert_str(case.pyx, pxd_str=case.pxd, pyx_path=pyx_path)
+
+
+@pytest.mark.parametrize("case", CASES, ids=lambda case: case.id)
+def test_strip_artifacts_via_public_api(case: Case, tmp_path):
+    result = _convert_case(case, tmp_path)
+
+    assert result == case.expected
