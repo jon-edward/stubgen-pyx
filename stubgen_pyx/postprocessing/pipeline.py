@@ -16,6 +16,7 @@ from .collect_names import collect_names
 from .deduplicate_imports import _DuplicateImportRemover
 from .normalize_member_spacing import normalize_member_spacing
 from .normalize_names import _NameNormalizer
+from .overload_singledispatch import overload_singledispatch
 from .remove_identity_assignment import remove_identity_assignment
 from .sort_imports import sort_imports
 from .trim_imports import _UnusedImportRemover
@@ -72,6 +73,8 @@ def _ast_transforms(
 
     if config.trim_not_defined:
         trim_not_defined(tree)
+
+    tree = overload_singledispatch(tree)
 
     if config.trim_imports:
         used_names = collect_names(tree)
