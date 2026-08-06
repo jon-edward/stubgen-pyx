@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import ast
 
+from .utils import dotted_name
+
 _FUNCTION_DEFS = (ast.FunctionDef, ast.AsyncFunctionDef)
 
 
@@ -80,14 +82,4 @@ def _has_overload_decorator(node: ast.FunctionDef | ast.AsyncFunctionDef) -> boo
 
 def _is_overload(node: ast.expr) -> bool:
     """Recognize ``overload`` and dotted spellings such as ``typing.overload``."""
-    return _dotted_name(node).split(".")[-1] == "overload"
-
-
-def _dotted_name(node: ast.expr) -> str:
-    """Return the dotted name of an expression, or ``""`` if it has none."""
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        prefix = _dotted_name(node.value)
-        return f"{prefix}.{node.attr}" if prefix else node.attr
-    return ""
+    return dotted_name(node).split(".")[-1] == "overload"

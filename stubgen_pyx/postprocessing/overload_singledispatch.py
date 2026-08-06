@@ -7,6 +7,8 @@ import copy
 import warnings
 from dataclasses import dataclass
 
+from .utils import dotted_name
+
 
 class SingledispatchStubError(ValueError):
     """Raised when a @singledispatch group in the input is invalid Python.
@@ -310,13 +312,4 @@ def _emit_group(
 
 
 def _is_singledispatch(node: ast.expr) -> bool:
-    return _dotted_name(node).split(".")[-1] == "singledispatch"
-
-
-def _dotted_name(node: ast.expr) -> str:
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        prefix = _dotted_name(node.value)
-        return f"{prefix}.{node.attr}" if prefix else node.attr
-    return ""
+    return dotted_name(node).split(".")[-1] == "singledispatch"
