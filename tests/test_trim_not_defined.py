@@ -302,3 +302,17 @@ def bar(y: x) -> int:  # x is NOT defined at module level
         result_str = ast.unparse(result)
         # 'x' from Foo's body must not protect 'x' in bar's annotation
         assert "def bar(y: ...)" in result_str or "y: ..." in result_str
+
+    def test_dotted_import_with_alias(self):
+        """Test dotted imports with an alias."""
+        code = """
+import xml.etree.ElementTree as ET
+
+def foo(x: ET) -> int:
+    pass
+"""
+        tree = ast.parse(code)
+        result = trim_not_defined(tree)
+        result_str = ast.unparse(result)
+        assert "xml.etree.ElementTree" in result_str
+        assert ": ET" in result_str
