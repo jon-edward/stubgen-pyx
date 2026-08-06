@@ -18,6 +18,7 @@ from .normalize_member_spacing import normalize_member_spacing
 from .normalize_names import _NameNormalizer
 from .overload_singledispatch import overload_singledispatch
 from .remove_identity_assignment import remove_identity_assignment
+from .remove_overload_implementations import remove_overload_implementations
 from .sort_imports import sort_imports
 from .trim_imports import _UnusedImportRemover
 from .trim_not_defined import trim_not_defined
@@ -70,6 +71,10 @@ def _ast_transforms(
         tree = _NameNormalizer(extra_translations=extra_translations or {}).visit(tree)
 
     tree = remove_identity_assignment(tree)
+
+    # Runs before import trimming so that imports which only the dropped
+    # implementation referenced are then seen as unused.
+    tree = remove_overload_implementations(tree)
 
     if config.trim_not_defined:
         trim_not_defined(tree)
