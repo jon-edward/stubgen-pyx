@@ -249,6 +249,20 @@ def outer(x: int) -> int:
         assert "int" in result_str
         assert "UndefinedType" not in result_str
 
+    def test_dotted_import_prefixes_preserved(self):
+        """Test that dotted imports preserve attribute chains rooted at the imported module."""
+        code = """
+import xml.etree.ElementTree
+
+def foo(x: xml.etree.ElementTree) -> int:
+    pass
+"""
+        tree = ast.parse(code)
+        result = trim_not_defined(tree)
+        result_str = ast.unparse(result)
+        assert "xml.etree.ElementTree" in result_str
+        assert "..." not in result_str
+
     def test_real_world_example(self):
         """Test a real-world-like example."""
         code = """

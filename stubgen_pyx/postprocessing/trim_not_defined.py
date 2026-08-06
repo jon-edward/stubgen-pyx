@@ -12,11 +12,11 @@ Examples:
     'def foo(x: ... = ...) -> int: pass'
 
 Note on attribute annotations (e.g. ``numpy.ndarray``):
-    ``_CollectNames`` only gathers ``ast.Name`` nodes (i.e. the root name of
-    any dotted expression).  For ``numpy.ndarray`` it collects ``numpy``.  If
-    ``numpy`` is imported, the whole expression is kept.  This is intentional:
-    we can't validate that ``numpy.ndarray`` exists without importing the
-    package, and removing half an attribute chain would produce invalid stubs.
+    ``_CollectNames`` gathers the leading name of any dotted expression.  For
+    ``numpy.ndarray`` it collects ``numpy``.  If ``numpy`` is imported, the
+    whole expression is kept.  This is intentional: we can't validate that
+    ``numpy.ndarray`` exists without importing the package, and removing half
+    an attribute chain would produce invalid stubs.
 """
 
 from __future__ import annotations
@@ -25,6 +25,8 @@ import ast
 import builtins
 import logging
 from dataclasses import dataclass, field
+
+from .utils import dotted_name
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +133,10 @@ class _DefinedCollector(ast.NodeVisitor):
     def visit_Import(self, node: ast.Import) -> None:
         """Collect import names."""
         for alias in node.names:
-            self.defined_names.add(alias.asname if alias.asname else alias.name)
+            if alias.asname:
+                self.defined_names.add(alias.asname)
+            else:
+                self.defined_names.add(alias.name.split(".", 1)[0])
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         """Collect from-import names."""
@@ -149,6 +154,12 @@ class _CollectNames(ast.NodeVisitor):
     """
 
     names: set[str]
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        """Collect the leading name of a dotted expression."""
+        root = dotted_name(node).split(".")[0]
+        if root:
+            self.names.add(root)
 
     def visit_Name(self, node: ast.Name) -> None:
         """Collect name identifier."""
