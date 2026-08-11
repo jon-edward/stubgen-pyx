@@ -12,37 +12,6 @@ _BUILTIN_NAMES = {name for name in dir(builtins) if not name.startswith("_")} | 
 _BLOCKED_IMPORT_PREFIXES = ("cython", "cpython")
 
 
-def _filter_class_body(body: list[ast.stmt]) -> list[ast.stmt]:
-    """Drop ``__hash__ = None`` assignments from class stubs.
-
-    A class-level ``__hash__ = None`` mirrors Python's runtime rule that an
-    ``__eq__``-defining class becomes unhashable. That statement is meaningful
-    at runtime but pure noise inside a type stub, so we strip it out of every
-    class body (recursively, for nested classes).
-
-    The predicate is deliberately narrow: only ``__hash__ = None`` with a
-    single target and a ``Constant(None)`` RHS is dropped. Anything else
-    assigned to ``__hash__`` (a real hash implementation, or a call) is kept.
-    """
-    kept = []
-    for stmt in body:
-        # Recurse into nested classes first so their inner __hash__ = None also
-        # gets stripped before we decide whether to keep the outer statement.
-        if isinstance(stmt, ast.ClassDef):
-            stmt.body = _filter_class_body(stmt.body)
-        if (
-            isinstance(stmt, ast.Assign)
-            and len(stmt.targets) == 1
-            and getattr(stmt.targets[0], "id", None) == "__hash__"
-            and isinstance(stmt.value, ast.Constant)
-            and stmt.value.value is None
-        ):
-            # Skip appending: statement is dropped from the class body.
-            continue
-        kept.append(stmt)
-    return kept
-
-
 class _AnnotationRewriter(ast.NodeTransformer):
     """Rewrite unresolvable annotation names to ``Any``.
 
@@ -120,7 +89,7 @@ def strip_artifacts(tree: ast.AST) -> ast.AST:
 
     1. **Strip + collect** (fused loop): drop Cython-only imports, module-level
        runtime-evaluated assignments, empty singledispatch stubs, and the
-       ``__hash__ = None`` marker inside class bodies. In the same pass, build
+       runtime-only assignments. In the same pass, build
        the ``defined`` set of names that survive into the final module.
     2. **Rewrite annotations**: any annotation referencing a name that isn't
        in ``defined`` gets collapsed to ``Any``.
@@ -182,10 +151,6 @@ def strip_artifacts(tree: ast.AST) -> ast.AST:
                 and not is_typevar
             ):
                 continue
-        elif isinstance(node, ast.ClassDef):
-            # Strip the `__hash__ = None` marker (recursively) from class
-            # bodies. The ClassDef itself is always kept.
-            node.body = _filter_class_body(node.body)
         kept.append(node)
 
         # Second half of the fused loop: collect the names this surviving node

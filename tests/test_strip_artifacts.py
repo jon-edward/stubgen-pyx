@@ -5,7 +5,7 @@ asserts on the final ``.pyi`` output. The scenarios cover the four categories
 of artifact-stripping the pipeline is responsible for:
 
 * preserving ``__all__`` (list, tuple, call, attribute RHS)
-* stripping class-level ``__hash__ = None`` while keeping module-level
+* preserving ``__hash__ = None`` assignments when present in source
 * stripping ``cython`` / ``cpython`` cimports and bare ``import cython``
 * stripping runtime-constant Call/Attribute RHS at module scope
 * rewriting dangling annotations (via Ellipsis or ``Any`` depending on path)
@@ -67,14 +67,21 @@ cdef class Foo:
         expected="__all__ = ...\n\nclass Foo: ...\n",
     ),
     Case(
-        id="class_hash_none_stripped",
+        id="eq_method_does_not_emit_hash_none",
         pyx="""\
 cdef class Foo:
-    __hash__ = None
     def __eq__(self, other):
         return False
 """,
         expected="class Foo:\n    def __eq__(self, other): ...\n",
+    ),
+    Case(
+        id="class_hash_none_preserved",
+        pyx="""\
+cdef class Foo:
+    __hash__ = None
+""",
+        expected="class Foo:\n    __hash__ = None\n",
     ),
     Case(
         id="module_hash_none_preserved",
