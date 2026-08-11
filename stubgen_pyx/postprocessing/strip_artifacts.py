@@ -1,25 +1,21 @@
+"""Remove Cython-specific imports and associated annotations."""
+
 from __future__ import annotations
 
 import ast
 import builtins
 
-# Names always considered resolvable when checking annotations. Includes every
-# public builtin (`int`, `list`, `Exception`, ...) plus `None`, which shows up
-# in annotations like `-> None` but is technically a keyword/constant rather
-# than a builtin name.
+# Names always considered resolvable when checking annotations.
 _BUILTIN_NAMES = {name for name in dir(builtins) if not name.startswith("_")} | {"None"}
 
-# Cython import roots. Any `import cython...` or `from cython... import ...`
-# (and same for `cpython`) is a Cython-time construct that has no meaning in a
-# .pyi stub and gets removed from the module.
+# Cython import roots that have no meaning in .pyi stubs.
 _BLOCKED_IMPORT_PREFIXES = ("cython", "cpython")
 
 
 def _filter_class_body(body: list[ast.stmt]) -> list[ast.stmt]:
-    """Drop the ``__hash__ = None`` marker Cython auto-emits inside classes.
+    """Drop ``__hash__ = None`` assignments from class stubs.
 
-    Cython injects ``__hash__ = None`` into any class that defines ``__eq__``
-    without an explicit ``__hash__``, mirroring Python's runtime rule that an
+    A class-level ``__hash__ = None`` mirrors Python's runtime rule that an
     ``__eq__``-defining class becomes unhashable. That statement is meaningful
     at runtime but pure noise inside a type stub, so we strip it out of every
     class body (recursively, for nested classes).
