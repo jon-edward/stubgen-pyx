@@ -1,4 +1,4 @@
-"""Remove Cython-specific imports and associated annotations."""
+"""Strip Cython-only stub artifacts and repair dangling annotations."""
 
 from __future__ import annotations
 
@@ -13,22 +13,16 @@ _BLOCKED_IMPORT_PREFIXES = ("cython", "cpython")
 
 
 class _AnnotationRewriter(ast.NodeTransformer):
-    """Rewrite unresolvable annotation names to ``Any``.
+    """Collapse annotation references whose root name is no longer defined.
 
-    After the strip pass removes Cython-only imports, some annotations end up
-    referencing names that no longer exist in the module (e.g. an alias
-    imported from ``cpython`` and used as a parameter type). Rather than emit
-    a stub that mypy/pyright will reject, every such dangling name is
-    rewritten to ``Any``.
+    Pass 1 removes Cython-only imports and other stub-only noise, which can
+    leave annotations pointing at names that no longer exist in the generated
+    module. This transformer rewrites those dangling references to ``Any``
+    and records whether it changed anything so Pass 3 can import ``Any``.
 
-    Resolvability is a membership test against ``defined`` (populated from
-    the post-strip module body plus builtins). Names not in that set are
-    dangling. The ``changed`` flag is set whenever a rewrite happens so the
-    caller knows to inject ``from typing import Any``.
-
-    Container expressions (Subscript, Call, Tuple, BinOp, ...) fall through
-    to ``generic_visit`` and recurse normally — that handles cases like
-    ``List[Missing]``, ``Union[A, B]``, ``dict[str, Missing]``, etc.
+    Dotted expressions are resolved by their leftmost root only: if
+    ``some_module`` is still defined, ``some_module.Type`` is trusted; if the
+    root is gone, the whole dotted expression becomes ``Any``.
     """
 
     def __init__(self, defined: set[str]) -> None:
@@ -58,23 +52,22 @@ class _AnnotationRewriter(ast.NodeTransformer):
 
 
 def strip_artifacts(tree: ast.AST) -> ast.AST:
-    """Remove Cython codegen artifacts from a .pyi AST and repair references.
+    """Remove stub-only artifacts from a generated .pyi AST.
 
-    Runs three passes over the module:
+    Runs three passes over a module:
 
-    1. **Strip + collect** (fused loop): drop Cython-only imports, module-level
-       runtime-evaluated assignments, empty singledispatch stubs, and the
-       runtime-only assignments. In the same pass, build
-       the ``defined`` set of names that survive into the final module.
-    2. **Rewrite annotations**: any annotation referencing a name that isn't
-       in ``defined`` gets collapsed to ``Any``.
-    3. **Inject ``Any`` import** (only if step 2 rewrote anything): add
-       ``Any`` to an existing ``from typing import ...`` if present,
-       otherwise insert a fresh ``from typing import Any`` after the last
-       ``__future__`` import.
+    1. **Strip + collect**: drop Cython-only imports and module-level
+       call/attribute assignments, except ``__all__`` and ``TypeVar(...)``
+       assignments that carry useful stub semantics. Collect names that
+       remain importable or assigned after stripping.
+    2. **Rewrite annotations**: replace annotation and decorator references
+       to stripped or otherwise undefined names with ``Any``.
+    3. **Import ``Any`` if needed**: add ``Any`` to the first existing
+       ``from typing import ...`` or insert a new typing import after
+       ``__future__`` imports.
 
-    Non-``Module`` inputs are returned unchanged. The tree is mutated in
-    place; the return value is the same object for caller convenience.
+    Non-``Module`` inputs are returned unchanged. Module inputs are mutated
+    in place and returned for caller convenience.
     """
     if not isinstance(tree, ast.Module):
         return tree
