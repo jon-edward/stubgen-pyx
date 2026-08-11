@@ -4,39 +4,69 @@ import ast
 import builtins
 
 _BUILTIN_NAMES = {name for name in dir(builtins) if not name.startswith("_")} | {"None"}
+_BLOCKED_IMPORT_PREFIXES = ("cython", "cpython")
+
+
+def _filter_class_body(body: list[ast.stmt]) -> list[ast.stmt]:
+    kept = []
+    for stmt in body:
+        if isinstance(stmt, ast.ClassDef):
+            stmt.body = _filter_class_body(stmt.body)
+        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
+            target = stmt.targets[0]
+            if (
+                isinstance(target, ast.Name)
+                and target.id == "__hash__"
+                and isinstance(stmt.value, ast.Constant)
+                and stmt.value.value is None
+            ):
+                continue
+        kept.append(stmt)
+    return kept
+
+
+def _rewrite(expr: ast.expr, defined: set[str], replaced: list[bool]) -> ast.expr:
+    if isinstance(expr, ast.Name):
+        if expr.id not in defined:
+            replaced[0] = True
+            return ast.copy_location(ast.Name(id="Any", ctx=ast.Load()), expr)
+        return expr
+    if isinstance(expr, ast.Attribute):
+        root: ast.expr = expr
+        while isinstance(root, ast.Attribute):
+            root = root.value
+        if isinstance(root, ast.Name) and root.id not in defined:
+            replaced[0] = True
+            return ast.copy_location(ast.Name(id="Any", ctx=ast.Load()), expr)
+    for f, v in ast.iter_fields(expr):
+        if isinstance(v, ast.expr):
+            setattr(expr, f, _rewrite(v, defined, replaced))
+        elif isinstance(v, list):
+            setattr(
+                expr,
+                f,
+                [
+                    _rewrite(e, defined, replaced) if isinstance(e, ast.expr) else e
+                    for e in v
+                ],
+            )
+    return expr
 
 
 def strip_artifacts(tree: ast.AST) -> ast.AST:
     if not isinstance(tree, ast.Module):
         return tree
 
-    blocked = ("cython", "cpython")
-
-    def filter_class_body(body: list[ast.stmt]) -> list[ast.stmt]:
-        kept = []
-        for stmt in body:
-            if isinstance(stmt, ast.ClassDef):
-                stmt.body = filter_class_body(stmt.body)
-            if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
-                target = stmt.targets[0]
-                if (
-                    isinstance(target, ast.Name)
-                    and target.id == "__hash__"
-                    and isinstance(stmt.value, ast.Constant)
-                    and stmt.value.value is None
-                ):
-                    continue
-            kept.append(stmt)
-        return kept
-
     kept = []
     for node in tree.body:
         if isinstance(node, ast.Import):
-            node.names = [n for n in node.names if not n.name.startswith(blocked)]
+            node.names = [
+                n for n in node.names if not n.name.startswith(_BLOCKED_IMPORT_PREFIXES)
+            ]
             if not node.names:
                 continue
         elif isinstance(node, ast.ImportFrom):
-            if node.module and node.module.startswith(blocked):
+            if node.module and node.module.startswith(_BLOCKED_IMPORT_PREFIXES):
                 continue
         elif isinstance(node, ast.Assign) and len(node.targets) == 1:
             target = node.targets[0]
@@ -54,7 +84,7 @@ def strip_artifacts(tree: ast.AST) -> ast.AST:
             ):
                 continue
         elif isinstance(node, ast.ClassDef):
-            node.body = filter_class_body(node.body)
+            node.body = _filter_class_body(node.body)
         kept.append(node)
     tree.body = kept
 
@@ -80,59 +110,37 @@ def strip_artifacts(tree: ast.AST) -> ast.AST:
 
     replaced: list[bool] = [False]
 
-    def _rewrite(expr: ast.expr) -> ast.expr:
-        if isinstance(expr, ast.Name):
-            if expr.id not in defined:
-                replaced[0] = True
-                return ast.copy_location(ast.Name(id="Any", ctx=ast.Load()), expr)
-            return expr
-        if isinstance(expr, ast.Attribute):
-            root: ast.expr = expr
-            while isinstance(root, ast.Attribute):
-                root = root.value
-            if isinstance(root, ast.Name) and root.id not in defined:
-                replaced[0] = True
-                return ast.copy_location(ast.Name(id="Any", ctx=ast.Load()), expr)
-        for f, v in ast.iter_fields(expr):
-            if isinstance(v, ast.expr):
-                setattr(expr, f, _rewrite(v))
-            elif isinstance(v, list):
-                setattr(
-                    expr, f, [_rewrite(e) if isinstance(e, ast.expr) else e for e in v]
-                )
-        return expr
-
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             for dec in node.decorator_list:
-                _rewrite(dec)
+                _rewrite(dec, defined, replaced)
             for arg in node.args.posonlyargs + node.args.args + node.args.kwonlyargs:
                 if arg.annotation:
-                    arg.annotation = _rewrite(arg.annotation)
+                    arg.annotation = _rewrite(arg.annotation, defined, replaced)
             for arg in (node.args.vararg, node.args.kwarg):
                 if arg and arg.annotation:
-                    arg.annotation = _rewrite(arg.annotation)
+                    arg.annotation = _rewrite(arg.annotation, defined, replaced)
             if node.returns:
-                node.returns = _rewrite(node.returns)
+                node.returns = _rewrite(node.returns, defined, replaced)
         elif isinstance(node, ast.AnnAssign):
-            node.annotation = _rewrite(node.annotation)
+            node.annotation = _rewrite(node.annotation, defined, replaced)
         elif isinstance(node, ast.ClassDef):
             for child in node.body:
                 if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     for dec in child.decorator_list:
-                        _rewrite(dec)
+                        _rewrite(dec, defined, replaced)
                     for arg in (
                         child.args.posonlyargs + child.args.args + child.args.kwonlyargs
                     ):
                         if arg.annotation:
-                            arg.annotation = _rewrite(arg.annotation)
+                            arg.annotation = _rewrite(arg.annotation, defined, replaced)
                     for arg in (child.args.vararg, child.args.kwarg):
                         if arg and arg.annotation:
-                            arg.annotation = _rewrite(arg.annotation)
+                            arg.annotation = _rewrite(arg.annotation, defined, replaced)
                     if child.returns:
-                        child.returns = _rewrite(child.returns)
+                        child.returns = _rewrite(child.returns, defined, replaced)
                 elif isinstance(child, ast.AnnAssign):
-                    child.annotation = _rewrite(child.annotation)
+                    child.annotation = _rewrite(child.annotation, defined, replaced)
 
     if replaced[0]:
         last_future, first_typing = -1, None
