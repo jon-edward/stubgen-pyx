@@ -34,16 +34,15 @@ def _filter_class_body(body: list[ast.stmt]) -> list[ast.stmt]:
         # gets stripped before we decide whether to keep the outer statement.
         if isinstance(stmt, ast.ClassDef):
             stmt.body = _filter_class_body(stmt.body)
-        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
-            target = stmt.targets[0]
-            if (
-                isinstance(target, ast.Name)
-                and target.id == "__hash__"
-                and isinstance(stmt.value, ast.Constant)
-                and stmt.value.value is None
-            ):
-                # Skip appending: statement is dropped from the class body.
-                continue
+        if (
+            isinstance(stmt, ast.Assign)
+            and len(stmt.targets) == 1
+            and getattr(stmt.targets[0], "id", None) == "__hash__"
+            and isinstance(stmt.value, ast.Constant)
+            and stmt.value.value is None
+        ):
+            # Skip appending: statement is dropped from the class body.
+            continue
         kept.append(stmt)
     return kept
 
@@ -175,13 +174,11 @@ def strip_artifacts(tree: ast.AST) -> ast.AST:
             #   * TypeVar(...)  — the value genuinely encodes typing info,
             #                     covering both `T = TypeVar(...)` and
             #                     `T = typing.TypeVar(...)` forms.
-            target = node.targets[0]
-            is_all = isinstance(target, ast.Name) and target.id == "__all__"
-            is_typevar = isinstance(node.value, ast.Call) and (
-                isinstance(node.value.func, ast.Name)
-                and node.value.func.id == "TypeVar"
-                or isinstance(node.value.func, ast.Attribute)
-                and node.value.func.attr == "TypeVar"
+            is_all = getattr(node.targets[0], "id", None) == "__all__"
+            func = node.value.func if isinstance(node.value, ast.Call) else None
+            is_typevar = (
+                getattr(func, "id", None) == "TypeVar"
+                or getattr(func, "attr", None) == "TypeVar"
             )
             if (
                 not is_all
