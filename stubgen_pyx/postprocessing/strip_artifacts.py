@@ -35,12 +35,12 @@ class _AnnotationRewriter(ast.NodeTransformer):
         self.defined = defined
         self.changed = False
 
-    def _any(self, node: ast.AST) -> ast.Name:
+    def _any(self) -> ast.Name:
         self.changed = True
-        return ast.copy_location(ast.Name(id="Any", ctx=ast.Load()), node)
+        return ast.Name(id="Any", ctx=ast.Load())
 
     def visit_Name(self, node: ast.Name) -> ast.expr:
-        return node if node.id in self.defined else self._any(node)
+        return node if node.id in self.defined else self._any()
 
     def visit_Attribute(self, node: ast.Attribute) -> ast.expr:
         # Dotted access like `some_module.Type`: only the leftmost root name
@@ -53,7 +53,7 @@ class _AnnotationRewriter(ast.NodeTransformer):
         while isinstance(root, ast.Attribute):
             root = root.value
         if isinstance(root, ast.Name) and root.id not in self.defined:
-            return self._any(node)
+            return self._any()
         return node
 
 
