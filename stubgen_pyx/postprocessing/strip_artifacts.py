@@ -117,6 +117,33 @@ def _rewrite_unresolvable(
     return expr
 
 
+def _rewrite_function_annotations(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    defined: set[str],
+    replaced: list[bool],
+) -> None:
+    """Rewrite decorators, arg annotations, and return type of a function.
+
+    Shared by module-level functions and class methods. Decorators can
+    reference dangling names (e.g. a stripped ``@cython.cfunc``), so they
+    get rewritten just like annotations.
+    """
+    for dec in node.decorator_list:
+        _rewrite_unresolvable(dec, defined, replaced)
+    args = node.args
+    for arg in (
+        *args.posonlyargs,
+        *args.args,
+        *args.kwonlyargs,
+        args.vararg,
+        args.kwarg,
+    ):
+        if arg and arg.annotation:
+            arg.annotation = _rewrite_unresolvable(arg.annotation, defined, replaced)
+    if node.returns:
+        node.returns = _rewrite_unresolvable(node.returns, defined, replaced)
+
+
 def strip_artifacts(tree: ast.AST) -> ast.AST:
     """Remove Cython codegen artifacts from a .pyi AST and repair references.
 
@@ -227,59 +254,19 @@ def strip_artifacts(tree: ast.AST) -> ast.AST:
     # a `typing.Any` import needs to be injected.
     replaced: list[bool] = [False]
 
+    # Walk module top level + class bodies uniformly. Nested classes rely on
+    # their own ClassDef being visited separately; in practice, stubgen output
+    # puts everything of interest at the top level of the module or class.
     for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            # Decorators can reference dangling names too (e.g. a stripped
-            # `@cython.cfunc`), so they get rewritten just like annotations.
-            for dec in node.decorator_list:
-                _rewrite_unresolvable(dec, defined, replaced)
-            # Regular args (positional-only, positional-or-keyword, keyword-only).
-            for arg in node.args.posonlyargs + node.args.args + node.args.kwonlyargs:
-                if arg.annotation:
-                    arg.annotation = _rewrite_unresolvable(
-                        arg.annotation, defined, replaced
-                    )
-            # *args / **kwargs — separate slots that may or may not be present.
-            for arg in (node.args.vararg, node.args.kwarg):
-                if arg and arg.annotation:
-                    arg.annotation = _rewrite_unresolvable(
-                        arg.annotation, defined, replaced
-                    )
-            if node.returns:
-                node.returns = _rewrite_unresolvable(node.returns, defined, replaced)
-        elif isinstance(node, ast.AnnAssign):
-            # Module-level annotated assignment: `X: SomeType = ...`.
-            node.annotation = _rewrite_unresolvable(node.annotation, defined, replaced)
-        elif isinstance(node, ast.ClassDef):
-            # Methods and annotated class attributes. We only descend one
-            # level; nested classes rely on their own ClassDef being visited
-            # separately if they contain relevant annotations. In practice,
-            # stubgen output puts everything of interest at the top level of
-            # the class body.
-            for child in node.body:
-                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    for dec in child.decorator_list:
-                        _rewrite_unresolvable(dec, defined, replaced)
-                    for arg in (
-                        child.args.posonlyargs + child.args.args + child.args.kwonlyargs
-                    ):
-                        if arg.annotation:
-                            arg.annotation = _rewrite_unresolvable(
-                                arg.annotation, defined, replaced
-                            )
-                    for arg in (child.args.vararg, child.args.kwarg):
-                        if arg and arg.annotation:
-                            arg.annotation = _rewrite_unresolvable(
-                                arg.annotation, defined, replaced
-                            )
-                    if child.returns:
-                        child.returns = _rewrite_unresolvable(
-                            child.returns, defined, replaced
-                        )
-                elif isinstance(child, ast.AnnAssign):
-                    child.annotation = _rewrite_unresolvable(
-                        child.annotation, defined, replaced
-                    )
+        children = node.body if isinstance(node, ast.ClassDef) else (node,)
+        for child in children:
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                _rewrite_function_annotations(child, defined, replaced)
+            elif isinstance(child, ast.AnnAssign):
+                # `X: SomeType = ...` at module or class scope.
+                child.annotation = _rewrite_unresolvable(
+                    child.annotation, defined, replaced
+                )
 
     # ---- Pass 3: ensure `Any` is importable if we introduced it ----
     #
