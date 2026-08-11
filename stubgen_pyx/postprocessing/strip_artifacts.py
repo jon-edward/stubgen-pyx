@@ -47,80 +47,54 @@ def _filter_class_body(body: list[ast.stmt]) -> list[ast.stmt]:
     return kept
 
 
-def _rewrite_unresolvable(
-    expr: ast.expr, defined: set[str], replaced: list[bool]
-) -> ast.expr:
-    """Rewrite unresolvable names inside an annotation expression to ``Any``.
+class _AnnotationRewriter(ast.NodeTransformer):
+    """Rewrite unresolvable annotation names to ``Any``.
 
     After the strip pass removes Cython-only imports, some annotations end up
     referencing names that no longer exist in the module (e.g. an alias
     imported from ``cpython`` and used as a parameter type). Rather than emit
-    a stub that mypy/pyright will reject, we rewrite every such dangling name
-    to ``Any``.
+    a stub that mypy/pyright will reject, every such dangling name is
+    rewritten to ``Any``.
 
-    The check is a membership test against ``defined`` (which the caller has
-    already populated from the post-strip module body plus builtins). Any name
-    not in that set is considered dangling.
+    Resolvability is a membership test against ``defined`` (populated from
+    the post-strip module body plus builtins). Names not in that set are
+    dangling. The ``changed`` flag is set whenever a rewrite happens so the
+    caller knows to inject ``from typing import Any``.
 
-    Args:
-        expr: Annotation expression node. Mutated in place for container
-            fields; leaf ``Name``/``Attribute`` cases return a fresh node.
-        defined: Names resolvable in the enclosing module.
-        replaced: Single-element mutable holder. Set to ``[True]`` if any
-            rewrite happened, so the caller knows to inject ``from typing
-            import Any``. Using a list keeps the signature side-effect free
-            from the caller's perspective (no return-value plumbing).
-
-    Returns:
-        Either the original ``expr`` (unchanged, possibly with mutated fields)
-        or a new ``Name('Any')`` node that replaces the dangling reference.
+    Container expressions (Subscript, Call, Tuple, BinOp, ...) fall through
+    to ``generic_visit`` and recurse normally — that handles cases like
+    ``List[Missing]``, ``Union[A, B]``, ``dict[str, Missing]``, etc.
     """
-    # Leaf name: check directly against the defined set.
-    if isinstance(expr, ast.Name):
-        if expr.id not in defined:
-            replaced[0] = True
-            return ast.copy_location(ast.Name(id="Any", ctx=ast.Load()), expr)
-        return expr
 
-    # Dotted access like `some_module.Type`: only the leftmost root name has
-    # to resolve. If `some_module` is defined, we trust the attribute chain
-    # and leave it alone. If not, the whole chain is dangling and collapses
-    # to `Any`. We do NOT descend into the attribute chain field-by-field
-    # because rewriting only the value half of an `ast.Attribute` produces
-    # nonsense like `Any.DEFAULT_SEED`.
-    if isinstance(expr, ast.Attribute):
-        root: ast.expr = expr
+    def __init__(self, defined: set[str]) -> None:
+        self.defined = defined
+        self.changed = False
+
+    def _any(self, node: ast.AST) -> ast.Name:
+        self.changed = True
+        return ast.copy_location(ast.Name(id="Any", ctx=ast.Load()), node)
+
+    def visit_Name(self, node: ast.Name) -> ast.expr:
+        return node if node.id in self.defined else self._any(node)
+
+    def visit_Attribute(self, node: ast.Attribute) -> ast.expr:
+        # Dotted access like `some_module.Type`: only the leftmost root name
+        # has to resolve. If `some_module` is defined, trust the whole chain
+        # and leave it alone. If not, the whole chain is dangling and
+        # collapses to `Any`. Do NOT descend into the attribute chain
+        # field-by-field — rewriting only the value half of an
+        # `ast.Attribute` produces nonsense like `Any.DEFAULT_SEED`.
+        root: ast.expr = node
         while isinstance(root, ast.Attribute):
             root = root.value
-        if isinstance(root, ast.Name) and root.id not in defined:
-            replaced[0] = True
-            return ast.copy_location(ast.Name(id="Any", ctx=ast.Load()), expr)
-
-    # Everything else (Subscript, Call, Tuple, BinOp, ...) is a container
-    # expression: recurse into every child that is itself an expression or a
-    # list of expressions. This handles cases like `List[Missing]`,
-    # `Union[A, B]`, `dict[str, Missing]`, `Callable[[Missing], int]`, etc.
-    for f, v in ast.iter_fields(expr):
-        if isinstance(v, ast.expr):
-            setattr(expr, f, _rewrite_unresolvable(v, defined, replaced))
-        elif isinstance(v, list):
-            setattr(
-                expr,
-                f,
-                [
-                    _rewrite_unresolvable(e, defined, replaced)
-                    if isinstance(e, ast.expr)
-                    else e
-                    for e in v
-                ],
-            )
-    return expr
+        if isinstance(root, ast.Name) and root.id not in self.defined:
+            return self._any(node)
+        return node
 
 
 def _rewrite_function_annotations(
     node: ast.FunctionDef | ast.AsyncFunctionDef,
-    defined: set[str],
-    replaced: list[bool],
+    rewriter: _AnnotationRewriter,
 ) -> None:
     """Rewrite decorators, arg annotations, and return type of a function.
 
@@ -128,8 +102,7 @@ def _rewrite_function_annotations(
     reference dangling names (e.g. a stripped ``@cython.cfunc``), so they
     get rewritten just like annotations.
     """
-    for dec in node.decorator_list:
-        _rewrite_unresolvable(dec, defined, replaced)
+    node.decorator_list = [rewriter.visit(dec) for dec in node.decorator_list]
     args = node.args
     for arg in (
         *args.posonlyargs,
@@ -139,9 +112,9 @@ def _rewrite_function_annotations(
         args.kwarg,
     ):
         if arg and arg.annotation:
-            arg.annotation = _rewrite_unresolvable(arg.annotation, defined, replaced)
+            arg.annotation = rewriter.visit(arg.annotation)
     if node.returns:
-        node.returns = _rewrite_unresolvable(node.returns, defined, replaced)
+        node.returns = rewriter.visit(node.returns)
 
 
 def strip_artifacts(tree: ast.AST) -> ast.AST:
@@ -249,30 +222,27 @@ def strip_artifacts(tree: ast.AST) -> ast.AST:
 
     # ---- Pass 2: rewrite dangling annotations to Any ----
     #
-    # `replaced` is a single-element mutable flag: `_rewrite_unresolvable` sets it to True
-    # whenever it substitutes a name. Pass 3 uses that flag to decide whether
-    # a `typing.Any` import needs to be injected.
-    replaced: list[bool] = [False]
-
+    # `rewriter.changed` flips to True whenever a name is substituted. Pass 3
+    # uses that flag to decide whether a `typing.Any` import needs injecting.
+    #
     # Walk module top level + class bodies uniformly. Nested classes rely on
     # their own ClassDef being visited separately; in practice, stubgen output
     # puts everything of interest at the top level of the module or class.
+    rewriter = _AnnotationRewriter(defined)
     for node in tree.body:
         children = node.body if isinstance(node, ast.ClassDef) else (node,)
         for child in children:
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                _rewrite_function_annotations(child, defined, replaced)
+                _rewrite_function_annotations(child, rewriter)
             elif isinstance(child, ast.AnnAssign):
                 # `X: SomeType = ...` at module or class scope.
-                child.annotation = _rewrite_unresolvable(
-                    child.annotation, defined, replaced
-                )
+                child.annotation = rewriter.visit(child.annotation)
 
     # ---- Pass 3: ensure `Any` is importable if we introduced it ----
     #
     # Skipped entirely when no rewrite happened — the common case where no
     # dangling names were found and the module didn't otherwise need Any.
-    if replaced[0]:
+    if rewriter.changed:
         # Walk the top of the module once, tracking:
         #   * `insert_at`     — index just past the last `from __future__`
         #                       import (PEP 236: Any's import must land
