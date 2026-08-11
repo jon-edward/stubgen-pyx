@@ -57,31 +57,6 @@ class _AnnotationRewriter(ast.NodeTransformer):
         return node
 
 
-def _rewrite_function_annotations(
-    node: ast.FunctionDef | ast.AsyncFunctionDef,
-    rewriter: _AnnotationRewriter,
-) -> None:
-    """Rewrite decorators, arg annotations, and return type of a function.
-
-    Shared by module-level functions and class methods. Decorators can
-    reference dangling names (e.g. a stripped ``@cython.cfunc``), so they
-    get rewritten just like annotations.
-    """
-    node.decorator_list = [rewriter.visit(dec) for dec in node.decorator_list]
-    args = node.args
-    for arg in (
-        *args.posonlyargs,
-        *args.args,
-        *args.kwonlyargs,
-        args.vararg,
-        args.kwarg,
-    ):
-        if arg and arg.annotation:
-            arg.annotation = rewriter.visit(arg.annotation)
-    if node.returns:
-        node.returns = rewriter.visit(node.returns)
-
-
 def strip_artifacts(tree: ast.AST) -> ast.AST:
     """Remove Cython codegen artifacts from a .pyi AST and repair references.
 
@@ -194,7 +169,21 @@ def strip_artifacts(tree: ast.AST) -> ast.AST:
         children = node.body if isinstance(node, ast.ClassDef) else (node,)
         for child in children:
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                _rewrite_function_annotations(child, rewriter)
+                child.decorator_list = [
+                    rewriter.visit(dec) for dec in child.decorator_list
+                ]
+                args = child.args
+                for arg in (
+                    *args.posonlyargs,
+                    *args.args,
+                    *args.kwonlyargs,
+                    args.vararg,
+                    args.kwarg,
+                ):
+                    if arg and arg.annotation:
+                        arg.annotation = rewriter.visit(arg.annotation)
+                if child.returns:
+                    child.returns = rewriter.visit(child.returns)
             elif isinstance(child, ast.AnnAssign):
                 # `X: SomeType = ...` at module or class scope.
                 child.annotation = rewriter.visit(child.annotation)
