@@ -286,37 +286,35 @@ def strip_artifacts(tree: ast.AST) -> ast.AST:
     # Skipped entirely when no rewrite happened — the common case where no
     # dangling names were found and the module didn't otherwise need Any.
     if replaced[0]:
-        # Walk the top of the module once to find:
-        #   * `last_future`  — index of the last `from __future__ import`
-        #                      (Any's import must land after these; PEP 236).
-        #   * `first_typing` — index of the first `from typing import ...`
-        #                      we can slot Any into.
-        #   * `has_any`      — whether Any is already imported (bare, no
-        #                      alias). If so, nothing to do.
-        last_future, first_typing = -1, None
-        has_any = False
+        # Walk the top of the module once, tracking:
+        #   * `insert_at`     — index just past the last `from __future__`
+        #                       import (PEP 236: Any's import must land
+        #                       after these; 0 if there are no futures).
+        #   * `typing_import` — first `from typing import ...` we can slot
+        #                       Any into.
+        # The `break` short-circuits the whole pass when Any is already
+        # imported bare (no alias) — nothing to do.
+        insert_at = 0
+        typing_import: ast.ImportFrom | None = None
         for i, stmt in enumerate(tree.body):
-            if isinstance(stmt, ast.ImportFrom):
-                if stmt.module == "__future__":
-                    last_future = i
-                elif stmt.module == "typing":
-                    if any(a.name == "Any" and not a.asname for a in stmt.names):
-                        has_any = True
-                        break
-                    first_typing = first_typing if first_typing is not None else i
-        if not has_any:
-            if first_typing is not None:
+            if not isinstance(stmt, ast.ImportFrom):
+                continue
+            if stmt.module == "__future__":
+                insert_at = i + 1
+            elif stmt.module == "typing":
+                if any(a.name == "Any" and not a.asname for a in stmt.names):
+                    break
+                typing_import = typing_import or stmt
+        else:
+            if typing_import is not None:
                 # Prefer piggy-backing onto an existing `from typing import ...`
                 # by inserting `Any` at the front of its names list.
-                imp = tree.body[first_typing]
-                assert isinstance(imp, ast.ImportFrom)
-                imp.names.insert(0, ast.alias(name="Any"))
+                typing_import.names.insert(0, ast.alias(name="Any"))
             else:
                 # No typing import at all — synthesize one right after the
-                # future imports (or at position 0 if there are none, since
-                # last_future starts at -1).
+                # future imports (or at position 0 if there are none).
                 tree.body.insert(
-                    last_future + 1,
+                    insert_at,
                     ast.ImportFrom(
                         module="typing", names=[ast.alias(name="Any")], level=0
                     ),
