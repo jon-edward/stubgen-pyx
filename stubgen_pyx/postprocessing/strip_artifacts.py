@@ -58,6 +58,7 @@ def strip_artifacts(tree: ast.AST) -> ast.AST:
         return tree
 
     kept = []
+    defined: set[str] = set(_BUILTIN_NAMES)
     for node in tree.body:
         if isinstance(node, ast.Import):
             node.names = [
@@ -86,10 +87,9 @@ def strip_artifacts(tree: ast.AST) -> ast.AST:
         elif isinstance(node, ast.ClassDef):
             node.body = _filter_class_body(node.body)
         kept.append(node)
-    tree.body = kept
 
-    defined: set[str] = set(_BUILTIN_NAMES)
-    for node in tree.body:
+        # Collect module-level names as we go. Runs on the post-strip view
+        # because dropped nodes hit `continue` above.
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             defined.add(node.name)
         elif isinstance(node, ast.Import):
@@ -107,6 +107,7 @@ def strip_artifacts(tree: ast.AST) -> ast.AST:
                     defined.add(t.id)
                 elif isinstance(t, (ast.Tuple, ast.List)):
                     stack.extend(t.elts)
+    tree.body = kept
 
     replaced: list[bool] = [False]
 
