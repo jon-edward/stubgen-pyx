@@ -46,20 +46,127 @@ class _AnnotationRewriter(ast.NodeTransformer):
         return node
 
 
+def _is_typevar_assignment(node: ast.Assign) -> bool:
+    func = node.value.func if isinstance(node.value, ast.Call) else None
+    return (
+        getattr(func, "id", None) == "TypeVar"
+        or getattr(func, "attr", None) == "TypeVar"
+    )
+
+
+def _is_runtime_assignment(node: ast.Assign) -> bool:
+    if len(node.targets) != 1 or getattr(node.targets[0], "id", None) == "__all__":
+        return False
+    return isinstance(
+        node.value, (ast.Call, ast.Attribute)
+    ) and not _is_typevar_assignment(node)
+
+
+def _keep_node(node: ast.stmt) -> bool:
+    if isinstance(node, ast.Import):
+        # Filter individual dotted names inside an `import a, cython, b`.
+        node.names = [
+            name
+            for name in node.names
+            if not name.name.startswith(_BLOCKED_IMPORT_PREFIXES)
+        ]
+        return bool(node.names)
+    if isinstance(node, ast.ImportFrom):
+        return not (node.module and node.module.startswith(_BLOCKED_IMPORT_PREFIXES))
+    return not (isinstance(node, ast.Assign) and _is_runtime_assignment(node))
+
+
+def _target_names(target: ast.expr) -> set[str]:
+    names = set()
+    stack = [target]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, (ast.Tuple, ast.List)):
+            stack.extend(node.elts)
+    return names
+
+
+def _defined_by(node: ast.stmt) -> set[str]:
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return {node.name}
+    if isinstance(node, ast.Import):
+        # `import a.b.c` binds `a` unless an alias is present.
+        return {alias.asname or alias.name.split(".", 1)[0] for alias in node.names}
+    if isinstance(node, ast.ImportFrom):
+        return {alias.asname or alias.name for alias in node.names}
+    if isinstance(node, ast.Assign):
+        return set().union(*(_target_names(target) for target in node.targets))
+    if isinstance(node, ast.AnnAssign):
+        return _target_names(node.target)
+    return set()
+
+
+def _strip_and_collect(body: list[ast.stmt]) -> tuple[list[ast.stmt], set[str]]:
+    kept = []
+    defined = set(_BUILTIN_NAMES)
+    for node in body:
+        if _keep_node(node):
+            kept.append(node)
+            defined.update(_defined_by(node))
+    return kept, defined
+
+
+def _rewrite_function_annotations(
+    node: ast.FunctionDef | ast.AsyncFunctionDef, rewriter: _AnnotationRewriter
+) -> None:
+    node.decorator_list = [rewriter.visit(dec) for dec in node.decorator_list]
+    args = node.args
+    for arg in (
+        *args.posonlyargs,
+        *args.args,
+        *args.kwonlyargs,
+        args.vararg,
+        args.kwarg,
+    ):
+        if arg and arg.annotation:
+            arg.annotation = rewriter.visit(arg.annotation)
+    if node.returns:
+        node.returns = rewriter.visit(node.returns)
+
+
+def _rewrite_annotations(body: list[ast.stmt], defined: set[str]) -> bool:
+    rewriter = _AnnotationRewriter(defined)
+    for node in body:
+        children = node.body if isinstance(node, ast.ClassDef) else (node,)
+        for child in children:
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                _rewrite_function_annotations(child, rewriter)
+            elif isinstance(child, ast.AnnAssign):
+                child.annotation = rewriter.visit(child.annotation)
+    return rewriter.changed
+
+
+def _ensure_any_import(body: list[ast.stmt]) -> None:
+    insert_at = 0
+    typing_import: ast.ImportFrom | None = None
+    for index, stmt in enumerate(body):
+        if not isinstance(stmt, ast.ImportFrom):
+            continue
+        if stmt.module == "__future__":
+            insert_at = index + 1
+        elif stmt.module == "typing":
+            if any(alias.name == "Any" and not alias.asname for alias in stmt.names):
+                return
+            typing_import = typing_import or stmt
+
+    if typing_import is not None:
+        typing_import.names.insert(0, ast.alias(name="Any"))
+    else:
+        body.insert(
+            insert_at,
+            ast.ImportFrom(module="typing", names=[ast.alias(name="Any")], level=0),
+        )
+
+
 def strip_artifacts(tree: ast.AST) -> ast.AST:
     """Remove stub-only artifacts from a generated .pyi AST.
-
-    Runs three passes over a module:
-
-    1. **Strip + collect**: drop Cython-only imports and module-level
-       call/attribute assignments, except ``__all__`` and ``TypeVar(...)``
-       assignments that carry useful stub semantics. Collect names that
-       remain importable or assigned after stripping.
-    2. **Rewrite annotations**: replace annotation and decorator references
-       to stripped or otherwise undefined names with ``Any``.
-    3. **Import ``Any`` if needed**: add ``Any`` to the first existing
-       ``from typing import ...`` or insert a new typing import after
-       ``__future__`` imports.
 
     Non-``Module`` inputs are returned unchanged. Module inputs are mutated
     in place and returned for caller convenience.
@@ -67,139 +174,7 @@ def strip_artifacts(tree: ast.AST) -> ast.AST:
     if not isinstance(tree, ast.Module):
         return tree
 
-    # ---- Pass 1: strip artifacts and collect defined names ----
-    kept = []  # accumulates the post-strip module body
-    defined: set[str] = set(_BUILTIN_NAMES)  # accumulates surviving names
-    for node in tree.body:
-        if isinstance(node, ast.Import):
-            # Filter individual dotted names inside an `import a, cython, b`.
-            node.names = [
-                n for n in node.names if not n.name.startswith(_BLOCKED_IMPORT_PREFIXES)
-            ]
-            if not node.names:
-                # Every name was cython/cpython; drop the whole statement.
-                continue
-        elif isinstance(node, ast.ImportFrom):
-            # `from cython.foo import bar`: the whole statement goes,
-            # because every imported name comes from the blocked root.
-            if node.module and node.module.startswith(_BLOCKED_IMPORT_PREFIXES):
-                continue
-        elif isinstance(node, ast.Assign) and len(node.targets) == 1:
-            # Cython emits module-level `X = <runtime-evaluated>` assignments that
-            # evaluate at import time but are meaningless in stubs except for specific
-            # exceptions we deliberately preserve: ``__all__`` and ``TypeVar(...)``.
-            is_all = getattr(node.targets[0], "id", None) == "__all__"
-            func = node.value.func if isinstance(node.value, ast.Call) else None
-            is_typevar = (
-                getattr(func, "id", None) == "TypeVar"
-                or getattr(func, "attr", None) == "TypeVar"
-            )
-            if (
-                not is_all
-                and isinstance(node.value, (ast.Call, ast.Attribute))
-                and not is_typevar
-            ):
-                continue
-        kept.append(node)
-
-        # Walk the node and collect all names it binds to the module namespace.
-        # Any nodes that survived the stripping pass are considered defined for the
-        # purposes of annotation rewriting.
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            defined.add(node.name)
-        elif isinstance(node, ast.Import):
-            # `import a.b.c` binds `a` (or the asname if given). We take only
-            # the leftmost dotted component because that's what Python
-            # actually puts in the module namespace.
-            for a in node.names:
-                defined.add(a.asname or a.name.split(".", 1)[0])
-        elif isinstance(node, ast.ImportFrom):
-            # `from mod import x, y as z` binds `x` and `z`.
-            for a in node.names:
-                defined.add(a.asname or a.name)
-        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
-            # Walk every LHS target, recursing into tuple/list unpacks so
-            # patterns like `a, (b, c) = ...` bind all three names.
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            stack = list(targets)
-            while stack:
-                t = stack.pop()
-                if isinstance(t, ast.Name):
-                    defined.add(t.id)
-                elif isinstance(t, (ast.Tuple, ast.List)):
-                    stack.extend(t.elts)
-    tree.body = kept
-
-    # ---- Pass 2: rewrite dangling annotations to ``Any`` ----
-    #
-    # Walk module top level + class bodies uniformly. Nested classes rely on
-    # their own ClassDef being visited separately.
-    #
-    # `rewriter.changed` flips to True whenever a name is substituted. Pass 3
-    # uses that flag to decide whether a `typing.Any` import needs injecting.
-    rewriter = _AnnotationRewriter(defined)
-    for node in tree.body:
-        children = node.body if isinstance(node, ast.ClassDef) else (node,)
-        for child in children:
-            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                child.decorator_list = [
-                    rewriter.visit(dec) for dec in child.decorator_list
-                ]
-                args = child.args
-                for arg in (
-                    *args.posonlyargs,
-                    *args.args,
-                    *args.kwonlyargs,
-                    args.vararg,
-                    args.kwarg,
-                ):
-                    if arg and arg.annotation:
-                        arg.annotation = rewriter.visit(arg.annotation)
-                if child.returns:
-                    child.returns = rewriter.visit(child.returns)
-            elif isinstance(child, ast.AnnAssign):
-                # `X: SomeType = ...` at module or class scope.
-                child.annotation = rewriter.visit(child.annotation)
-
-    # ---- Pass 3: ensure ``Any`` is importable if we introduced it ----
-    #
-    # Skipped entirely when no rewrite happened - the common case where no
-    # dangling names were found and the module didn't otherwise need Any.
-    if rewriter.changed:
-        # Walk the top of the module once, tracking:
-        #   * `insert_at`     - index just past the last `from __future__`
-        #                       import (PEP 236: Any's import must land
-        #                       after these; 0 if there are no futures).
-        #   * `typing_import` - first `from typing import ...` we can slot
-        #                       Any into.
-        # The `break` short-circuits the whole pass when Any is already
-        # imported bare (no alias) - nothing to do.
-        insert_at = 0
-        typing_import: ast.ImportFrom | None = None
-        for i, stmt in enumerate(tree.body):
-            if not isinstance(stmt, ast.ImportFrom):
-                continue
-            if stmt.module == "__future__":
-                insert_at = i + 1
-            elif stmt.module == "typing":
-                if any(a.name == "Any" and not a.asname for a in stmt.names):
-                    break
-                typing_import = typing_import or stmt
-        else:
-            if typing_import is not None:
-                # Prefer piggy-backing onto an existing `from typing import ...`
-                # by inserting `Any` at the front of its names list.
-                typing_import.names.insert(0, ast.alias(name="Any"))
-            else:
-                # No typing import at all — synthesize one right after the
-                # future imports (or at position 0 if there are none).
-                tree.body.insert(
-                    insert_at,
-                    ast.ImportFrom(
-                        module="typing", names=[ast.alias(name="Any")], level=0
-                    ),
-                )
-
-    # Restore line/col info on any freshly synthesized nodes (the `Any` imports
-    # and the `Name('Any')` replacements).
+    tree.body, defined = _strip_and_collect(tree.body)
+    if _rewrite_annotations(tree.body, defined):
+        _ensure_any_import(tree.body)
     return ast.fix_missing_locations(tree)

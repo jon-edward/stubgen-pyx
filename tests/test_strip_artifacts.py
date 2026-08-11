@@ -300,6 +300,20 @@ def f() -> None:
     assert ast.unparse(result) == "def f() -> None:\n    pass"
 
 
+def test_strip_artifacts_keeps_non_binding_statements():
+    tree = ast.parse(
+        """\
+42
+def f() -> None:
+    pass
+"""
+    )
+
+    result = strip_artifacts(tree)
+
+    assert ast.unparse(result) == "42\n\ndef f() -> None:\n    pass"
+
+
 def test_strip_artifacts_inserts_any_after_future_import():
     tree = ast.parse(
         """\
