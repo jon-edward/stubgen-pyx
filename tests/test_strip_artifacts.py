@@ -13,12 +13,14 @@ of artifact-stripping the pipeline is responsible for:
 
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass
 
 import pytest
 
 from stubgen_pyx import StubgenPyx
 from stubgen_pyx.config import StubgenPyxConfig
+from stubgen_pyx.postprocessing.strip_artifacts import strip_artifacts
 
 
 @dataclass(frozen=True)
@@ -226,3 +228,88 @@ def test_strip_artifacts_via_public_api(case: Case, tmp_path):
     result = _convert_case(case, tmp_path)
 
     assert result == case.expected
+
+
+def test_strip_artifacts_returns_non_module_unchanged():
+    node = ast.Name(id="x", ctx=ast.Load())
+
+    assert strip_artifacts(node) is node
+
+
+def test_strip_artifacts_rewrites_dotted_dangling_root_only():
+    tree = ast.parse(
+        """\
+from typing import List
+import known
+def f(x: missing.Type, y: known.Type) -> None:
+    pass
+"""
+    )
+
+    result = strip_artifacts(tree)
+
+    assert ast.unparse(result) == (
+        "from typing import Any, List\n"
+        "import known\n\n"
+        "def f(x: Any, y: known.Type) -> None:\n"
+        "    pass"
+    )
+
+
+def test_strip_artifacts_preserves_typevar_and_tuple_targets():
+    tree = ast.parse(
+        """\
+import typing
+T = typing.TypeVar('T')
+a, (b, c) = (1, (2, 3))
+def f(x: T, y: c) -> None:
+    pass
+"""
+    )
+
+    result = strip_artifacts(tree)
+
+    assert ast.unparse(result) == (
+        "import typing\n"
+        "T = typing.TypeVar('T')\n"
+        "a, (b, c) = (1, (2, 3))\n\n"
+        "def f(x: T, y: c) -> None:\n"
+        "    pass"
+    )
+
+
+def test_strip_artifacts_drops_runtime_call_assignments():
+    tree = ast.parse(
+        """\
+SIZE = make_size()
+def f() -> None:
+    pass
+"""
+    )
+
+    result = strip_artifacts(tree)
+
+    assert ast.unparse(result) == "def f() -> None:\n    pass"
+
+
+def test_strip_artifacts_inserts_any_after_future_import():
+    tree = ast.parse(
+        """\
+from __future__ import annotations
+import os
+value: Missing = 1
+def f(*args: OtherMissing, **kwargs: MoreMissing) -> None:
+    pass
+"""
+    )
+
+    result = strip_artifacts(tree)
+
+    assert ast.unparse(result) == (
+        "from __future__ import annotations\n"
+        "from typing import Any\n"
+        "import os\n"
+        "value: Any = 1\n\n"
+        "def f(*args: Any, **kwargs: Any) -> None:\n"
+        "    pass"
+    )
