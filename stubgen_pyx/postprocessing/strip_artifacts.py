@@ -15,14 +15,10 @@ _BLOCKED_IMPORT_PREFIXES = ("cython", "cpython")
 class _AnnotationRewriter(ast.NodeTransformer):
     """Collapse annotation references whose root name is no longer defined.
 
-    Pass 1 removes Cython-only imports and other stub-only noise, which can
-    leave annotations pointing at names that no longer exist in the generated
-    module. This transformer rewrites those dangling references to ``Any``
-    and records whether it changed anything so Pass 3 can import ``Any``.
-
-    Dotted expressions are resolved by their leftmost root only: if
-    ``some_module`` is still defined, ``some_module.Type`` is trusted; if the
-    root is gone, the whole dotted expression becomes ``Any``.
+    After Cython-only imports and other stub-only noise are removed, annotations may be
+    left pointing at names that no longer exist in the generated module. This
+    transformer rewrites those dangling references to ``Any`` and records whether it
+    changed anything.
     """
 
     def __init__(self, defined: set[str]) -> None:
@@ -40,8 +36,7 @@ class _AnnotationRewriter(ast.NodeTransformer):
         # Dotted access like `some_module.Type`: only the leftmost root name
         # has to resolve. If `some_module` is defined, trust the whole chain
         # and leave it alone. If not, the whole chain is dangling and
-        # collapses to `Any`. Do NOT descend into the attribute chain
-        # field-by-field — rewriting only the value half of an
+        # collapses to `Any`. Descending and only rewriting the value half of an
         # `ast.Attribute` produces nonsense like `Any.DEFAULT_SEED`.
         root: ast.expr = node
         while isinstance(root, ast.Attribute):
@@ -72,18 +67,12 @@ def strip_artifacts(tree: ast.AST) -> ast.AST:
     if not isinstance(tree, ast.Module):
         return tree
 
-    # ---- Pass 1: strip artifacts and collect defined names in one walk ----
-    #
-    # `kept` accumulates the post-strip module body; `defined` accumulates the
-    # names that survive into that body. Fusing the two lets Pass 2 see a
-    # consistent view without a second traversal.
-    kept = []
-    defined: set[str] = set(_BUILTIN_NAMES)
+    # ---- Pass 1: strip artifacts and collect defined names ----
+    kept = []  # accumulates the post-strip module body
+    defined: set[str] = set(_BUILTIN_NAMES)  # accumulates surviving names
     for node in tree.body:
         if isinstance(node, ast.Import):
-            # Filter individual dotted names inside an `import a, cython, b`
-            # rather than dropping the whole statement — sibling imports must
-            # survive.
+            # Filter individual dotted names inside an `import a, cython, b`.
             node.names = [
                 n for n in node.names if not n.name.startswith(_BLOCKED_IMPORT_PREFIXES)
             ]
@@ -91,22 +80,14 @@ def strip_artifacts(tree: ast.AST) -> ast.AST:
                 # Every name was cython/cpython; drop the whole statement.
                 continue
         elif isinstance(node, ast.ImportFrom):
-            # `from cython.foo import bar` — the whole statement goes,
+            # `from cython.foo import bar`: the whole statement goes,
             # because every imported name comes from the blocked root.
             if node.module and node.module.startswith(_BLOCKED_IMPORT_PREFIXES):
                 continue
         elif isinstance(node, ast.Assign) and len(node.targets) == 1:
-            # Module-level `X = <runtime-evaluated>` assignments: Cython emits
-            # things like `SIZE_TYPE = DataType(42)` or `SEED = mod.CONST`
-            # that evaluate at import time. The value is meaningless in a
-            # type stub, so the whole statement is dropped — unless it's one
-            # of two well-known exceptions we deliberately preserve:
-            #
-            #   * __all__       — a real typing signal, even when built via
-            #                     `__all__ = build_all()` or `exports.ALL`.
-            #   * TypeVar(...)  — the value genuinely encodes typing info,
-            #                     covering both `T = TypeVar(...)` and
-            #                     `T = typing.TypeVar(...)` forms.
+            # Cython emits module-level `X = <runtime-evaluated>` assignments that
+            # evaluate at import time but are meaningless in stubs except for specific
+            # exceptions we deliberately preserve: ``__all__`` and ``TypeVar(...)``.
             is_all = getattr(node.targets[0], "id", None) == "__all__"
             func = node.value.func if isinstance(node.value, ast.Call) else None
             is_typevar = (
@@ -121,9 +102,9 @@ def strip_artifacts(tree: ast.AST) -> ast.AST:
                 continue
         kept.append(node)
 
-        # Second half of the fused loop: collect the names this surviving node
-        # contributes to the module namespace. Only reached for nodes we
-        # decided to keep, so `defined` matches the post-strip view exactly.
+        # Walk the node and collect all names it binds to the module namespace.
+        # Any nodes that survived the stripping pass are considered defined for the
+        # purposes of annotation rewriting.
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             defined.add(node.name)
         elif isinstance(node, ast.Import):
@@ -149,14 +130,13 @@ def strip_artifacts(tree: ast.AST) -> ast.AST:
                     stack.extend(t.elts)
     tree.body = kept
 
-    # ---- Pass 2: rewrite dangling annotations to Any ----
+    # ---- Pass 2: rewrite dangling annotations to ``Any`` ----
+    #
+    # Walk module top level + class bodies uniformly. Nested classes rely on
+    # their own ClassDef being visited separately.
     #
     # `rewriter.changed` flips to True whenever a name is substituted. Pass 3
     # uses that flag to decide whether a `typing.Any` import needs injecting.
-    #
-    # Walk module top level + class bodies uniformly. Nested classes rely on
-    # their own ClassDef being visited separately; in practice, stubgen output
-    # puts everything of interest at the top level of the module or class.
     rewriter = _AnnotationRewriter(defined)
     for node in tree.body:
         children = node.body if isinstance(node, ast.ClassDef) else (node,)
@@ -181,19 +161,19 @@ def strip_artifacts(tree: ast.AST) -> ast.AST:
                 # `X: SomeType = ...` at module or class scope.
                 child.annotation = rewriter.visit(child.annotation)
 
-    # ---- Pass 3: ensure `Any` is importable if we introduced it ----
+    # ---- Pass 3: ensure ``Any`` is importable if we introduced it ----
     #
-    # Skipped entirely when no rewrite happened — the common case where no
+    # Skipped entirely when no rewrite happened - the common case where no
     # dangling names were found and the module didn't otherwise need Any.
     if rewriter.changed:
         # Walk the top of the module once, tracking:
-        #   * `insert_at`     — index just past the last `from __future__`
+        #   * `insert_at`     - index just past the last `from __future__`
         #                       import (PEP 236: Any's import must land
         #                       after these; 0 if there are no futures).
-        #   * `typing_import` — first `from typing import ...` we can slot
+        #   * `typing_import` - first `from typing import ...` we can slot
         #                       Any into.
         # The `break` short-circuits the whole pass when Any is already
-        # imported bare (no alias) — nothing to do.
+        # imported bare (no alias) - nothing to do.
         insert_at = 0
         typing_import: ast.ImportFrom | None = None
         for i, stmt in enumerate(tree.body):
@@ -221,6 +201,5 @@ def strip_artifacts(tree: ast.AST) -> ast.AST:
                 )
 
     # Restore line/col info on any freshly synthesized nodes (the `Any` imports
-    # and the `Name('Any')` replacements). Cheap and prevents downstream tools
-    # from choking on missing locations.
+    # and the `Name('Any')` replacements).
     return ast.fix_missing_locations(tree)
