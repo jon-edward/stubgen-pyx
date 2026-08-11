@@ -48,7 +48,9 @@ def _filter_class_body(body: list[ast.stmt]) -> list[ast.stmt]:
     return kept
 
 
-def _rewrite(expr: ast.expr, defined: set[str], replaced: list[bool]) -> ast.expr:
+def _rewrite_unresolvable(
+    expr: ast.expr, defined: set[str], replaced: list[bool]
+) -> ast.expr:
     """Rewrite unresolvable names inside an annotation expression to ``Any``.
 
     After the strip pass removes Cython-only imports, some annotations end up
@@ -101,13 +103,15 @@ def _rewrite(expr: ast.expr, defined: set[str], replaced: list[bool]) -> ast.exp
     # `Union[A, B]`, `dict[str, Missing]`, `Callable[[Missing], int]`, etc.
     for f, v in ast.iter_fields(expr):
         if isinstance(v, ast.expr):
-            setattr(expr, f, _rewrite(v, defined, replaced))
+            setattr(expr, f, _rewrite_unresolvable(v, defined, replaced))
         elif isinstance(v, list):
             setattr(
                 expr,
                 f,
                 [
-                    _rewrite(e, defined, replaced) if isinstance(e, ast.expr) else e
+                    _rewrite_unresolvable(e, defined, replaced)
+                    if isinstance(e, ast.expr)
+                    else e
                     for e in v
                 ],
             )
@@ -221,7 +225,7 @@ def strip_artifacts(tree: ast.AST) -> ast.AST:
 
     # ---- Pass 2: rewrite dangling annotations to Any ----
     #
-    # `replaced` is a single-element mutable flag: `_rewrite` sets it to True
+    # `replaced` is a single-element mutable flag: `_rewrite_unresolvable` sets it to True
     # whenever it substitutes a name. Pass 3 uses that flag to decide whether
     # a `typing.Any` import needs to be injected.
     replaced: list[bool] = [False]
@@ -231,20 +235,24 @@ def strip_artifacts(tree: ast.AST) -> ast.AST:
             # Decorators can reference dangling names too (e.g. a stripped
             # `@cython.cfunc`), so they get rewritten just like annotations.
             for dec in node.decorator_list:
-                _rewrite(dec, defined, replaced)
+                _rewrite_unresolvable(dec, defined, replaced)
             # Regular args (positional-only, positional-or-keyword, keyword-only).
             for arg in node.args.posonlyargs + node.args.args + node.args.kwonlyargs:
                 if arg.annotation:
-                    arg.annotation = _rewrite(arg.annotation, defined, replaced)
+                    arg.annotation = _rewrite_unresolvable(
+                        arg.annotation, defined, replaced
+                    )
             # *args / **kwargs — separate slots that may or may not be present.
             for arg in (node.args.vararg, node.args.kwarg):
                 if arg and arg.annotation:
-                    arg.annotation = _rewrite(arg.annotation, defined, replaced)
+                    arg.annotation = _rewrite_unresolvable(
+                        arg.annotation, defined, replaced
+                    )
             if node.returns:
-                node.returns = _rewrite(node.returns, defined, replaced)
+                node.returns = _rewrite_unresolvable(node.returns, defined, replaced)
         elif isinstance(node, ast.AnnAssign):
             # Module-level annotated assignment: `X: SomeType = ...`.
-            node.annotation = _rewrite(node.annotation, defined, replaced)
+            node.annotation = _rewrite_unresolvable(node.annotation, defined, replaced)
         elif isinstance(node, ast.ClassDef):
             # Methods and annotated class attributes. We only descend one
             # level; nested classes rely on their own ClassDef being visited
@@ -254,19 +262,27 @@ def strip_artifacts(tree: ast.AST) -> ast.AST:
             for child in node.body:
                 if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     for dec in child.decorator_list:
-                        _rewrite(dec, defined, replaced)
+                        _rewrite_unresolvable(dec, defined, replaced)
                     for arg in (
                         child.args.posonlyargs + child.args.args + child.args.kwonlyargs
                     ):
                         if arg.annotation:
-                            arg.annotation = _rewrite(arg.annotation, defined, replaced)
+                            arg.annotation = _rewrite_unresolvable(
+                                arg.annotation, defined, replaced
+                            )
                     for arg in (child.args.vararg, child.args.kwarg):
                         if arg and arg.annotation:
-                            arg.annotation = _rewrite(arg.annotation, defined, replaced)
+                            arg.annotation = _rewrite_unresolvable(
+                                arg.annotation, defined, replaced
+                            )
                     if child.returns:
-                        child.returns = _rewrite(child.returns, defined, replaced)
+                        child.returns = _rewrite_unresolvable(
+                            child.returns, defined, replaced
+                        )
                 elif isinstance(child, ast.AnnAssign):
-                    child.annotation = _rewrite(child.annotation, defined, replaced)
+                    child.annotation = _rewrite_unresolvable(
+                        child.annotation, defined, replaced
+                    )
 
     # ---- Pass 3: ensure `Any` is importable if we introduced it ----
     #
