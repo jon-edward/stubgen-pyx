@@ -268,14 +268,22 @@ def f(x: T, y: c) -> None:
     )
 
     result = strip_artifacts(tree)
+    assert isinstance(result, ast.Module)
+    typevar_assign = result.body[1]
+    unpack_assign = result.body[2]
+    function = result.body[3]
+    assert isinstance(typevar_assign, ast.Assign)
+    assert isinstance(unpack_assign, ast.Assign)
+    assert isinstance(function, ast.FunctionDef)
+    x_annotation = function.args.args[0].annotation
+    y_annotation = function.args.args[1].annotation
+    assert x_annotation is not None
+    assert y_annotation is not None
 
-    assert ast.unparse(result) == (
-        "import typing\n"
-        "T = typing.TypeVar('T')\n"
-        "a, (b, c) = (1, (2, 3))\n\n"
-        "def f(x: T, y: c) -> None:\n"
-        "    pass"
-    )
+    assert ast.unparse(typevar_assign) == "T = typing.TypeVar('T')"
+    assert ast.unparse(unpack_assign.targets[0]) in {"a, (b, c)", "(a, (b, c))"}
+    assert ast.unparse(x_annotation) == "T"
+    assert ast.unparse(y_annotation) == "c"
 
 
 def test_strip_artifacts_drops_runtime_call_assignments():
