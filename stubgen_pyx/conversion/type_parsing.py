@@ -42,6 +42,20 @@ _CYTHON_TO_NUMPY_SCALAR: dict[str, str] = {
     "double complex": "complex128",
 }
 
+_CYTHON_BUILTIN_GENERIC_MAPPING: dict[str, str] = {
+    "tuple": "tuple[Any, ...]",
+    "list": "list[Any]",
+    "dict": "dict[Any, Any]",
+    "set": "set[Any]",
+}
+
+
+def _parameterize_builtin_generic(name: str | None) -> str | None:
+    """Map bare Cython container names to Any-filled Python generics."""
+    if name is None:
+        return None
+    return _CYTHON_BUILTIN_GENERIC_MAPPING.get(name, name)
+
 
 def extract_type_from_base_type(node, is_ptr: bool = False) -> str | None:
     """Extract a type annotation string from a base_type node.
@@ -77,7 +91,7 @@ def extract_type_from_base_type(node, is_ptr: bool = False) -> str | None:
     if is_ptr and name == "char":
         return "bytes"
 
-    return name
+    return _parameterize_builtin_generic(name)
 
 
 def _extract_tuple_type(node: Nodes.CTupleBaseTypeNode) -> str:

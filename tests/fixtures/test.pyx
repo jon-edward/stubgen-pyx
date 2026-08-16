@@ -27,6 +27,7 @@ def func() -> ImportedClass:
 
 cdef class TestClass2:
     cdef public int a
+    cdef public set b
 
     def __init__(self):
         """
