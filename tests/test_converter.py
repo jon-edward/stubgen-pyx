@@ -886,7 +886,10 @@ cdef struct Foo:
         module = converter.convert_module(mv, pr.source, pr.type_comments)
 
         assert len(module.scope.classes) == 1
-        assert module.scope.classes[0].scope.assignments[0].statement == "bar: Callable"
+        assert (
+            module.scope.classes[0].scope.assignments[0].statement
+            == "bar: Callable[..., Any]"
+        )
 
 
 class TestMemoryviewConversion:

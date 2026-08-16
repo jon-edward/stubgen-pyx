@@ -86,7 +86,7 @@ class Converter:
             inherited_fused_types,
             emit_inherited_fused_typevars=True,
         )
-        typing_import = "from typing import Any, TypeAlias, TypedDict"
+        typing_import = "from typing import Any, Callable, TypeAlias, TypedDict"
         if any("TypeVar(" in assignment.statement for assignment in scope.assignments):
             typing_import += ", TypeVar"
         return PyiModule(
