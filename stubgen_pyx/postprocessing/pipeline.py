@@ -23,6 +23,7 @@ from .sort_imports import sort_imports
 from .strip_artifacts import strip_artifacts
 from .trim_imports import _UnusedImportRemover
 from .trim_not_defined import trim_not_defined
+from .unquote_annotations import unquote_annotations
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ def _ast_transforms(
         trim_not_defined(tree)
 
     tree = overload_singledispatch(tree)
-
+    tree = unquote_annotations(tree)
     tree = strip_artifacts(tree)
 
     if config.trim_imports:
