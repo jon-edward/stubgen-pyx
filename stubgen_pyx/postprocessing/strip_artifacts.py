@@ -113,10 +113,61 @@ def _strip_and_collect(body: list[ast.stmt]) -> tuple[list[ast.stmt], set[str]]:
     return kept, defined
 
 
+def _is_blocked_import_reference(node: ast.expr) -> bool:
+    root: ast.expr = node
+    while isinstance(root, (ast.Call, ast.Attribute)):
+        root = root.func if isinstance(root, ast.Call) else root.value
+    return isinstance(root, ast.Name) and root.id.startswith(_BLOCKED_IMPORT_PREFIXES)
+
+
+def _rewrite_decorator_expression(
+    node: ast.expr, rewriter: _AnnotationRewriter, *, in_decorator_root: bool = False
+) -> ast.expr:
+    if isinstance(node, ast.Call):
+        return ast.Call(
+            func=_rewrite_decorator_expression(
+                node.func, rewriter, in_decorator_root=True
+            ),
+            args=[_rewrite_decorator_expression(arg, rewriter) for arg in node.args],
+            keywords=[
+                ast.keyword(
+                    arg=kw.arg, value=_rewrite_decorator_expression(kw.value, rewriter)
+                )
+                for kw in node.keywords
+            ],
+        )
+    if isinstance(node, ast.Attribute):
+        if in_decorator_root:
+            return node
+        root = node.value
+        while isinstance(root, ast.Attribute):
+            root = root.value
+        if isinstance(root, ast.Name) and root.id not in rewriter.defined:
+            return rewriter._any()
+        return node
+    if isinstance(node, ast.Name):
+        if in_decorator_root:
+            return node
+        return node if node.id in rewriter.defined else rewriter._any()
+    return rewriter.visit(node)
+
+
+def _rewrite_decorators(
+    node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
+    rewriter: _AnnotationRewriter,
+) -> None:
+    cleaned: list[ast.expr] = []
+    for dec in node.decorator_list:
+        if _is_blocked_import_reference(dec):
+            continue
+        cleaned.append(_rewrite_decorator_expression(dec, rewriter))
+    node.decorator_list = cleaned
+
+
 def _rewrite_function_annotations(
     node: ast.FunctionDef | ast.AsyncFunctionDef, rewriter: _AnnotationRewriter
 ) -> None:
-    node.decorator_list = [rewriter.visit(dec) for dec in node.decorator_list]
+    _rewrite_decorators(node, rewriter)
     args = node.args
     for arg in (
         *args.posonlyargs,
@@ -131,16 +182,45 @@ def _rewrite_function_annotations(
         node.returns = rewriter.visit(node.returns)
 
 
+def _class_defined_names(node: ast.ClassDef) -> set[str]:
+    names: set[str] = set()
+    for stmt in node.body:
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(stmt.name)
+        elif isinstance(stmt, ast.Assign):
+            names.update(*(_target_names(target) for target in stmt.targets))
+        elif isinstance(stmt, ast.AnnAssign):
+            names.update(_target_names(stmt.target))
+        elif isinstance(stmt, ast.Import):
+            names.update(
+                alias.asname or alias.name.split(".", 1)[0] for alias in stmt.names
+            )
+        elif isinstance(stmt, ast.ImportFrom):
+            names.update(alias.asname or alias.name for alias in stmt.names)
+    return names
+
+
 def _rewrite_annotations(body: list[ast.stmt], defined: set[str]) -> bool:
-    rewriter = _AnnotationRewriter(defined)
+    changed = False
     for node in body:
-        children = node.body if isinstance(node, ast.ClassDef) else (node,)
-        for child in children:
-            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                _rewrite_function_annotations(child, rewriter)
-            elif isinstance(child, ast.AnnAssign):
-                child.annotation = rewriter.visit(child.annotation)
-    return rewriter.changed
+        if isinstance(node, ast.ClassDef):
+            class_defined = defined | _class_defined_names(node)
+            rewriter = _AnnotationRewriter(class_defined)
+            _rewrite_decorators(node, rewriter)
+            for child in node.body:
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    _rewrite_function_annotations(child, rewriter)
+                elif isinstance(child, ast.AnnAssign):
+                    child.annotation = rewriter.visit(child.annotation)
+            changed |= rewriter.changed
+        else:
+            rewriter = _AnnotationRewriter(defined)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                _rewrite_function_annotations(node, rewriter)
+            elif isinstance(node, ast.AnnAssign):
+                node.annotation = rewriter.visit(node.annotation)
+            changed |= rewriter.changed
+    return changed
 
 
 def _ensure_any_import(body: list[ast.stmt]) -> None:
