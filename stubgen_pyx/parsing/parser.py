@@ -139,7 +139,7 @@ def _parse_str(source: str, module_name: str, pxd: bool = False) -> ParsedSource
     encoding = "UTF-8"
     initial_pos = (module_name, 1, 0)
 
-    context = StringParseContext(module_name)
+    context = StringParseContext(module_name, cpp=True)
     code_source = StringSourceDescriptor(module_name, source)
     buf = StringIO(source)
 
