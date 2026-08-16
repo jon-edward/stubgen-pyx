@@ -54,7 +54,7 @@ def get_cdef_variables(node: Nodes.CVarDefNode) -> list[tuple[str, str | None]]:
     for d in declarators:
         name = _declarator_name(d)
         if isinstance(d, Nodes.CFuncDeclaratorNode):
-            typ: str | None = "Callable"
+            typ: str | None = "Callable[..., Any]"
         elif isinstance(d, Nodes.CPtrDeclaratorNode):
             typ = extract_type_from_base_type(node, is_ptr=True)
         else:

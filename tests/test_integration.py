@@ -604,3 +604,23 @@ def test_exclude_patterns(temp_dir):
         exclude_patterns=[str(temp_dir / "test1.pyx"), str(temp_dir / "nested" / "*")],
     )
     assert len(result) == 0  # multiple excludes should be additive
+
+
+def test_struct_funcptr_imports_typing_callable(temp_dir):
+    """Test that a struct with a function pointer imports typing.Callable from typing."""
+
+    pyx_file = temp_dir / "test.pxd"
+    pyx_file.write_text("""
+cdef extern from *:
+    ctypedef struct MyStruct:
+        void (*callback)(void*)
+        int value
+""")
+
+    stubgen = StubgenPyx()
+    result = stubgen.convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+
+    assert (
+        "from typing import Any, Callable" in result
+        and "callback: Callable[..., Any]" in result
+    )
