@@ -538,6 +538,30 @@ cdef class Foo:
         assert len(cls.scope.assignments) == 1
         assert cls.scope.assignments[0].statement == "bar: list[bytes]"
 
+    def test_bare_builtin_container_attributes_are_parameterized(self):
+        """Bare Cython container names need Any-filled generic annotations."""
+        code = """
+cdef class Foo:
+    cdef public tuple tuple_attr
+    cdef public list list_attr
+    cdef public dict dict_attr
+    cdef public set set_attr
+"""
+        parsed = parse_pyx(code)
+        visitor = ModuleVisitor(parsed.source_ast)
+
+        converter = Converter()
+        result = converter.convert_module(visitor, parsed.source)
+
+        assert len(result.scope.classes) == 1
+        cls = result.scope.classes[0]
+        assert [a.statement for a in cls.scope.assignments] == [
+            "tuple_attr: tuple[Any, ...]",
+            "list_attr: list[Any]",
+            "dict_attr: dict[Any, Any]",
+            "set_attr: set[Any]",
+        ]
+
     def test_class_metaclass(self):
         """Test converting class metaclass."""
         code = """
