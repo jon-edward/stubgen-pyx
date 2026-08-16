@@ -187,7 +187,7 @@ class _NotDefinedRemover(ast.NodeTransformer):
         return not used_names.issubset(self.defined_names)
 
     def _replace_if_undefined(
-        self, node: ast.expr, annotation: bool = False
+        self, node: ast.expr, annotation: bool = False, type_alias: bool = False
     ) -> ast.expr:
         if annotation and self.contains_star_import:
             # Do not replace names in type annotations if a star import is present
@@ -198,7 +198,9 @@ class _NotDefinedRemover(ast.NodeTransformer):
         if undefined:
             for name in sorted(undefined):
                 self.replaced.append(name)
-            return ast.Constant(...)
+            if not type_alias:
+                return ast.Constant(...)
+            return ast.Name("Any", ast.Load())
         return node
 
     def visit_Assign(self, node: ast.Assign) -> ast.Assign:
@@ -217,7 +219,9 @@ class _NotDefinedRemover(ast.NodeTransformer):
             ):
                 type_alias_override = True  # Treat type aliases as annotations
             node.value = self._replace_if_undefined(
-                node.value, annotation=type_alias_override
+                node.value,
+                annotation=type_alias_override,
+                type_alias=type_alias_override,
             )
         return node
 
