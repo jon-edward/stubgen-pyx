@@ -126,7 +126,7 @@ def _extract_templated_type(node: Nodes.TemplatedTypeNode) -> str | None:
     base = ".".join(base_type_node.module_path + [base_type_node.name])
 
     parts = [extract_type_from_base_type(a) or "object" for a in positional_args]
-    return f"{base}[{', '.join(parts)}]"
+    return f"{base}[{', '.join(parts)}]" if parts else base
 
 
 def _extract_array_type(node: Nodes.TemplatedTypeNode) -> str | None:
