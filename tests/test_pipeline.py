@@ -209,8 +209,7 @@ def test_pipeline_trim_not_defined_warns(caplog):
     assert "MysteryType" in caplog.text
 
 
-def test_pipeline_trim_not_defined_disabled_preserves():
-    """Test that trim_not_defined=False leaves unknown names alone."""
+def test_pipeline_validator_runs_with_trim_not_defined_disabled():
     pyi_code = "def foo(x: UndefinedType) -> int: ..."
 
     config = StubgenPyxConfig(
@@ -221,7 +220,8 @@ def test_pipeline_trim_not_defined_disabled_preserves():
     )
     result = postprocessing_pipeline(pyi_code, config)
 
-    assert "UndefinedType" in result
+    assert "from typing import Any" in result
+    assert "def foo(x: Any) -> int" in result
 
 
 def test_pipeline_transform_order_trim_before_trim_not_defined():
