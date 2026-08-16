@@ -28,10 +28,13 @@ CASES = [
     Case(
         id="quoted_param_annotation_unquoted",
         pyx="""\
+cdef class Foo:
+    pass
+
 cpdef void f(x: 'Foo | None'):
     pass
 """,
-        expected="def f(x: Foo | None) -> None: ...\n",
+        expected="class Foo: ...\n\ndef f(x: Foo | None) -> None: ...\n",
     ),
     Case(
         id="quoted_return_annotation_unquoted",
@@ -70,19 +73,31 @@ cpdef void f(x: 'not valid python >>>'):
     Case(
         id="multiple_quoted_params_all_unquoted",
         pyx="""\
+cdef class Foo:
+    pass
+
+cdef class Bar:
+    pass
+
+cdef class Baz:
+    pass
+
 cpdef void f(x: 'Foo | None', y: 'Bar | Baz'):
     pass
 """,
-        expected="def f(x: Foo | None, y: Bar | Baz) -> None: ...\n",
+        expected="class Foo: ...\n\nclass Bar: ...\n\nclass Baz: ...\n\ndef f(x: Foo | None, y: Bar | Baz) -> None: ...\n",
     ),
     Case(
         id="class_method_quoted_annotation_unquoted",
         pyx="""\
+cdef class Foo:
+    pass
+
 cdef class Ops:
     cpdef void f(self, x: 'Foo | None'):
         pass
 """,
-        expected="class Ops:\n    def f(self, x: Foo | None) -> None: ...\n",
+        expected="class Foo: ...\n\nclass Ops:\n    def f(self, x: Foo | None) -> None: ...\n",
     ),
     Case(
         id="module_level_annassign_unquoted",
@@ -105,10 +120,13 @@ async def f() -> 'list[int]':
     Case(
         id="async_function_quoted_param_unquoted",
         pyx="""\
+cdef class Foo:
+    pass
+
 async def f(x: 'Foo | None'):
     pass
 """,
-        expected="async def f(x: Foo | None): ...\n",
+        expected="class Foo: ...\n\nasync def f(x: Foo | None): ...\n",
     ),
     Case(
         id="class_attribute_quoted_annotation_unquoted",
