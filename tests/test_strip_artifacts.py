@@ -335,3 +335,49 @@ def f(*args: OtherMissing, **kwargs: MoreMissing) -> None:
         "def f(*args: Any, **kwargs: Any) -> None:\n"
         "    pass"
     )
+
+
+def test_strip_artifacts_preserves_class_property_setters():
+    tree = ast.parse(
+        """\
+class Example:
+    @property
+    def labels(self):
+        return self._labels
+
+    @labels.setter
+    def labels(self, value):
+        self._labels = value
+"""
+    )
+
+    result = strip_artifacts(tree)
+
+    assert ast.unparse(result) == (
+        "class Example:\n\n"
+        "    @property\n"
+        "    def labels(self):\n"
+        "        return self._labels\n\n"
+        "    @labels.setter\n"
+        "    def labels(self, value):\n"
+        "        self._labels = value"
+    )
+
+
+def test_strip_artifacts_drops_cython_decorators_from_blocked_imports():
+    tree = ast.parse(
+        """\
+import cython
+
+@cython.freelist(8)
+def f():
+    pass
+
+@cython.freelist(8)
+class Foo:
+    pass
+"""
+    )
+
+    result = strip_artifacts(tree)
+    assert ast.unparse(result) == "def f():\n    pass\n\nclass Foo:\n    pass"
