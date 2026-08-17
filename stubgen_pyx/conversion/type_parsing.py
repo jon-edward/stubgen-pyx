@@ -91,6 +91,9 @@ def extract_type_from_base_type(node, is_ptr: bool = False) -> str | None:
     if is_ptr and name == "char":
         return "bytes"
 
+    if is_ptr and name == "void":
+        return "Any"
+
     return _parameterize_builtin_generic(name)
 
 
