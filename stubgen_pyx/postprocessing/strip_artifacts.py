@@ -200,6 +200,14 @@ def _class_defined_names(node: ast.ClassDef) -> set[str]:
     return names
 
 
+def _is_typealias_annotation(node: ast.expr | None) -> bool:
+    if isinstance(node, ast.Name):
+        return node.id == "TypeAlias"
+    if isinstance(node, ast.Attribute):
+        return node.attr == "TypeAlias"
+    return False
+
+
 def _rewrite_annotations(body: list[ast.stmt], defined: set[str]) -> bool:
     changed = False
     for node in body:
@@ -212,6 +220,10 @@ def _rewrite_annotations(body: list[ast.stmt], defined: set[str]) -> bool:
                     _rewrite_function_annotations(child, rewriter)
                 elif isinstance(child, ast.AnnAssign):
                     child.annotation = rewriter.visit(child.annotation)
+                    if child.value is not None and _is_typealias_annotation(
+                        child.annotation
+                    ):
+                        child.value = rewriter.visit(child.value)
             changed |= rewriter.changed
         else:
             rewriter = _AnnotationRewriter(defined)
@@ -219,6 +231,8 @@ def _rewrite_annotations(body: list[ast.stmt], defined: set[str]) -> bool:
                 _rewrite_function_annotations(node, rewriter)
             elif isinstance(node, ast.AnnAssign):
                 node.annotation = rewriter.visit(node.annotation)
+                if node.value is not None and _is_typealias_annotation(node.annotation):
+                    node.value = rewriter.visit(node.value)
             changed |= rewriter.changed
     return changed
 
