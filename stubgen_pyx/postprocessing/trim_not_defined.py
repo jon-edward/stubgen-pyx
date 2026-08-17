@@ -17,22 +17,44 @@ Note on attribute annotations (e.g. ``numpy.ndarray``):
     whole expression is kept.  This is intentional: we can't validate that
     ``numpy.ndarray`` exists without importing the package, and removing half
     an attribute chain would produce invalid stubs.
+
+Relationship to ``strip_artifacts``:
+    Both modules rewrite expressions that reference names the module doesn't
+    define, and both use a "root name of a dotted chain" resolvability check.
+    They are not redundant, though - each covers a case the other doesn't:
+
+    * This pass is general-purpose and user-configurable
+      (``StubgenPyxConfig.trim_not_defined``). It catches *any* name that was
+      never defined to begin with - most commonly a reference to a dependency
+      that isn't available in the stub's environment. It covers default
+      values as well as annotations, and it replaces with ``...`` to signal
+      "unresolvable", since a real ``Any`` import may not be wanted for a
+      pass a user can turn off.
+    * ``strip_artifacts`` is unconditional and narrower: it only repairs
+      annotations/decorators that reference a name *it just deleted itself*
+      (a Cython-only import, a runtime-constant assignment), and does so
+      with ``Any`` because it also manages the corresponding
+      ``from typing import Any`` so the stub still parses regardless of user
+      config.
+
+    This pass runs first in the pipeline, so in practice it already collapses
+    most dangling references to ``...`` before ``strip_artifacts`` sees them;
+    ``strip_artifacts``'s own rewrite mainly matters when this pass is
+    disabled, or for names it deletes itself later in the same pipeline pass.
 """
 
 from __future__ import annotations
 
 import ast
-import builtins
 import logging
 from dataclasses import dataclass, field
 
-from .utils import dotted_name
+from .utils import PUBLIC_BUILTIN_NAMES, dotted_name
 
 logger = logging.getLogger(__name__)
 
-_BUILTIN_NAMES = {
-    name for name in dir(builtins) if not name.startswith("_")
-}  # Built-in names that should never be trimmed
+# Built-in names that should never be trimmed.
+_BUILTIN_NAMES = set(PUBLIC_BUILTIN_NAMES)
 
 _BUILTIN_NAMES.update(
     {

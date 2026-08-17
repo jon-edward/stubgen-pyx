@@ -1,12 +1,13 @@
-"""Strip Cython-only stub artifacts and repair dangling annotations."""
+"""Strip Cython-only stub artifacts and repair the annotations left dangling by that."""
 
 from __future__ import annotations
 
 import ast
-import builtins
+
+from .utils import PUBLIC_BUILTIN_NAMES, root_name
 
 # Names always considered resolvable when checking annotations.
-_BUILTIN_NAMES = {name for name in dir(builtins) if not name.startswith("_")} | {"None"}
+_BUILTIN_NAMES = PUBLIC_BUILTIN_NAMES | {"None"}
 
 # Cython import roots that have no meaning in .pyi stubs.
 _BLOCKED_IMPORT_PREFIXES = ("cython", "cpython")
@@ -38,10 +39,8 @@ class _AnnotationRewriter(ast.NodeTransformer):
         # and leave it alone. If not, the whole chain is dangling and
         # collapses to `Any`. Descending and only rewriting the value half of an
         # `ast.Attribute` produces nonsense like `Any.DEFAULT_SEED`.
-        root: ast.expr = node
-        while isinstance(root, ast.Attribute):
-            root = root.value
-        if isinstance(root, ast.Name) and root.id not in self.defined:
+        root = root_name(node)
+        if root is not None and root not in self.defined:
             return self._any()
         return node
 
@@ -114,10 +113,8 @@ def _strip_and_collect(body: list[ast.stmt]) -> tuple[list[ast.stmt], set[str]]:
 
 
 def _is_blocked_import_reference(node: ast.expr) -> bool:
-    root: ast.expr = node
-    while isinstance(root, (ast.Call, ast.Attribute)):
-        root = root.func if isinstance(root, ast.Call) else root.value
-    return isinstance(root, ast.Name) and root.id.startswith(_BLOCKED_IMPORT_PREFIXES)
+    root = root_name(node)
+    return root is not None and root.startswith(_BLOCKED_IMPORT_PREFIXES)
 
 
 def _rewrite_decorator_expression(
@@ -139,10 +136,8 @@ def _rewrite_decorator_expression(
     if isinstance(node, ast.Attribute):
         if in_decorator_root:
             return node
-        root = node.value
-        while isinstance(root, ast.Attribute):
-            root = root.value
-        if isinstance(root, ast.Name) and root.id not in rewriter.defined:
+        root = root_name(node)
+        if root is not None and root not in rewriter.defined:
             return rewriter._any()
         return node
     if isinstance(node, ast.Name):
