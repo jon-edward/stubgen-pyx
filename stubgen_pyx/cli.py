@@ -131,6 +131,13 @@ Examples:
     )
 
     parser.add_argument(
+        "--no-fix-scalar-defaults",
+        help="Do not coerce str/int literal defaults on bytes/bool-annotated "
+        "arguments (from `char *`/`bint` params) to match their annotation",
+        action="store_true",
+    )
+
+    parser.add_argument(
         "--exclude-attribution",
         help="Exclude stubgen-pyx attribution comment from the output stub",
         action="store_true",
@@ -203,6 +210,7 @@ def main() -> None:
         pxd_to_stubs=not args.no_pxd_to_stubs,
         deduplicate_imports=not args.no_deduplicate_imports,
         trim_not_defined=not args.no_trim_not_defined,
+        fix_scalar_defaults=not args.no_fix_scalar_defaults,
         include_docstrings=not args.exclude_docstrings,
         exclude_attribution=args.exclude_attribution,
         continue_on_error=args.continue_on_error,

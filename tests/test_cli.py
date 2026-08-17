@@ -93,6 +93,12 @@ class TestCreateParser:
         args = parser.parse_args([".", "--no-deduplicate-imports"])
         assert args.no_deduplicate_imports is True
 
+    def test_parser_with_no_fix_scalar_defaults(self):
+        """Test parser with --no-fix-scalar-defaults flag."""
+        parser = cli._create_parser()
+        args = parser.parse_args([".", "--no-fix-scalar-defaults"])
+        assert args.no_fix_scalar_defaults is True
+
     def test_parser_with_exclude_attribution(self):
         """Test parser with --exclude-attribution flag."""
         parser = cli._create_parser()

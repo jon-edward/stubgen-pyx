@@ -144,6 +144,10 @@ stubgen-pyx . --no-deduplicate-imports
 # Skip trimming undefined names from annotations and defaults
 stubgen-pyx . --no-trim-not-defined
 
+# Skip coercing char*/bint default literals (e.g. `x: bytes = '.'`) to match
+# their annotation (e.g. `x: bytes = b'.'`)
+stubgen-pyx . --no-fix-scalar-defaults
+
 # Skip preserving docstrings from the stub
 stubgen-pyx . --exclude-docstrings
 
@@ -202,6 +206,7 @@ config = StubgenPyxConfig(
     exclude_attribution=False,      # Don't skip stubgen-pyx attribution comment
     continue_on_error=True,         # Continue on errors
     include_private=False,          # Exclude private functions
+    fix_scalar_defaults=True,       # Coerce char*/bint default literals to match their annotation
     verbose=True,                   # Show details
 )
 
@@ -256,24 +261,26 @@ While mypy's `stubgen` can generate stubs for compiled extension modules through
 - Fixed-size C arrays (e.g. `char[100]` → `bytes`, `int[100][100]` → `list[list[int]]`)
 - Pointer-to-char declarations (`char *` → `bytes`)
 - Fused types (e.g. `FooOrBar` → `TypeVar('FooOrBar', Foo, Bar)` or `Foo | Bar` as appropriate)
+- Default value coercion for `char *`/`bint` parameters (e.g. `char *x = '.'` → `x: bytes = b'.'`, `bint flag = 0` → `flag: bool = False`)
 
 ## Configuration Options
 
 All configuration is handled through the `StubgenPyxConfig` dataclass:
 
-| Option                | Type | Default | Description                                     |
-| --------------------- | ---- | ------- | ----------------------------------------------- |
-| `sort_imports`        | bool | True    | Sort imports                                    |
-| `trim_imports`        | bool | True    | Trim unused imports                             |
-| `deduplicate_imports` | bool | True    | Deduplicate imports for the same name           |
-| `trim_not_defined`    | bool | True    | Trim undefined names from annotations           |
-| `pxd_to_stubs`        | bool | True    | Include .pxd file contents                      |
-| `normalize_names`     | bool | True    | Normalize Cython types to Python equivalents    |
-| `exclude_attribution` | bool | False   | Skip adding stubgen-pyx attribution comment     |
-| `continue_on_error`   | bool | False   | Continue processing even if a file fails        |
-| `include_private`     | bool | False   | Include private functions in the generated stub |
-| `verbose`             | bool | False   | Enable verbose logging output                   |
-| `include_docstrings`  | bool | True    | Include docstrings in the generated stub        |
+| Option                | Type | Default | Description                                          |
+| --------------------- | ---- | ------- | ----------------------------------------------------- |
+| `sort_imports`        | bool | True    | Sort imports                                           |
+| `trim_imports`        | bool | True    | Trim unused imports                                    |
+| `deduplicate_imports` | bool | True    | Deduplicate imports for the same name                  |
+| `trim_not_defined`    | bool | True    | Trim undefined names from annotations                  |
+| `fix_scalar_defaults` | bool | True    | Coerce char\*/bint literal defaults to match `bytes`/`bool` |
+| `pxd_to_stubs`        | bool | True    | Include .pxd file contents                             |
+| `normalize_names`     | bool | True    | Normalize Cython types to Python equivalents           |
+| `exclude_attribution` | bool | False   | Skip adding stubgen-pyx attribution comment            |
+| `continue_on_error`   | bool | False   | Continue processing even if a file fails               |
+| `include_private`     | bool | False   | Include private functions in the generated stub        |
+| `verbose`             | bool | False   | Enable verbose logging output                          |
+| `include_docstrings`  | bool | True    | Include docstrings in the generated stub               |
 
 ## Example
 

@@ -14,6 +14,7 @@ from .attribution import stubgen_attribution
 from .collapse_funcdefs import collapse_funcdefs
 from .collect_names import collect_names
 from .deduplicate_imports import _DuplicateImportRemover
+from .fix_scalar_defaults import fix_scalar_defaults
 from .normalize_member_spacing import normalize_member_spacing
 from .normalize_names import _NameNormalizer
 from .overload_singledispatch import overload_singledispatch
@@ -79,11 +80,23 @@ def _ast_transforms(
     tree = remove_overload_implementations(tree)
 
     if config.trim_not_defined:
+        # Runs before strip_artifacts so general "never defined" references
+        # (e.g. unavailable third-party types) are collapsed to `...` first.
+        # strip_artifacts still runs unconditionally afterward: it repairs
+        # dangling references that *it itself* creates by deleting Cython
+        # artifacts, which is unrelated to whether the user wants this more
+        # general trimming pass. See trim_not_defined's module docstring for
+        # the full split of responsibility between the two passes.
         trim_not_defined(tree)
 
     tree = overload_singledispatch(tree)
     tree = unquote_annotations(tree)
     tree = strip_artifacts(tree)
+
+    if config.fix_scalar_defaults:
+        # Runs after normalize_names/strip_artifacts so `bint` has already
+        # become `bool` where possible; matches both spellings regardless.
+        tree = fix_scalar_defaults(tree)
 
     if config.trim_imports:
         used_names = collect_names(tree)

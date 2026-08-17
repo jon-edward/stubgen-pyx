@@ -17,6 +17,9 @@ class StubgenPyxConfig:
         normalize_names: Normalize Cython type names to Python equivalents (default: True).
         deduplicate_imports: Remove duplicate imports (default: True).
         trim_not_defined: Replace undefined names with ``...`` (default: True).
+        fix_scalar_defaults: Coerce str/int literal defaults on bytes/bool
+            args (from ``char *``/``bint`` params) to match their annotation
+            (default: True).
         exclude_attribution: Skip adding generation attribution comment (default: False).
         continue_on_error: Continue processing files that failed (default: False).
         include_private: Include private members (default: False).
@@ -29,6 +32,7 @@ class StubgenPyxConfig:
     normalize_names: bool = True
     deduplicate_imports: bool = True
     trim_not_defined: bool = True
+    fix_scalar_defaults: bool = True
     include_docstrings: bool = True
     exclude_attribution: bool = False
     continue_on_error: bool = False
