@@ -485,6 +485,24 @@ cdef class Foo:
         assert len(cls.scope.assignments) == 1
         assert cls.scope.assignments[0].statement == "bar: bytes"
 
+    def test_void_ptr_type(self):
+        """Test converting void pointer type."""
+        code = """
+cpdef get(void* path):
+    return NULL
+"""
+        parsed = parse_pyx(code)
+        visitor = ModuleVisitor(parsed.source_ast)
+
+        converter = Converter()
+        result = converter.convert_module(visitor, parsed.source)
+
+        assert len(result.scope.functions) == 1
+        func = result.scope.functions[0]
+        assert len(func.signature.args) == 1
+        arg = func.signature.args[0]
+        assert arg.annotation == "Any"
+
     def test_sized_array_type(self):
         """Test converting sized array type."""
         code = """
