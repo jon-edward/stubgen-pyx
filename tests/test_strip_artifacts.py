@@ -337,6 +337,21 @@ def f(*args: OtherMissing, **kwargs: MoreMissing) -> None:
     )
 
 
+def test_strip_artifacts_rewrites_undefined_typealias_value():
+    tree = ast.parse(
+        """\
+from typing import TypeAlias
+CustomType: TypeAlias = T
+"""
+    )
+
+    result = strip_artifacts(tree)
+
+    assert ast.unparse(result) == (
+        "from typing import Any, TypeAlias\nCustomType: TypeAlias = Any"
+    )
+
+
 def test_strip_artifacts_preserves_class_property_setters():
     tree = ast.parse(
         """\
