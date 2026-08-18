@@ -76,7 +76,7 @@ def file_parsing_preprocess(source: Path, code: str) -> str:
 
 def _read_file_fallback(path: Path, fallback: str) -> str:
     try:
-        return path.read_text()
+        return path.read_text(encoding="utf-8")
     except (UnicodeDecodeError, FileNotFoundError):
         logger.warning(f"Could not read file: {path}")
         return fallback

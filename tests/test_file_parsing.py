@@ -83,6 +83,31 @@ class TestGetIncludes:
             result = file_parsing._expand_includes(source_file, code)
             assert "included_func" in result
 
+    def test_expand_includes_reads_included_file_as_utf8(self):
+        """Included files must be read as UTF-8 regardless of platform locale.
+
+        Regression test for https://github.com/jon-edward/stubgen-pyx/issues/41:
+        `_read_file_fallback` used `Path.read_text()` with no explicit
+        encoding, which falls back to the platform's default encoding (e.g.
+        cp1252 on Windows) rather than UTF-8. Non-ASCII content (e.g. "TM",
+        the trademark sign) in an `include`d file would then come out
+        mojibake'd once round-tripped through that encoding.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmppath = Path(tmpdir)
+
+            include_file = tmppath / "include.pyx"
+            include_file.write_text(
+                'def func():\n    """Kepler™ or newer."""\n', encoding="utf-8"
+            )
+
+            source_file = tmppath / "source.pyx"
+            source_file.write_text("", encoding="utf-8")
+
+            code = 'include "include.pyx"'
+            result = file_parsing._expand_includes(source_file, code)
+            assert "Kepler™" in result
+
     def test_expand_includes_nonexistent_include(self):
         """Test that nonexistent includes are ignored."""
         with tempfile.TemporaryDirectory() as tmpdir:
