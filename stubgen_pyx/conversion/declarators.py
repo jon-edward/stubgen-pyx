@@ -35,7 +35,12 @@ def _get_func_decl_type(
     if not isinstance(decl, Nodes.CFuncDeclaratorNode):
         return None
 
-    args = [extract_type_from_base_type(a) or "Incomplete" for a in decl.args]
+    args = []
+    for arg in decl.args:
+        base_type = extract_type_from_base_type(arg)
+        args.append(
+            get_cdef_declarator_type(arg.declarator, base_type)[1] or "Incomplete"
+        )
     return f"Callable[[{', '.join(args)}], {base_type or 'Incomplete '}]"
 
 

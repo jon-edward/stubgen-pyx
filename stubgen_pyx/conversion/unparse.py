@@ -39,6 +39,15 @@ class _Unparser(ExpressionWriter):
         self.visit(node.operand)
         self.operator_exit()
 
+    def emit_sequence(self, node, parens=("", "")):
+        open_paren, close_paren = parens
+        items = node.subexpr_nodes()
+        self.put(open_paren)
+        self.comma_separated_list(items)
+        if open_paren == "(" and len(items) == 1:
+            self.put(",")
+        self.put(close_paren)
+
 
 def unparse_expr(node: Nodes.Node | None) -> str | None:
     """Render an expression node to source code."""

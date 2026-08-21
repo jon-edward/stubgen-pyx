@@ -6,6 +6,8 @@ import textwrap
 
 from Cython.Compiler import ExprNodes, Nodes
 
+from .unparse import unparse_expr
+
 
 def get_source(source: str, node: Nodes.Node) -> str:
     """Extract source code for a node, dedented and stripped.
@@ -36,9 +38,8 @@ def get_bases(node: Nodes.CClassDefNode | Nodes.PyClassDefNode) -> list[str]:
     """Return base-class name strings from a class node."""
     if not hasattr(node, "bases") or not node.bases:
         return []
-    return [
-        base.name for base in node.bases.args if isinstance(base, ExprNodes.NameNode)
-    ]
+    base_strs = (unparse_expr(b) for b in node.bases.args)
+    return [base_str for base_str in base_strs if base_str]
 
 
 def get_metaclass(node: Nodes.PyClassDefNode | Nodes.CClassDefNode) -> str | None:

@@ -204,10 +204,16 @@ class _NotDefinedRemover(ast.NodeTransformer):
     contains_star_import: bool = False
     replaced: list[str] = field(default_factory=list, init=False)
 
+    scope_stack: list[set[str]] = field(default_factory=list, init=False)
+
     def _check_expr_undefined(self, node: ast.expr) -> bool:
         used_names: set[str] = set()
         _CollectNames(used_names).visit(node)
-        undefined = used_names - self.defined_names
+        all_defined = set(self.defined_names)
+        for scope in self.scope_stack:
+            all_defined.update(scope)
+
+        undefined = used_names - all_defined
         for name in sorted(undefined):
             self.replaced.append(name)
         return bool(undefined)
@@ -285,7 +291,10 @@ class _NotDefinedRemover(ast.NodeTransformer):
         """Process function return type annotation."""
         if node.returns is not None:
             node.returns = self._replace_annotation_if_undefined(node.returns)
-        node.decorator_list = self._remove_decorators_if_undefined(node.decorator_list)
+        if node.decorator_list:
+            node.decorator_list = self._remove_decorators_if_undefined(
+                node.decorator_list
+            )
         return self.generic_visit(node)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
@@ -297,5 +306,17 @@ class _NotDefinedRemover(ast.NodeTransformer):
         return self._process_function(node)
 
     def visit_ClassDef(self, node):
-        node.decorator_list = self._remove_decorators_if_undefined(node.decorator_list)
-        return self.generic_visit(node)
+        """Process class decorators."""
+        extra_defined = set()
+        _DefinedCollector(extra_defined).visit(node)
+
+        if node.decorator_list:
+            node.decorator_list = self._remove_decorators_if_undefined(
+                node.decorator_list
+            )
+
+        self.scope_stack.append(extra_defined)
+        out = self.generic_visit(node)
+        self.scope_stack.pop()
+
+        return out
