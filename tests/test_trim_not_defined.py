@@ -37,7 +37,7 @@ def foo(y: int) -> str:
         result = trim_not_defined(tree)
         result_str = ast.unparse(result)
         assert "UndefinedType" not in result_str
-        assert "..." in result_str
+        assert "Incomplete" in result_str
 
     def test_undefined_return_type(self):
         """Test that undefined return types are replaced with ..."""
@@ -46,7 +46,7 @@ def foo(y: int) -> str:
         result = trim_not_defined(tree)
         result_str = ast.unparse(result)
         assert "UndefinedType" not in result_str
-        assert "..." in result_str
+        assert "Incomplete" in result_str
 
     def test_undefined_default_value(self):
         """Test that undefined default values are replaced with ..."""
@@ -301,7 +301,7 @@ def bar(y: x) -> int:  # x is NOT defined at module level
         result = trim_not_defined(tree)
         result_str = ast.unparse(result)
         # 'x' from Foo's body must not protect 'x' in bar's annotation
-        assert "def bar(y: ...)" in result_str
+        assert "def bar(y: Incomplete)" in result_str
 
     def test_dotted_import_with_alias(self):
         """Test dotted imports with an alias."""
@@ -317,10 +317,11 @@ def foo(x: ET) -> int:
         assert "xml.etree.ElementTree" in result_str
         assert ": ET" in result_str
 
-    def test_typealias_with_undefined_to_any(self):
+    def test_typealias_with_undefined_to_incomplete(self):
         """Test type aliases with undefined type arguments."""
         code = """
 from typing import Any, TypeAlias
+from _typeshed import Incomplete
 
 CustomType: TypeAlias = T  # T is undefined
 """
@@ -329,5 +330,5 @@ CustomType: TypeAlias = T  # T is undefined
         result_str = ast.unparse(result)
         assert (
             result_str
-            == "from typing import Any, TypeAlias\nCustomType: TypeAlias = Any"
+            == "from typing import Any, TypeAlias\nfrom _typeshed import Incomplete\nCustomType: TypeAlias = Incomplete"
         )

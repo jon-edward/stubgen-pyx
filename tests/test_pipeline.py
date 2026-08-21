@@ -219,9 +219,7 @@ def test_pipeline_validator_runs_with_trim_not_defined_disabled():
         exclude_attribution=True,
     )
     result = postprocessing_pipeline(pyi_code, config)
-
-    assert "from typing import Any" in result
-    assert "def foo(x: Any) -> int" in result
+    assert "def foo(x: UndefinedType) -> int" in result
 
 
 def test_pipeline_transform_order_trim_before_trim_not_defined():

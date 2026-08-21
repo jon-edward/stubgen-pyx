@@ -620,7 +620,5 @@ cdef extern from *:
     stubgen = StubgenPyx()
     result = stubgen.convert_str(pyx_file.read_text(), pyx_path=pyx_file)
 
-    assert (
-        "from typing import Any, Callable" in result
-        and "callback: Callable[..., Any]" in result
-    )
+    assert "from typing import Any, Callable" in result
+    assert "callback: Callable[[Any], None]" in result

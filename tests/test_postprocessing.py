@@ -385,6 +385,26 @@ x: Dict[str, int] = {}
         assert "Dict" in result_str
         assert "List" not in result_str
 
+    def test_no_trim_if_identity_alias(self):
+        """Test that identity aliases are not trimmed."""
+        code = """
+from some_module import ExportedMember as ExportedMember
+import other_module as other_module
+
+import ignored_module
+
+
+def func(x: int) -> str:
+    return str(x)
+"""
+        tree = ast.parse(code)
+        result = trim_imports.trim_imports(tree, {"x", "Dict", "str", "int"})
+        result_str = ast.unparse(result)
+
+        assert "ExportedMember" in result_str
+        assert "other_module" in result_str
+        assert "ignored_module" not in result_str
+
 
 class TestMergeLogicInStubgen:
     """Merge and dedup logic moved from PyiScope/PyiClass to stubgen.py free functions."""
