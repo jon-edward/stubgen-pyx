@@ -15,7 +15,7 @@ def _declarator_name(
     decl: Nodes.CNameDeclaratorNode
     | Nodes.CPtrDeclaratorNode
     | Nodes.CConstDeclaratorNode,
-) -> str:
+) -> str | None:
     """Recursively unwrap pointer/const/func declarators to reach the name."""
     if isinstance(
         decl,
@@ -26,7 +26,31 @@ def _declarator_name(
         ),
     ):
         return _declarator_name(decl.base)
-    return decl.name
+    return getattr(decl, "name", None)
+
+
+def _get_func_decl_type(
+    decl: Nodes.CFuncDeclaratorNode, base_type: str | None
+) -> str | None:
+    if not isinstance(decl, Nodes.CFuncDeclaratorNode):
+        return None
+
+    args = [extract_type_from_base_type(a) or "Incomplete" for a in decl.args]
+    return f"Callable[[{', '.join(args)}], {base_type or 'Incomplete '}]"
+
+
+def get_cdef_declarator_type(
+    decl, base_type: str | None = None
+) -> tuple[str | None, str | None]:
+    name = _declarator_name(decl)
+    if isinstance(decl, Nodes.CFuncDeclaratorNode):
+        typ = _get_func_decl_type(decl, base_type) or "Callable[..., Any]"
+    elif isinstance(decl, Nodes.CPtrDeclaratorNode):
+        decl = decl.base
+        _, typ = get_cdef_declarator_type(decl, base_type)
+    else:
+        typ = extract_type_from_base_type(decl)
+    return (name, typ or base_type)
 
 
 def get_cdef_variables(node: Nodes.CVarDefNode) -> list[tuple[str, str | None]]:
@@ -50,16 +74,16 @@ def get_cdef_variables(node: Nodes.CVarDefNode) -> list[tuple[str, str | None]]:
         else:
             _logger.warning("Unknown declarator type: %s", type(decl).__name__)
 
+    is_ptr = (
+        False
+        if not declarators
+        else isinstance(declarators[0], Nodes.CPtrDeclaratorNode)
+    )
+    base_type = extract_type_from_base_type(node, is_ptr=is_ptr)
+
     results = []
     for d in declarators:
-        name = _declarator_name(d)
-        if isinstance(d, Nodes.CFuncDeclaratorNode):
-            typ: str | None = "Callable[..., Any]"
-        elif isinstance(d, Nodes.CPtrDeclaratorNode):
-            typ = extract_type_from_base_type(node, is_ptr=True)
-        else:
-            typ = extract_type_from_base_type(node)
-        results.append((name, typ))
+        results.append(get_cdef_declarator_type(d, base_type=base_type))
     return results
 
 
