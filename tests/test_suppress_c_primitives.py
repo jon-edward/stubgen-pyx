@@ -130,7 +130,7 @@ from libc.stdint cimport int32_t
 def foo(vector[int32_t] v):
     pass
 """,
-        expected="def foo(v: ...): ...\n",
+        expected="from _typeshed import Incomplete\ndef foo(v: Incomplete): ...\n",
     ),
     Case(
         id="case_11_libcpp_memory_unique_ptr",
@@ -140,7 +140,7 @@ from libcpp.memory cimport unique_ptr
 cpdef void take_ptr(unique_ptr[int] value):
     pass
 """,
-        expected="def take_ptr(value: ...) -> None: ...\n",
+        expected="from _typeshed import Incomplete\ndef take_ptr(value: Incomplete) -> None: ...\n",
     ),
     Case(
         id="case_12_libcpp_vector",
@@ -150,7 +150,7 @@ from libcpp.vector cimport vector
 cpdef void take_vector(vector[int] value):
     pass
 """,
-        expected="def take_vector(value: ...) -> None: ...\n",
+        expected="from _typeshed import Incomplete\ndef take_vector(value: Incomplete) -> None: ...\n",
     ),
     Case(
         id="case_13_libcpp_string",

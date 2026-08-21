@@ -19,7 +19,7 @@ class _Unparser(ExpressionWriter):
     _unop_ignores: ClassVar[frozenset[str]] = frozenset({"&"})
     _default_unop_precedence: ClassVar[int] = ExpressionWriter.unop_precedence[
         "~"
-    ]  # also matches `-` and `+`
+    ]  # same precedence as `-` and `+`
 
     def visit_UnopNode(self, node):
         op = node.operator

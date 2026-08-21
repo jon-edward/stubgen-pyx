@@ -66,6 +66,8 @@ def extract_type_from_base_type(node, is_ptr: bool = False) -> str | None:
     """
     try:
         base_type = node.base_type
+        if isinstance(base_type, Nodes.CConstOrVolatileTypeNode):
+            base_type = base_type.base_type
     except AttributeError:
         return None
 
@@ -82,8 +84,10 @@ def extract_type_from_base_type(node, is_ptr: bool = False) -> str | None:
 
     name: str | None = None
     if hasattr(base_type, "name") and base_type.name is not None:
-        name = ".".join(base_type.module_path + [base_type.name])
+        module_path = getattr(base_type, "module_path", [])
+        name = ".".join(module_path + [base_type.name])
     if hasattr(base_type, "base_type_node") and base_type.base_type_node is not None:
+        module_path = getattr(base_type.base_type_node, "module_path", [])
         name = ".".join(
             base_type.base_type_node.module_path + [base_type.base_type_node.name]
         )
@@ -128,7 +132,7 @@ def _extract_templated_type(node: Nodes.TemplatedTypeNode) -> str | None:
 
     base = ".".join(base_type_node.module_path + [base_type_node.name])
 
-    parts = [extract_type_from_base_type(a) or "object" for a in positional_args]
+    parts = [extract_type_from_base_type(a) or "Incomplete" for a in positional_args]
     return f"{base}[{', '.join(parts)}]" if parts else base
 
 

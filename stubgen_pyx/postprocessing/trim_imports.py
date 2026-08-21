@@ -23,12 +23,19 @@ class _UnusedImportRemover(ast.NodeTransformer):
 
     used_names: set[str]
 
+    def _include_alias(self, alias: ast.alias) -> bool:
+        """Defines behavior for if an import alias should be included in resulting AST"""
+        if alias.asname == alias.name:
+            # "X as X" should always be included
+            return True
+        imported_name = alias.asname or alias.name
+        return imported_name in self.used_names or alias.name in _RESERVED_MODULES
+
     def visit_Import(self, node: ast.Import) -> ast.Import | None:
         """Remove unused simple imports (e.g., `import foo`)."""
         new_names = []
         for alias in node.names:
-            imported_name = alias.asname if alias.asname else alias.name
-            if imported_name in self.used_names:
+            if self._include_alias(alias):
                 new_names.append(alias)
 
         if not new_names:
@@ -43,11 +50,8 @@ class _UnusedImportRemover(ast.NodeTransformer):
             return node
 
         new_names = []
-
         for alias in node.names:
-            imported_name = alias.asname if alias.asname else alias.name
-
-            if imported_name in self.used_names or node.module in _RESERVED_MODULES:
+            if self._include_alias(alias):
                 new_names.append(alias)
 
         if not new_names:

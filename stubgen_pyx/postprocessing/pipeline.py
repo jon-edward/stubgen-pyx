@@ -21,7 +21,6 @@ from .overload_singledispatch import overload_singledispatch
 from .remove_identity_assignment import remove_identity_assignment
 from .remove_overload_implementations import remove_overload_implementations
 from .sort_imports import sort_imports
-from .strip_artifacts import strip_artifacts
 from .trim_imports import _UnusedImportRemover
 from .trim_not_defined import trim_not_defined
 from .unquote_annotations import unquote_annotations
@@ -91,7 +90,6 @@ def _ast_transforms(
 
     tree = overload_singledispatch(tree)
     tree = unquote_annotations(tree)
-    tree = strip_artifacts(tree)
 
     if config.fix_scalar_defaults:
         # Runs after normalize_names/strip_artifacts so `bint` has already

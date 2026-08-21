@@ -930,7 +930,7 @@ cdef struct Foo:
         assert len(module.scope.classes) == 1
         assert (
             module.scope.classes[0].scope.assignments[0].statement
-            == "bar: Callable[..., Any]"
+            == "bar: Callable[[int], int]"
         )
 
 

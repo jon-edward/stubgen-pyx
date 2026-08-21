@@ -17,7 +17,12 @@ def stubgen_attribution(pyx_path: Path | None) -> str:
         A comment line with generation tool info.
     """
     if pyx_path is not None:
-        source_desc = f" from {pyx_path.as_posix()}"
+        try:
+            # try to make the path relative if passed an absolute path
+            rel_path = pyx_path.relative_to(".") if pyx_path.is_absolute() else pyx_path
+        except ValueError:
+            rel_path = pyx_path
+        source_desc = f" from {rel_path.as_posix()}"
     else:
         source_desc = ""
 

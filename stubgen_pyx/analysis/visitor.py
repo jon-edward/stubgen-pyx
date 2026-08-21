@@ -112,8 +112,7 @@ class ScopeVisitor(TreeVisitor):
 
     def visit_CTypeDefNode(self, node):
         """Collect simple Cython type definitions."""
-        if isinstance(node.declarator, Nodes.CNameDeclaratorNode):
-            self.assignments.append(node)
+        self.assignments.append(node)
         return node
 
     def visit_FusedTypeNode(self, node):
