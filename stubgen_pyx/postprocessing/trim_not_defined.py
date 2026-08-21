@@ -204,73 +204,77 @@ class _NotDefinedRemover(ast.NodeTransformer):
     contains_star_import: bool = False
     replaced: list[str] = field(default_factory=list, init=False)
 
-    def _should_remove(self, used_names: set[str]) -> bool:
-        """Check if any used names are undefined."""
-        return not used_names.issubset(self.defined_names)
-
-    def _replace_if_undefined(
-        self, node: ast.expr, annotation: bool = False, type_alias: bool = False
-    ) -> ast.expr:
-        if annotation and self.contains_star_import:
-            # Do not replace names in type annotations if a star import is present
-            return node
+    def _check_expr_undefined(self, node: ast.expr) -> bool:
         used_names: set[str] = set()
         _CollectNames(used_names).visit(node)
         undefined = used_names - self.defined_names
-        if undefined:
-            for name in sorted(undefined):
-                self.replaced.append(name)
-            if not type_alias:
-                return ast.Constant(...)
-            return ast.Name("Any", ast.Load())
+        for name in sorted(undefined):
+            self.replaced.append(name)
+        return bool(undefined)
+
+    def _replace_value_if_undefined(self, node: ast.expr) -> ast.expr:
+        """RHS of an assignment (this excludes TypeAlias assignments, which are treated as annotations)"""
+        if self._check_expr_undefined(node):
+            return ast.Constant(...)
         return node
+
+    def _replace_annotation_if_undefined(self, node: ast.expr) -> ast.expr:
+        if self.contains_star_import:
+            return node
+        if self._check_expr_undefined(node):
+            return ast.Name("Incomplete", ast.Load())
+        return node
+
+    def _remove_decorators_if_undefined(
+        self, decorator_list: list[ast.expr]
+    ) -> list[ast.expr]:
+        output = []
+        for dec in decorator_list:
+            if self._check_expr_undefined(dec):
+                continue
+            output.append(dec)
+        return output
 
     def visit_Assign(self, node: ast.Assign) -> ast.Assign:
         """Process assignment values."""
-        node.value = self._replace_if_undefined(node.value)
+        node.value = self._replace_value_if_undefined(node.value)
         return node
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> ast.AnnAssign:
         """Process annotated assignment annotation and value."""
-        node.annotation = self._replace_if_undefined(node.annotation, annotation=True)
+        node.annotation = self._replace_annotation_if_undefined(node.annotation)
         if node.value is not None:
-            type_alias_override = False
             if (
                 isinstance(node.annotation, ast.Name)
                 and node.annotation.id == "TypeAlias"
             ):
-                type_alias_override = True  # Treat type aliases as annotations
-            node.value = self._replace_if_undefined(
-                node.value,
-                annotation=type_alias_override,
-                type_alias=type_alias_override,
-            )
+                node.value = self._replace_annotation_if_undefined(node.value)
+            else:
+                node.value = self._replace_value_if_undefined(node.value)
         return node
 
     def visit_arguments(self, node: ast.arguments) -> ast.arguments:
         """Process function argument annotations and defaults."""
         for arg in node.args + node.posonlyargs + node.kwonlyargs:
             if arg.annotation:
-                arg.annotation = self._replace_if_undefined(
-                    arg.annotation, annotation=True
-                )
+                arg.annotation = self._replace_annotation_if_undefined(arg.annotation)
 
         node.defaults = [
-            self._replace_if_undefined(default) for default in node.defaults
+            self._replace_value_if_undefined(default) for default in node.defaults
         ]
 
         node.kw_defaults = [
-            self._replace_if_undefined(default) if default is not None else None
+            self._replace_value_if_undefined(default) if default is not None else None
             for default in node.kw_defaults
         ]
 
         if node.vararg and node.vararg.annotation:
-            node.vararg.annotation = self._replace_if_undefined(
-                node.vararg.annotation, annotation=True
+            node.vararg.annotation = self._replace_annotation_if_undefined(
+                node.vararg.annotation
             )
         if node.kwarg and node.kwarg.annotation:
-            node.kwarg.annotation = self._replace_if_undefined(
-                node.kwarg.annotation, annotation=True
+            node.kwarg.annotation = self._replace_annotation_if_undefined(
+                node.kwarg.annotation
             )
 
         return node
@@ -280,7 +284,8 @@ class _NotDefinedRemover(ast.NodeTransformer):
     ) -> ast.AST:
         """Process function return type annotation."""
         if node.returns is not None:
-            node.returns = self._replace_if_undefined(node.returns, annotation=True)
+            node.returns = self._replace_annotation_if_undefined(node.returns)
+        node.decorator_list = self._remove_decorators_if_undefined(node.decorator_list)
         return self.generic_visit(node)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
@@ -290,3 +295,7 @@ class _NotDefinedRemover(ast.NodeTransformer):
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
         """Process async function definition."""
         return self._process_function(node)
+
+    def visit_ClassDef(self, node):
+        node.decorator_list = self._remove_decorators_if_undefined(node.decorator_list)
+        return self.generic_visit(node)
