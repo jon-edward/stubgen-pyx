@@ -158,6 +158,29 @@ class MyClass:
         result_str = ast.unparse(result)
         assert "MyClass" in result_str
 
+    def test_property_setter_decorator_preserved(self):
+        """A property setter's decorator refers to a class-body binding.
+
+        Regression test for GH #69: '@value.setter' references 'value', a name
+        bound by the preceding '@property def value' inside the class body,
+        not a module-level name. It must not be treated as undefined and
+        stripped.
+        """
+        code = """
+class Widget:
+    @property
+    def value(self) -> object:
+        pass
+
+    @value.setter
+    def value(self, v: object) -> None:
+        pass
+"""
+        tree = ast.parse(code)
+        result = trim_not_defined(tree)
+        result_str = ast.unparse(result)
+        assert "@value.setter" in result_str
+
     def test_builtin_preserved(self):
         """Test that builtin names are always preserved."""
         code = """

@@ -308,7 +308,9 @@ class _NotDefinedRemover(ast.NodeTransformer):
     def visit_ClassDef(self, node):
         """Process class decorators."""
         extra_defined = set()
-        _DefinedCollector(extra_defined).visit(node)
+        collector = _DefinedCollector(extra_defined)
+        for stmt in node.body:
+            collector.visit(stmt)
 
         if node.decorator_list:
             node.decorator_list = self._remove_decorators_if_undefined(
