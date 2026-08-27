@@ -245,7 +245,7 @@ class Builder:
     def build_enum(self, enum: PyiEnum | PyiAssignment) -> str | None:
         """Build an enum definition.
 
-        Named enums are converted to classes with int attributes.
+        Named enums are converted to classes with `...` attributes subclassing `enum.IntEnum`.
         Unnamed enums are generated as bare int assignments.
         """
 
@@ -260,10 +260,9 @@ class Builder:
         if enum.enum_name is not None:
             class_ = PyiClass(
                 name=enum.enum_name,
+                bases=["enum.IntEnum"],
                 scope=PyiScope(
-                    assignments=[
-                        PyiAssignment(annotation) for annotation in annotations
-                    ],
+                    assignments=[PyiAssignment(f"{name} = ...") for name in enum.names],
                 ),
             )
             return self.build_class(class_)
