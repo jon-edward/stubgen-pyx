@@ -179,6 +179,19 @@ def get_enum_names(node: Nodes.CEnumDefNode) -> list[str]:
     return [item.name for item in node.items]  # type: ignore
 
 
+def _type_from_base_type_name(base_type) -> str | None:
+    name: str | None = None
+    if hasattr(base_type, "name") and base_type.name is not None:
+        module_path = getattr(base_type, "module_path", [])
+        name = ".".join(module_path + [base_type.name])
+    if hasattr(base_type, "base_type_node") and base_type.base_type_node is not None:
+        module_path = getattr(base_type.base_type_node, "module_path", [])
+        name = ".".join(
+            base_type.base_type_node.module_path + [base_type.base_type_node.name]
+        )
+    return name
+
+
 def extract_type_from_base_type(node, is_ptr: bool = False) -> str | None:
     """Extract a type annotation string from a base_type node.
 
@@ -207,15 +220,7 @@ def extract_type_from_base_type(node, is_ptr: bool = False) -> str | None:
     if isinstance(base_type, Nodes.MemoryViewSliceTypeNode):
         return _extract_memoryview_type(base_type)
 
-    name: str | None = None
-    if hasattr(base_type, "name") and base_type.name is not None:
-        module_path = getattr(base_type, "module_path", [])
-        name = ".".join(module_path + [base_type.name])
-    if hasattr(base_type, "base_type_node") and base_type.base_type_node is not None:
-        module_path = getattr(base_type.base_type_node, "module_path", [])
-        name = ".".join(
-            base_type.base_type_node.module_path + [base_type.base_type_node.name]
-        )
+    name = _type_from_base_type_name(base_type)
 
     if isinstance(node, Nodes.CVarDefNode) and name is None:
         # CVarDefNode may not have a named type, e.g. ``cdef public x``.
