@@ -976,7 +976,7 @@ cdef class Foo:
         )
         assert (
             module.scope.assignments[0].statement
-            == "int_view: typing.TypeAlias = numpy.typing.NDArray[numpy.intc]"
+            == "int_view: typing_extensions.TypeAlias = numpy.typing.NDArray[numpy.intc]"
         )
 
 
@@ -1055,7 +1055,9 @@ def test_convert_cpp_class_falls_back_to_incomplete_alias():
     result = Converter().convert_cpp_class(node)
 
     assert result is not None
-    assert result.statement == "Native: typing.TypeAlias = _typeshed.Incomplete"
+    assert (
+        result.statement == "Native: typing_extensions.TypeAlias = _typeshed.Incomplete"
+    )
 
 
 def test_convert_struct_logs_unexpected_parsed_attribute(caplog):

@@ -14,9 +14,9 @@ TYPE_IMPORTS = (
     "_typeshed.Incomplete",
     "typing.Any",
     "typing.Callable",
-    "typing.TypeAlias",
     "typing.TypedDict",
     "typing.TypeVar",
+    "typing_extensions.TypeAlias",  # Use backport for Python < 3.10
     "enum.IntEnum",
     "numpy.typing.NDArray",
     "numpy",

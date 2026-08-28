@@ -328,7 +328,7 @@ class Converter:
         )
 
         return (
-            PyiAssignment(f"{name}: typing.TypeAlias = _typeshed.Incomplete")
+            PyiAssignment(f"{name}: typing_extensions.TypeAlias = _typeshed.Incomplete")
             if name
             else None
         )
@@ -433,7 +433,7 @@ class Converter:
         if isinstance(assignment, Nodes.CTypeDefNode):
             name, typ = extract_name_and_type(assignment)
             if typ and name:
-                out_assignment_str = f"{name}: typing.TypeAlias = {typ}"
+                out_assignment_str = f"{name}: typing_extensions.TypeAlias = {typ}"
             elif name:
                 _logger.debug(
                     "Could not extract ctypedef type: %r",
@@ -469,7 +469,7 @@ class Converter:
             name: str | None = node.name  # type: ignore
             return PyiEnum(enum_name=name, names=get_enum_names(node))
         # Make it usable as an alias for int
-        return PyiAssignment(f"{node.name}: typing.TypeAlias = int")  # type: ignore
+        return PyiAssignment(f"{node.name}: typing_extensions.TypeAlias = int")  # type: ignore
 
 
 def _is_cxx_cimport(raw: str) -> bool:

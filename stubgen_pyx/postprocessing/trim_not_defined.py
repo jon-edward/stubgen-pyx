@@ -248,7 +248,7 @@ class _NotDefinedRemover(ast.NodeTransformer):
         node.annotation = self._replace_annotation_if_undefined(node.annotation)
         if node.value is not None:
             annotation = dotted_name(node.annotation)
-            if annotation == "typing.TypeAlias" or annotation == "TypeAlias":
+            if annotation == "typing_extensions.TypeAlias" or annotation == "TypeAlias":
                 node.value = self._replace_annotation_if_undefined(node.value)
             else:
                 node.value = self._replace_value_if_undefined(node.value)
