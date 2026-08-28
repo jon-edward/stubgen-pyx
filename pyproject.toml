@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stubgen-pyx"
-version = "0.2.21"
+version = "0.2.22"
 description = "Generates `.pyi` files from Cython modules in a given package directory."
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -17,7 +17,7 @@ classifiers = [
 ]
 requires-python = ">=3.9"
 dependencies = [
-    "Cython>=3.0.11",
+    "Cython >=3.0.0, <3.3.0",
     "isort>=6.1.0",
 ]
 
