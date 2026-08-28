@@ -10,6 +10,7 @@ from stubgen_pyx.postprocessing import (
     collect_names,
     deduplicate_imports,
     normalize_names,
+    remove_identity_assignment,
     sort_imports,
     trim_imports,
     trim_not_defined,
@@ -534,3 +535,12 @@ class TestTrimNotDefined:
         result = trim_not_defined.trim_not_defined(tree)
         result_str = ast.unparse(result)
         assert "imported_type" in result_str
+
+
+class TestRemoveIdentityAssignment:
+    def test_remove_identity_assignment(self):
+        code = "x = x\ny: int = y"
+        tree = ast.parse(code)
+        result = remove_identity_assignment.remove_identity_assignment(tree)
+        result_str = ast.unparse(result)
+        assert "x = x" not in result_str
