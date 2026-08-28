@@ -5,6 +5,7 @@ Converts Cython AST nodes to PyiElements.
 from __future__ import annotations
 
 import ast
+import logging
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -12,22 +13,23 @@ from dataclasses import dataclass, field
 from Cython.Compiler import Nodes
 
 from ..analysis.visitor import ClassVisitor, ImportVisitor, ModuleVisitor, ScopeVisitor
+from ..logging_utils import with_debug_fallback
 from ..models.pyi_elements import (
     PyiAssignment,
     PyiClass,
     PyiEnum,
     PyiFunction,
+    PyiFusedType,
     PyiImport,
     PyiModule,
     PyiScope,
     PyiSignature,
 )
 from ..postprocessing.normalize_names import _CYTHON_TRANSLATIONS
-from .declarators import get_cdef_declarator_type, get_cdef_variables, get_enum_names
 from .docstrings import docstring_to_string
 from .signature import get_signature
 from .source_extraction import get_bases, get_decorators, get_metaclass, get_source
-from .type_parsing import extract_type_from_base_type
+from .type_parsing import extract_name_and_type, get_cdef_variables, get_enum_names
 from .unparse import unparse_expr
 
 _CIMPORT_RE = re.compile(r"\bcimport\b")
@@ -42,14 +44,15 @@ _CYTHON_IMPORT_RE = re.compile(
 _CYTHON_FROM_IMPORT_RE = re.compile(r"^\s*c?import\s+(?:cython|cpython)(?:\.[^\s]+)*\b")
 
 
-@dataclass
-class PyiFusedType:
-    name: str
-    concrete_types: tuple[str, ...]
+_logger = logging.getLogger(__name__)
 
 
-class _InvalidAssignmentAST(Exception):
-    """A conversion didn't return an Assign or AnnAssign."""
+class ConversionError(Exception):
+    """An error occurred during the conversion process."""
+
+
+class InvalidAssignment(Exception):
+    """An invalid assignment was encountered."""
 
 
 @dataclass
@@ -96,16 +99,9 @@ class Converter:
             emit_inherited_fused_typevars=True,
         )
 
-        typing_import = PyiImport(
-            "from typing import Any, Callable, TypeAlias, TypedDict, TypeVar"
-        )
-        typeshed_import = PyiImport("from _typeshed import Incomplete")
-        numpy_import = PyiImport("import numpy")
-
         return PyiModule(
             doc=doc if include_docstrings else None,
-            imports=self.convert_imports(visitor.import_visitor, source_code)
-            + [typing_import, typeshed_import, numpy_import],
+            imports=self.convert_imports(visitor.import_visitor, source_code),
             scope=scope,
         )
 
@@ -121,6 +117,7 @@ class Converter:
                 self._collect_cimport_aliases(node)
                 continue
             if _is_cython_import(raw):
+                _logger.debug("Ignoring Cython import: %r", raw)
                 continue
             imports.append(self.convert_import(node, source_code, raw))
         return imports
@@ -141,24 +138,33 @@ class Converter:
         raw = raw if raw is not None else get_source(source_code, node)
         return PyiImport(_CIMPORT_RE.sub("import", raw))
 
-    def convert_struct_or_union(
-        self, node: Nodes.CStructOrUnionDefNode, _source_code: str
-    ) -> PyiClass:
+    def convert_struct_or_union(self, node: Nodes.CStructOrUnionDefNode) -> PyiClass:
         """Convert a C struct or union definition node to PyiClass."""
+        node_name = node.name
+
+        def debug_attribute(attr_name: str) -> str:
+            return f"Unable to determine type for {attr_name} in {node_name}"
+
         attributes = []
-        for attribute in node.attributes:
+        for attribute in node.attributes or []:
             if isinstance(attribute, Nodes.CVarDefNode):
                 attributes.extend(
                     [
-                        PyiAssignment(f"{name}: {type_name or 'Incomplete'}")
+                        PyiAssignment(
+                            f"{name}: {with_debug_fallback(type_name, '_typeshed.Incomplete', lambda name_=name: debug_attribute(name_))}"
+                        )
                         for name, type_name in get_cdef_variables(attribute)
                     ]
+                )
+            else:
+                _logger.debug(
+                    f"Unexpected attribute type {type(attribute)} in {node_name}"
                 )
         is_union = node.kind == "union"
         keywords = {"total": "False"} if is_union else {}
         return PyiClass(
             name=node.name,
-            bases=["TypedDict"],
+            bases=["typing.TypedDict"],
             keywords=keywords,
             scope=PyiScope(assignments=attributes),
         )
@@ -193,9 +199,12 @@ class Converter:
 
         cdef_assignments: list[PyiAssignment] = []
         for cdef_variable in visitor.cdef_variables:
-            typ = extract_type_from_base_type(cdef_variable)
             for name, base_type in get_cdef_variables(cdef_variable):
-                resolved_type = base_type or typ or "Incomplete"
+                resolved_type = with_debug_fallback(
+                    base_type,
+                    "_typeshed.Incomplete",
+                    f"Unable to determine type for {name}",
+                )
                 cdef_assignments.append(PyiAssignment(f"{name}: {resolved_type}"))
 
         # Preserve source order across cdef and def functions
@@ -231,7 +240,7 @@ class Converter:
         all_funcs_sorted = sorted(cdef_funcs + py_funcs, key=lambda t: t[0])
         functions = [f for _, f in all_funcs_sorted]
         structs_or_enums = [
-            self.convert_struct_or_union(node, source_code)
+            self.convert_struct_or_union(node)
             for node in visitor.cdef_structs_or_unions
         ]
         classes = [
@@ -262,12 +271,15 @@ class Converter:
             for assignment in visitor.assignments
         )
 
+        cpp_classes = (self.convert_cpp_class(node) for node in visitor.cpp_classes)
+
         return PyiScope(
             assignments=[
                 self.convert_fused_type(fused_types[name])
                 for name in fused_typevar_names
             ]
             + [a for a in conv_assignments if a]
+            + [c for c in cpp_classes if c]
             + cdef_assignments,
             functions=functions,
             classes=structs_or_enums + classes,
@@ -305,6 +317,20 @@ class Converter:
                 include_docstrings,
                 inherited_fused_types,
             ),
+        )
+
+    def convert_cpp_class(self, cpp_class: Nodes.CppClassNode) -> PyiAssignment | None:
+        """Convert a C++ class definition node to PyiAssignment. Currently unsupported, returns the name as an Incomplete type alias."""
+
+        name = getattr(cpp_class, "name", None)
+        _logger.debug(
+            "Unsupported C++ class %s, falling back to _typeshed.Incomplete", name
+        )
+
+        return (
+            PyiAssignment(f"{name}: typing.TypeAlias = _typeshed.Incomplete")
+            if name
+            else None
         )
 
     def convert_cdef_func(
@@ -353,7 +379,7 @@ class Converter:
     def convert_fused_type(self, fused_type: PyiFusedType) -> PyiAssignment:
         concrete_types = ", ".join(fused_type.concrete_types)
         return PyiAssignment(
-            f'{fused_type.name} = TypeVar("{fused_type.name}", {concrete_types})'
+            f'{fused_type.name} = typing.TypeVar("{fused_type.name}", {concrete_types})'
         )
 
     def convert_py_func(
@@ -389,29 +415,36 @@ class Converter:
         out_assignment_str: str | None = None
 
         if isinstance(assignment, Nodes.SingleAssignmentNode):
-            expr = unparse_expr(assignment.rhs)
             name = assignment.lhs.name
-            annotation = (
-                assignment.lhs.annotation.string.value
-                if assignment.lhs.annotation is not None
-                else None
-            )
+            expr = unparse_expr(assignment.rhs)
 
-            assign: str = name
-            if annotation:
-                assign = f"{assign}: {annotation}"
-            out_assignment_str = f"{assign} = {expr}"
+            if expr is not None:
+                annotation = (
+                    assignment.lhs.annotation.string.value
+                    if assignment.lhs.annotation is not None
+                    else None
+                )
+
+                assign: str = name
+                if annotation:
+                    assign = f"{assign}: {annotation}"
+                out_assignment_str = f"{assign} = {expr}"
 
         if isinstance(assignment, Nodes.CTypeDefNode):
-            base_type = extract_type_from_base_type(assignment)
-            name, typ = get_cdef_declarator_type(
-                assignment.declarator, base_type=base_type
-            )
+            name, typ = extract_name_and_type(assignment)
             if typ and name:
-                out_assignment_str = f"{name}: TypeAlias = {typ}"
+                out_assignment_str = f"{name}: typing.TypeAlias = {typ}"
             elif name:
+                _logger.debug(
+                    "Could not extract ctypedef type: %r",
+                    get_source(source_code, assignment),
+                )
                 out_assignment_str = f"{name} = ..."
             else:
+                _logger.debug(
+                    "Could not extract ctypedef name or type: %r",
+                    get_source(source_code, assignment),
+                )
                 return None
 
         if not out_assignment_str:
@@ -423,9 +456,9 @@ class Converter:
             if not len(node.body) == 1 or not isinstance(
                 node.body[0], (ast.Assign, ast.AnnAssign)
             ):
-                raise _InvalidAssignmentAST
-        except (SyntaxError, _InvalidAssignmentAST):
-            # Invalid assignment
+                raise InvalidAssignment
+        except (SyntaxError, InvalidAssignment):
+            _logger.debug("Could not parse assignment source: %r", out_assignment_str)
             return None
 
         return PyiAssignment(out_assignment_str)
@@ -436,7 +469,7 @@ class Converter:
             name: str | None = node.name  # type: ignore
             return PyiEnum(enum_name=name, names=get_enum_names(node))
         # Make it usable as an alias for int
-        return PyiAssignment(f"{node.name}: TypeAlias = int")  # type: ignore
+        return PyiAssignment(f"{node.name}: typing.TypeAlias = int")  # type: ignore
 
 
 def _is_cxx_cimport(raw: str) -> bool:
