@@ -1,57 +1,16 @@
-"""Trim undefined names from type annotations and default values.
-
-Replaces references to names that are not builtin and not defined in the module
-with ``...`` (Ellipsis). This is useful for stub files where external dependencies
-should not be imported.
-
-Examples:
-    >>> code = 'def foo(x: UndefinedType = UNDEFINED_VALUE) -> int: pass'
-    >>> tree = ast.parse(code)
-    >>> trimmed = trim_not_defined(tree)
-    >>> ast.unparse(trimmed)
-    'def foo(x: ... = ...) -> int: pass'
-
-Note on attribute annotations (e.g. ``numpy.ndarray``):
-    ``_CollectNames`` gathers the leading name of any dotted expression.  For
-    ``numpy.ndarray`` it collects ``numpy``.  If ``numpy`` is imported, the
-    whole expression is kept.  This is intentional: we can't validate that
-    ``numpy.ndarray`` exists without importing the package, and removing half
-    an attribute chain would produce invalid stubs.
-
-Relationship to ``strip_artifacts``:
-    Both modules rewrite expressions that reference names the module doesn't
-    define, and both use a "root name of a dotted chain" resolvability check.
-    They are not redundant, though - each covers a case the other doesn't:
-
-    * This pass is general-purpose and user-configurable
-      (``StubgenPyxConfig.trim_not_defined``). It catches *any* name that was
-      never defined to begin with - most commonly a reference to a dependency
-      that isn't available in the stub's environment. It covers default
-      values as well as annotations, and it replaces with ``...`` to signal
-      "unresolvable", since a real ``Any`` import may not be wanted for a
-      pass a user can turn off.
-    * ``strip_artifacts`` is unconditional and narrower: it only repairs
-      annotations/decorators that reference a name *it just deleted itself*
-      (a Cython-only import, a runtime-constant assignment), and does so
-      with ``Any`` because it also manages the corresponding
-      ``from typing import Any`` so the stub still parses regardless of user
-      config.
-
-    This pass runs first in the pipeline, so in practice it already collapses
-    most dangling references to ``...`` before ``strip_artifacts`` sees them;
-    ``strip_artifacts``'s own rewrite mainly matters when this pass is
-    disabled, or for names it deletes itself later in the same pipeline pass.
-"""
+"""Removes undefined names from Python .pyi files."""
 
 from __future__ import annotations
 
 import ast
 import logging
+from collections.abc import Generator
 from dataclasses import dataclass, field
+from typing import Literal, Union
 
 from .utils import PUBLIC_BUILTIN_NAMES, dotted_name
 
-logger = logging.getLogger(__name__)
+_logger = logging.getLogger(__name__)
 
 # Built-in names that should never be trimmed.
 _BUILTIN_NAMES = set(PUBLIC_BUILTIN_NAMES)
@@ -67,33 +26,27 @@ _BUILTIN_NAMES.update(
     }  # Names that are usually defined but not in builtins
 )
 
+Scope = dict[str, Union[Literal[True], dict]]
+Scopes = dict[tuple[str, ...], Scope]
+
 
 def trim_not_defined(tree: ast.AST) -> ast.AST:
-    """Remove undefined names from annotations and defaults in an AST.
-
-    Scans the module-level AST (without descending into nested function or
-    class bodies for name collection, so scope leakage is avoided) to collect
-    all names defined via imports, assignments, function definitions, and class
-    definitions, then replaces any undefined name references in type
-    annotations, default values, and return type annotations with ``...``.
-
-    Warns if any undefined names are replaced.
+    """Remove undefined names from an AST. If an annotation is undefined, it is replaced with ``_typeshed.Incomplete``.
 
     Args:
-        tree: The AST module to process.
+        tree: The AST to process.
 
     Returns:
-        Transformed AST with undefined names replaced by Ellipsis.
+        Transformed AST without undefined names.
     """
-    definitions: set[str] = set()
+    definitions: Scopes = {(): {}}
     collector = _DefinedCollector(definitions)
     collector.visit(tree)
-    definitions = definitions | _BUILTIN_NAMES
     remover = _NotDefinedRemover(definitions, _contains_star_import(tree))
     tree = remover.visit(tree)
 
     for name in remover.replaced:
-        logger.warning("Replaced undefined name %r with '...'", name)
+        _logger.debug("Trimmed undefined name %r", name)
     return tree
 
 
@@ -119,51 +72,57 @@ def _contains_star_import(tree: ast.AST) -> bool:
 
 @dataclass
 class _DefinedCollector(ast.NodeVisitor):
-    """Collect module-level defined names without leaking nested scopes.
+    """Collect names defined in each module or class scope."""
 
-    Visits the top-level body only.  Function and class bodies are not
-    descended into, so locally-scoped names don't pollute the module-level
-    definition set.
-    """
+    scopes: Scopes
+    scope_key: tuple[str, ...] = ()
 
-    defined_names: set[str]
+    @property
+    def defined_names(self) -> Scope:
+        return self.scopes[self.scope_key]
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         """Collect function name; do NOT descend into the body."""
-        self.defined_names.add(node.name)
+        self.defined_names[node.name] = True
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
         """Collect async function name; do NOT descend into the body."""
-        self.defined_names.add(node.name)
+        self.defined_names[node.name] = True
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        """Collect class name; do NOT descend into the body."""
-        self.defined_names.add(node.name)
+        """Collect the class name and names in its nested scope."""
+        class_scope: Scope = {}
+        self.defined_names[node.name] = class_scope
+        class_key = self.scope_key + (node.name,)
+        self.scopes[class_key] = class_scope
+        collector = _DefinedCollector(self.scopes, class_key)
+        for child in node.body:
+            collector.visit(child)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         """Collect annotated assignment names."""
         if isinstance(node.target, ast.Name):
-            self.defined_names.add(node.target.id)
+            self.defined_names[node.target.id] = True
         # Do not call generic_visit: no nested scope to descend
 
     def visit_Assign(self, node: ast.Assign) -> None:
         """Collect assignment targets."""
         for target in node.targets:
             if isinstance(target, ast.Name):
-                self.defined_names.add(target.id)
+                self.defined_names[target.id] = True
 
     def visit_Import(self, node: ast.Import) -> None:
         """Collect import names."""
         for alias in node.names:
             if alias.asname:
-                self.defined_names.add(alias.asname)
+                self.defined_names[alias.asname] = True
             else:
-                self.defined_names.add(alias.name.split(".", 1)[0])
+                self.defined_names[alias.name.split(".", 1)[0]] = True
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         """Collect from-import names."""
         for alias in node.names:
-            self.defined_names.add(alias.asname if alias.asname else alias.name)
+            self.defined_names[alias.asname if alias.asname else alias.name] = True
 
 
 @dataclass
@@ -188,6 +147,35 @@ class _CollectNames(ast.NodeVisitor):
         self.names.add(node.id)
 
 
+def _walk_names(root: ast.AST) -> Generator[str, None, None]:
+    for node in ast.walk(root):
+        if isinstance(node, ast.Name):
+            yield node.id
+        elif isinstance(node, ast.Attribute):
+            yield dotted_name(node).split(".")[0]
+
+
+def _collect_targets(root: ast.AST) -> set[str]:
+    output = set()
+    for node in ast.walk(root):
+        if isinstance(
+            node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+        ):
+            for gen in node.generators:
+                output.update(_walk_names(gen.target))
+        elif isinstance(node, ast.Lambda):
+            output.update(arg.arg for arg in node.args.args)
+    return output
+
+
+def _typeshed_incomplete() -> ast.Attribute:
+    return ast.Attribute(
+        value=ast.Name(id="_typeshed", ctx=ast.Load()),
+        attr="Incomplete",
+        ctx=ast.Load(),
+    )
+
+
 @dataclass
 class _NotDefinedRemover(ast.NodeTransformer):
     """Replace undefined name references with Ellipsis.
@@ -200,27 +188,36 @@ class _NotDefinedRemover(ast.NodeTransformer):
         replaced: Names that were replaced with Ellipsis.
     """
 
-    defined_names: set[str]
+    scopes: Scopes
     contains_star_import: bool = False
     replaced: list[str] = field(default_factory=list, init=False)
+    scope_key: tuple[str, ...] = field(default=(), init=False)
 
-    scope_stack: list[set[str]] = field(default_factory=list, init=False)
+    def _defined_names(self, scope_key: tuple[str, ...]) -> set[str]:
+        defined = set(_BUILTIN_NAMES)
+        for end in range(len(scope_key) + 1):
+            defined.update(self.scopes[scope_key[:end]])
+        return defined
 
-    def _check_expr_undefined(self, node: ast.expr) -> bool:
+    def _check_expr_undefined(
+        self,
+        node: ast.expr,
+        extra_defines: set[str] | None = None,
+        scope_key: tuple[str, ...] | None = None,
+    ) -> bool:
         used_names: set[str] = set()
         _CollectNames(used_names).visit(node)
-        all_defined = set(self.defined_names)
-        for scope in self.scope_stack:
-            all_defined.update(scope)
 
-        undefined = used_names - all_defined
+        key = self.scope_key if scope_key is None else scope_key
+        undefined = used_names - (self._defined_names(key) | (extra_defines or set()))
         for name in sorted(undefined):
             self.replaced.append(name)
+
         return bool(undefined)
 
     def _replace_value_if_undefined(self, node: ast.expr) -> ast.expr:
         """RHS of an assignment (this excludes TypeAlias assignments, which are treated as annotations)"""
-        if self._check_expr_undefined(node):
+        if self._check_expr_undefined(node, _collect_targets(node)):
             return ast.Constant(...)
         return node
 
@@ -228,7 +225,7 @@ class _NotDefinedRemover(ast.NodeTransformer):
         if self.contains_star_import:
             return node
         if self._check_expr_undefined(node):
-            return ast.Name("Incomplete", ast.Load())
+            return _typeshed_incomplete()
         return node
 
     def _remove_decorators_if_undefined(
@@ -250,10 +247,8 @@ class _NotDefinedRemover(ast.NodeTransformer):
         """Process annotated assignment annotation and value."""
         node.annotation = self._replace_annotation_if_undefined(node.annotation)
         if node.value is not None:
-            if (
-                isinstance(node.annotation, ast.Name)
-                and node.annotation.id == "TypeAlias"
-            ):
+            annotation = dotted_name(node.annotation)
+            if annotation == "typing_extensions.TypeAlias" or annotation == "TypeAlias":
                 node.value = self._replace_annotation_if_undefined(node.value)
             else:
                 node.value = self._replace_value_if_undefined(node.value)
@@ -307,16 +302,12 @@ class _NotDefinedRemover(ast.NodeTransformer):
 
     def visit_ClassDef(self, node):
         """Process class decorators."""
-        extra_defined = set()
-        _DefinedCollector(extra_defined).visit(node)
-
         if node.decorator_list:
             node.decorator_list = self._remove_decorators_if_undefined(
                 node.decorator_list
             )
-
-        self.scope_stack.append(extra_defined)
+        previous_scope = self.scope_key
+        self.scope_key = previous_scope + (node.name,)
         out = self.generic_visit(node)
-        self.scope_stack.pop()
-
+        self.scope_key = previous_scope
         return out

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from Cython.Compiler.TreeFragment import parse_from_strings
+
 from stubgen_pyx.conversion import (
     docstrings,
     unparse,
 )
+from stubgen_pyx.conversion.unparse import _get_full_class_name, _Unparser
 
 
 class TestGetCdefVariables:
@@ -88,3 +91,53 @@ class TestUnparseExpr:
         # We can't directly create Cython nodes easily, so we test the behavior
         result = unparse.unparse_expr(None)
         assert result is None
+
+    def test_unparse_nested_comprehension_preserves_clause_order(self):
+        """Test that nested comprehension clauses retain source order."""
+        module = parse_from_strings(
+            "expr.pyx",
+            "[(a, b, c) for a in range(1, 2, 0) "
+            "for b in range(1, 3, 0) for c in range(1, 4, 0)]",
+            context=None,
+        )
+
+        result = unparse.unparse_expr(module.body.expr)
+
+        assert result == (
+            "[(a, b, c) for a in range(1, 2, 0) "
+            "for b in range(1, 3, 0) for c in range(1, 4, 0)]"
+        )
+
+    def test_unparse_unary_operators_and_singleton_tuple(self):
+        expressions = {
+            "(-value)": "-value",
+            "(&value)": "value",
+            "(value,)": "(value,)",
+        }
+        for source, expected in expressions.items():
+            module = parse_from_strings("expr.pyx", source, context=None)
+            assert unparse.unparse_expr(module.body.expr) == expected
+
+    def test_unparse_comprehension_with_sequence_target_and_condition(self):
+        module = parse_from_strings(
+            "expr.pyx", "[(a, b) for (a, b) in pairs if a > 0]", context=None
+        )
+
+        assert unparse.unparse_expr(module.body.expr) == (
+            "[(a, b) for (a, b) in pairs if a > 0]"
+        )
+
+    def test_unknown_nodes_are_tracked_only_once(self):
+        module = parse_from_strings("expr.pyx", "value + 1", context=None)
+        writer = _Unparser()
+        writer.visit_Node(module)
+        writer.visit_Node(module.body)
+
+        assert writer.found_unknown is module
+        assert writer.result == "......"
+        assert unparse.unparse_expr(module) is None
+
+    def test_full_class_name_handles_builtin_and_custom_nodes(self):
+        assert _get_full_class_name(object()) == "object"
+        module = parse_from_strings("expr.pyx", "value", context=None)
+        assert "ExprNode" in _get_full_class_name(module.body.expr)

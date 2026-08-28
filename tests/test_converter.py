@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from stubgen_pyx.analysis.visitor import ModuleVisitor
+from stubgen_pyx.conversion import converter as converter_module
 from stubgen_pyx.conversion.converter import Converter
 from stubgen_pyx.models.pyi_elements import (
     PyiClass,
@@ -12,6 +13,22 @@ from stubgen_pyx.models.pyi_elements import (
     PyiScope,
 )
 from stubgen_pyx.parsing.parser import parse_pyx
+
+
+def _first_node(source: str, class_name: str):
+    tree = parse_pyx(source).source_ast
+    pending = [tree]
+    while pending:
+        node = pending.pop()
+        if type(node).__name__ == class_name:
+            return node
+        for attr in getattr(node, "child_attrs", ()):
+            child = getattr(node, attr, None)
+            if isinstance(child, list):
+                pending.extend(child)
+            elif child is not None:
+                pending.append(child)
+    raise AssertionError(f"No {class_name} found")
 
 
 class TestConverterInitialization:
@@ -501,7 +518,7 @@ cpdef get(void* path):
         func = result.scope.functions[0]
         assert len(func.signature.args) == 1
         arg = func.signature.args[0]
-        assert arg.annotation == "Any"
+        assert arg.annotation == "typing.Any"
 
     def test_sized_array_type(self):
         """Test converting sized array type."""
@@ -574,10 +591,10 @@ cdef class Foo:
         assert len(result.scope.classes) == 1
         cls = result.scope.classes[0]
         assert [a.statement for a in cls.scope.assignments] == [
-            "tuple_attr: tuple[Any, ...]",
-            "list_attr: list[Any]",
-            "dict_attr: dict[Any, Any]",
-            "set_attr: set[Any]",
+            "tuple_attr: tuple[typing.Any, ...]",
+            "list_attr: list[typing.Any]",
+            "dict_attr: dict[typing.Any, typing.Any]",
+            "set_attr: set[typing.Any]",
         ]
 
     def test_class_metaclass(self):
@@ -876,7 +893,7 @@ cdef struct Foo:
         module = converter.convert_module(mv, pr.source, pr.type_comments)
 
         assert len(module.scope.classes) == 1
-        assert module.scope.classes[0].bases[0] == "TypedDict"
+        assert module.scope.classes[0].bases[0] == "typing.TypedDict"
         assert not module.scope.classes[0].keywords
 
         pr = parse_pyx("""
@@ -888,7 +905,7 @@ cdef union Foo:
         module = converter.convert_module(mv, pr.source, pr.type_comments)
 
         assert len(module.scope.classes) == 1
-        assert module.scope.classes[0].bases[0] == "TypedDict"
+        assert module.scope.classes[0].bases[0] == "typing.TypedDict"
         assert module.scope.classes[0].keywords["total"] == "False"
 
     def test_cdef_ptr_attributes(self):
@@ -930,7 +947,7 @@ cdef struct Foo:
         assert len(module.scope.classes) == 1
         assert (
             module.scope.classes[0].scope.assignments[0].statement
-            == "bar: Callable[[int], int]"
+            == "bar: typing.Callable[[int], int]"
         )
 
 
@@ -959,7 +976,7 @@ cdef class Foo:
         )
         assert (
             module.scope.assignments[0].statement
-            == "int_view: TypeAlias = numpy.typing.NDArray[numpy.intc]"
+            == "int_view: typing_extensions.TypeAlias = numpy.typing.NDArray[numpy.intc]"
         )
 
 
@@ -1014,3 +1031,64 @@ cdef enum:
 
         assert len(module.scope.classes) == 0
         assert len(module.scope.assignments) == 0
+
+
+def test_convert_imports_ignores_cython_and_collects_cimport_aliases():
+    source = """
+import cython
+from libc.stdint cimport int32_t as Count
+from pathlib import Path
+"""
+    parsed = parse_pyx(source)
+    converter = Converter()
+    imports = converter.convert_imports(
+        ModuleVisitor(parsed.source_ast).import_visitor, parsed.source
+    )
+
+    assert [item.statement for item in imports] == ["from pathlib import Path"]
+    assert converter.cimport_alias_map == {"Count": "int"}
+
+
+def test_convert_cpp_class_falls_back_to_incomplete_alias():
+    node = _first_node("cdef cppclass Native:\n    int value", "CppClassNode")
+
+    result = Converter().convert_cpp_class(node)
+
+    assert result is not None
+    assert (
+        result.statement == "Native: typing_extensions.TypeAlias = _typeshed.Incomplete"
+    )
+
+
+def test_convert_struct_logs_unexpected_parsed_attribute(caplog):
+    caplog.set_level("DEBUG")
+    node = _first_node("cdef struct Header:\n    int version", "CStructOrUnionDefNode")
+    node.attributes.append(_first_node("def helper():\n    pass", "DefNode"))
+
+    result = Converter().convert_struct_or_union(node)
+
+    assert result.name == "Header"
+    assert "Unexpected attribute type" in caplog.text
+
+
+def test_convert_assignment_handles_ctypedef_fallbacks():
+    converter = Converter()
+    source = "ctypedef int Alias"
+    node = _first_node(source, "CTypeDefNode")
+
+    node.base_type = None
+    fallback = converter.convert_assignment(node, source)
+    assert fallback is not None
+    assert fallback.statement == "Alias = ..."
+
+    node.declarator.name = None
+    assert converter.convert_assignment(node, source) is None
+
+
+def test_type_name_handles_nested_template_and_unknown_parsed_nodes():
+    templated = _first_node("cdef Foo[int] value", "TemplatedTypeNode")
+    simple = templated.base_type_node
+
+    assert converter_module._type_name(templated) == "Foo"
+    assert converter_module._type_name(simple) == "Foo"
+    assert converter_module._type_name(templated.positional_args[0]) is None

@@ -173,7 +173,7 @@ class TestBuilderEdgeCases:
         result = builder.build_enum(enum)
         assert result
         assert "Status" in result
-        assert "PENDING: int" in result
+        assert "PENDING = ..." in result
 
     def test_builder_function_with_multiple_decorators(self):
         """Test function with multiple decorators."""

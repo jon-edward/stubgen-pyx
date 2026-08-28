@@ -10,18 +10,19 @@ import logging
 from pathlib import Path
 
 from ..config import StubgenPyxConfig
+from .add_type_imports import add_type_imports
 from .attribution import stubgen_attribution
 from .collapse_funcdefs import collapse_funcdefs
 from .collect_names import collect_names
-from .deduplicate_imports import _DuplicateImportRemover
+from .deduplicate_imports import deduplicate_imports
 from .fix_scalar_defaults import fix_scalar_defaults
 from .normalize_member_spacing import normalize_member_spacing
-from .normalize_names import _NameNormalizer
+from .normalize_names import normalize_names
 from .overload_singledispatch import overload_singledispatch
 from .remove_identity_assignment import remove_identity_assignment
 from .remove_overload_implementations import remove_overload_implementations
 from .sort_imports import sort_imports
-from .trim_imports import _UnusedImportRemover
+from .trim_imports import trim_imports
 from .trim_not_defined import trim_not_defined
 from .unquote_annotations import unquote_annotations
 
@@ -67,29 +68,24 @@ def _ast_transforms(
 ) -> ast.AST:
     """Apply all enabled AST-level transforms in the correct order."""
     if config.deduplicate_imports:
-        tree = _DuplicateImportRemover().visit(tree)
+        tree = deduplicate_imports(tree)
 
     if config.normalize_names:
-        tree = _NameNormalizer(extra_translations=extra_translations or {}).visit(tree)
+        tree = normalize_names(tree, extra_translations=extra_translations or {})
 
     tree = remove_identity_assignment(tree)
 
     # Runs before import trimming so that imports which only the dropped
     # implementation referenced are then seen as unused.
     tree = remove_overload_implementations(tree)
+    tree = unquote_annotations(tree)
+    tree = add_type_imports(tree)
 
     if config.trim_not_defined:
-        # Runs before strip_artifacts so general "never defined" references
-        # (e.g. unavailable third-party types) are collapsed to `...` first.
-        # strip_artifacts still runs unconditionally afterward: it repairs
-        # dangling references that *it itself* creates by deleting Cython
-        # artifacts, which is unrelated to whether the user wants this more
-        # general trimming pass. See trim_not_defined's module docstring for
-        # the full split of responsibility between the two passes.
-        trim_not_defined(tree)
+        tree = trim_not_defined(tree)
+        tree = add_type_imports(tree)
 
     tree = overload_singledispatch(tree)
-    tree = unquote_annotations(tree)
 
     if config.fix_scalar_defaults:
         # Runs after normalize_names/strip_artifacts so `bint` has already
@@ -98,6 +94,6 @@ def _ast_transforms(
 
     if config.trim_imports:
         used_names = collect_names(tree)
-        tree = _UnusedImportRemover(used_names).visit(tree)
+        tree = trim_imports(tree, used_names)
 
     return tree

@@ -92,6 +92,14 @@ class PyiEnum(PyiElement):
 
 
 @dataclass
+class PyiFusedType(PyiElement):
+    """Represents a fused type."""
+
+    name: str
+    concrete_types: tuple[str, ...]
+
+
+@dataclass
 class PyiModule(PyiElement):
     """Represents a Python module."""
 

@@ -18,7 +18,7 @@ from .models.pyi_elements import PyiClass, PyiModule
 from .parsing.parser import parse_pyx, path_to_module_name
 from .postprocessing.pipeline import postprocessing_pipeline
 
-logger = logging.getLogger(__name__)
+_logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -209,7 +209,7 @@ class StubgenPyx:
             )
         )
         if output:
-            logger.info(f"Found {len(output)} file(s) to convert")
+            _logger.info(f"Found {len(output)} file(s) to convert")
         return output
 
     def convert_glob(
@@ -235,7 +235,7 @@ class StubgenPyx:
         )
 
         if not pyx_files:
-            logger.warning("No files found to convert")
+            _logger.warning("No files found to convert")
             return []
 
         return self.convert_multiple_files(
@@ -285,7 +285,7 @@ class StubgenPyx:
             results.append(result)
 
             if self.config.verbose or not result.success:
-                logger.info(result.status_message)
+                _logger.info(result.status_message)
 
         return results
 
@@ -308,7 +308,7 @@ class StubgenPyx:
         """
         pyi_file_path = pyi_file_path or pyx_file_path.with_suffix(".pyi")
         try:
-            logger.debug(f"Converting '{pyx_file_path}' to '{pyi_file_path}'")
+            _logger.debug(f"Converting '{pyx_file_path}' to '{pyi_file_path}'")
 
             try:
                 pyx_str = pyx_file_path.read_text(encoding="utf-8")
@@ -330,11 +330,11 @@ class StubgenPyx:
             if self.config.pxd_to_stubs:
                 pxd_file_path = pyx_file_path.with_suffix(".pxd")
                 if pxd_file_path.exists() and pxd_file_path != pyx_file_path:
-                    logger.debug(f"Found pxd file: {pxd_file_path}")
+                    _logger.debug(f"Found pxd file: {pxd_file_path}")
                     try:
                         pxd_str = pxd_file_path.read_text(encoding="utf-8")
-                    except UnicodeDecodeError as e:
-                        logger.warning(f"Could not read .pxd file {pxd_file_path}: {e}")
+                    except UnicodeDecodeError:
+                        _logger.warning(f"Could not read .pxd file {pxd_file_path}")
 
             pyi_content = self.convert_str(
                 pyx_str=pyx_str,
@@ -345,11 +345,11 @@ class StubgenPyx:
             if not dry_run:
                 try:
                     pyi_file_path.write_text(pyi_content, encoding="utf-8")
-                    logger.debug(f"Wrote pyi file: {pyi_file_path}")
+                    _logger.debug(f"Wrote pyi file: {pyi_file_path}")
                 except OSError as e:
                     raise OSError(f"Failed to write {pyi_file_path}: {e}") from e
             else:
-                logger.info(f"Would create output file: {pyi_file_path}")
+                _logger.info(f"Would create output file: {pyi_file_path}")
 
             return ConversionResult(
                 success=True,
@@ -358,9 +358,7 @@ class StubgenPyx:
             )
 
         except Exception as e:
-            logger.debug(
-                f"Error during conversion: {type(e).__name__}: {e}", exc_info=True
-            )
+            _logger.exception(f"Error during conversion: {type(e).__name__}")
 
             if not self.config.continue_on_error:
                 raise

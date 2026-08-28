@@ -7,9 +7,9 @@ import itertools
 from dataclasses import dataclass, field
 
 
-def collect_names(tree: ast.AST) -> set[str]:
+def collect_names(tree: ast.AST, add_declared: bool = False) -> set[str]:
     """Extract all names referenced in a .pyi file's AST."""
-    collector = _NameCollector()
+    collector = _NameCollector(add_declared=add_declared)
     collector.visit(tree)
     return collector.names
 
@@ -18,6 +18,7 @@ def collect_names(tree: ast.AST) -> set[str]:
 class _NameCollector(ast.NodeVisitor):
     """Visitor that collects all referenced names from type annotations and code."""
 
+    add_declared: bool = False
     names: set[str] = field(default_factory=set, init=False)
 
     def _try_parsed_visit(self, str_constant: str) -> None:
@@ -54,10 +55,17 @@ class _NameCollector(ast.NodeVisitor):
 
     def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef):
         """Collect names from function signature."""
+        if self.add_declared:
+            self.names.add(node.name)
         self._visit_arguments(node.args)
         returns_constant = self._get_str_constant(node.returns)
         if returns_constant:
             self._try_parsed_visit(returns_constant)
+
+    def visit_ClassDef(self, node: ast.ClassDef):
+        if self.add_declared:
+            self.names.add(node.name)
+        return self.generic_visit(node)
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
         self._visit_function(node)

@@ -7,8 +7,27 @@ from stubgen_pyx.analysis.visitor import (
     ImportVisitor,
     ModuleVisitor,
     ScopeVisitor,
+    _collect_attribute,
 )
 from stubgen_pyx.parsing.parser import parse_pyx
+
+
+def _find_nodes(source: str, class_name: str):
+    """Find parsed Cython nodes by their concrete class name."""
+    tree = parse_pyx(source).source_ast
+    found = []
+    pending = [tree]
+    while pending:
+        node = pending.pop()
+        if type(node).__name__ == class_name:
+            found.append(node)
+        for attr in getattr(node, "child_attrs", ()):
+            child = getattr(node, attr, None)
+            if isinstance(child, list):
+                pending.extend(child)
+            elif child is not None:
+                pending.append(child)
+    return found
 
 
 class TestScopeVisitorBasics:
@@ -772,3 +791,71 @@ cdef class CythonClass:
 
         assert len(visitor.scope.classes) == 1
         assert len(visitor.scope.classes[0].scope.cdef_variables) == 1
+
+
+def test_scope_visitor_filters_cdef_visibility_and_collects_structures():
+    code = """
+cdef class Visible:
+    cdef public int public_value
+    cdef readonly int readonly_value
+    cdef int private_value
+
+cdef struct Header:
+    int version
+
+cdef union Value:
+    int integer
+    double decimal
+
+cdef cppclass Native:
+    int value
+"""
+    parsed = parse_pyx(code)
+    visitor = ScopeVisitor(parsed.source_ast)
+
+    assert len(visitor.classes) == 1
+    assert len(visitor.classes[0].scope.cdef_variables) == 2
+    assert len(visitor.cdef_structs_or_unions) == 2
+    assert len(visitor.cpp_classes) == 1
+
+
+def test_scope_visitor_skips_unnamed_enum():
+    parsed = parse_pyx("""
+cdef enum:
+    INTERNAL = 1
+
+cdef enum Public:
+    EXPORTED = 2
+""")
+    visitor = ScopeVisitor(parsed.source_ast)
+
+    assert [enum.name for enum in visitor.enums] == ["Public"]
+
+
+def test_import_visitor_handles_all_import_forms_and_type_checking():
+    code = """
+import os
+from pathlib import Path
+cimport cython
+from libc.stdint cimport int32_t
+if TYPE_CHECKING:
+    import json
+if typing.TYPE_CHECKING:
+    from collections import deque
+"""
+    parsed = parse_pyx(code).source_ast
+    visitor = ImportVisitor(parsed)
+
+    assert len(visitor.imports) >= 6
+    assert any(
+        type(node).__name__ == "SingleAssignmentNode" for node in visitor.imports
+    )
+
+
+def test_collect_attribute_handles_name_and_qualified_attribute():
+    nodes = _find_nodes("if typing.TYPE_CHECKING:\n    import pathlib\n", "IfStatNode")
+    condition = nodes[0].if_clauses[0].condition
+    assert _collect_attribute(condition) == "typing.TYPE_CHECKING"
+
+    name_nodes = _find_nodes("if TYPE_CHECKING:\n    pass\n", "IfStatNode")
+    assert _collect_attribute(name_nodes[0].if_clauses[0].condition) == "TYPE_CHECKING"

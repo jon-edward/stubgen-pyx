@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import ast
+import logging
 from dataclasses import dataclass, field
 
+_logger = logging.getLogger(__name__)
 
-def normalize_names(tree: ast.AST) -> ast.AST:
+
+def normalize_names(
+    tree: ast.AST, extra_translations: dict[str, str] | None = None
+) -> ast.AST:
     """Replace Cython type names with their Python equivalents in an AST."""
-    return _NameNormalizer().visit(tree)
+    return _NameNormalizer(extra_translations=extra_translations or {}).visit(tree)
 
 
 _CYTHON_INTS: tuple[str, ...] = (
@@ -76,7 +81,13 @@ class _NameNormalizer(ast.NodeTransformer):
     extra_translations: dict[str, str] = field(default_factory=dict)
 
     def visit_Name(self, node: ast.Name) -> ast.Name:
+        old_name = node.id
         name = _CYTHON_TRANSLATIONS.get(node.id) or self.extra_translations.get(
             node.id, node.id
         )
+
+        if name == old_name:
+            return node
+
+        _logger.debug("Normalized %s to %s", old_name, name)
         return ast.Name(id=name, ctx=node.ctx)
