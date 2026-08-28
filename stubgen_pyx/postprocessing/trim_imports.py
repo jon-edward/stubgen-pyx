@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import ast
+import logging
 from dataclasses import dataclass
 
-_RESERVED_MODULES = {"__future__", "asyncio"}
+_logger = logging.getLogger(__name__)
+
+_RESERVED_MODULES = {"asyncio"}
 
 
 def trim_imports(tree: ast.AST, used_names: set[str]) -> ast.AST:
@@ -37,12 +40,20 @@ class _UnusedImportRemover(ast.NodeTransformer):
         for alias in node.names:
             if self._include_alias(alias):
                 new_names.append(alias)
+            else:
+                _logger.debug("Removed unused import: %s", alias.name)
 
         if not new_names:
             return None
 
         node.names = new_names
         return node
+
+    @staticmethod
+    def _import_from_full_name(node: ast.ImportFrom, alias: ast.alias) -> str:
+        return (
+            f"{'.' * node.level}{node.module + '.' if node.module else ''}{alias.name}"
+        )
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> ast.ImportFrom | None:
         """Remove unused from-imports (e.g., `from foo import bar`)."""
@@ -53,6 +64,11 @@ class _UnusedImportRemover(ast.NodeTransformer):
         for alias in node.names:
             if self._include_alias(alias):
                 new_names.append(alias)
+            else:
+                _logger.debug(
+                    "Removed unused import: %s",
+                    self._import_from_full_name(node, alias),
+                )
 
         if not new_names:
             return None
