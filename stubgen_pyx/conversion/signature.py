@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import logging
-
 from Cython.Compiler import Nodes
 
 from ..models.pyi_elements import PyiArgument, PyiSignature
-from .type_parsing import extract_type_from_base_type
+from .type_parsing import extract_type_from_base_type, parameterize_builtin_generic
 from .unparse import unparse_expr
-
-logger = logging.getLogger(__name__)
 
 
 def get_signature(node: Nodes.CFuncDefNode | Nodes.DefNode) -> PyiSignature:
@@ -61,11 +57,13 @@ def _decode_or_pass(value: str | bytes) -> str:
     raise TypeError(f"Expected str or bytes, got {type(value)}")
 
 
-def _get_annotation(arg: Nodes.CArgDeclNode) -> str | None:
+def _get_annotation(arg: Nodes.CArgDeclNode | Nodes.PyArgDeclNode) -> str | None:
     """Extract type annotation from a function argument node."""
     try:
         if arg.annotation is not None:
             return _decode_or_pass(arg.annotation.string.value)
+        if not isinstance(arg, Nodes.CArgDeclNode):
+            return None
         return extract_type_from_base_type(arg)
     except AttributeError:
         pass
@@ -75,12 +73,17 @@ def _get_annotation(arg: Nodes.CArgDeclNode) -> str | None:
 def _get_return_type_annotation(node: Nodes.CFuncDefNode | Nodes.DefNode) -> str | None:
     """Extract return type annotation from a function node."""
     if node.return_type_annotation is not None:
-        return _decode_or_pass(node.return_type_annotation.string.value)
+        return parameterize_builtin_generic(
+            _decode_or_pass(node.return_type_annotation.string.value)
+        )
+    if isinstance(node, Nodes.DefNode):
+        return None
 
     try:
         return extract_type_from_base_type(node)
     except AttributeError:
         pass
+
     return None
 
 
@@ -97,8 +100,15 @@ def _to_argument(arg: Nodes.CArgDeclNode) -> PyiArgument:
     else:
         annotation = _get_annotation(arg)
 
+    annotation = parameterize_builtin_generic(annotation)
+
     default = unparse_expr(arg.default)  # type: ignore
-    if default == "None" and annotation and "None" not in annotation:
+    if (
+        default == "None"
+        and annotation
+        and "None" not in annotation
+        and "Optional" not in annotation
+    ):
         annotation += " | None"
 
     return PyiArgument(name, default=default, annotation=annotation)
