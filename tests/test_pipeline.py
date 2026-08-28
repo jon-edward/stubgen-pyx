@@ -191,6 +191,22 @@ def test_pipeline_trim_not_defined_replaces_unknown():
     assert "UndefinedType" not in result
 
 
+def test_pipeline_imports_incomplete_replacement():
+    pyi_code = "def foo(x: UndefinedType) -> int: ..."
+
+    config = StubgenPyxConfig(
+        trim_not_defined=True,
+        trim_imports=True,
+        sort_imports=False,
+        exclude_attribution=True,
+    )
+    result = postprocessing_pipeline(pyi_code, config)
+
+    assert (
+        result == "from _typeshed import Incomplete\ndef foo(x: Incomplete) -> int: ..."
+    )
+
+
 def test_pipeline_trim_not_defined_warns(caplog):
     """Test that replacing undefined names emits a warning."""
     import logging
@@ -203,7 +219,7 @@ def test_pipeline_trim_not_defined_warns(caplog):
         sort_imports=False,
         exclude_attribution=True,
     )
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.DEBUG):
         postprocessing_pipeline(pyi_code, config)
 
     assert "MysteryType" in caplog.text

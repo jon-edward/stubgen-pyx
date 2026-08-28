@@ -363,11 +363,11 @@ class TestBuilder:
     def test_build_enum_with_name(self):
         """Test building a named enum."""
         builder = Builder()
-        enum = PyiEnum(enum_name="Colors", names=["RED", "GREEN", "BLUE"])
+        enum = PyiEnum(enum_name="Color", names=["RED", "GREEN", "BLUE"])
         result = builder.build_enum(enum)
         assert result
-        assert "class Colors" in result
-        assert "RED: int" in result
+        assert "class Color" in result
+        assert "RED = ..." in result
 
     def test_build_enum_without_name(self):
         """Test building an unnamed enum."""

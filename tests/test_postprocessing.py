@@ -14,6 +14,80 @@ from stubgen_pyx.postprocessing import (
     trim_imports,
     trim_not_defined,
 )
+from stubgen_pyx.postprocessing.add_type_imports import add_type_imports
+
+
+class TestAddTypeImports:
+    """Test adding imports for qualified type names."""
+
+    def test_does_not_add_unused_type_imports(self):
+        tree = ast.parse("x: str")
+
+        result = ast.unparse(add_type_imports(tree))
+
+        assert result == "x: str"
+
+    def test_reuses_existing_exact_import(self):
+        tree = ast.parse("from typing import Any\nx: typing.Any")
+
+        result = ast.unparse(add_type_imports(tree))
+
+        assert result == "from typing import Any\nx: Any"
+
+    def test_reuses_existing_aliased_import(self):
+        tree = ast.parse("from typing import Any as ExistingAny\nx: typing.Any")
+
+        result = ast.unparse(add_type_imports(tree))
+
+        assert result == "from typing import Any as ExistingAny\nx: ExistingAny"
+
+    def test_shortens_qualified_name_when_leaf_is_available(self):
+        tree = ast.parse("x: typing.Any")
+
+        result = ast.unparse(add_type_imports(tree))
+
+        assert result == "from typing import Any\nx: Any"
+
+    def test_keeps_qualified_name_when_leaf_conflicts_with_declaration(self):
+        tree = ast.parse("class Incomplete: ...\nx: _typeshed.Incomplete")
+
+        result = ast.unparse(add_type_imports(tree))
+
+        assert result == (
+            "import _typeshed\n\nclass Incomplete:\n    ...\nx: _typeshed.Incomplete"
+        )
+
+    def test_reuses_existing_aliased_import_module(self):
+        tree = ast.parse("import typing as _typing\nx: typing.Any")
+
+        result = ast.unparse(add_type_imports(tree))
+
+        assert result == "import typing as _typing\nx: _typing.Any"
+
+    def test_reuses_existing_aliased_numpy_import_module(self):
+        tree = ast.parse("import numpy as _numpy\nx: numpy.typing.NDArray")
+
+        result = ast.unparse(add_type_imports(tree))
+
+        assert result == "import numpy as _numpy\nx: _numpy.typing.NDArray"
+
+    def test_adds_numpy_import_for_qualified_dtype_arguments(self):
+        tree = ast.parse(
+            "def func("
+            "a: numpy.typing.NDArray[numpy.intc], "
+            "b: numpy.typing.NDArray[numpy.single]"
+            ") -> numpy.typing.NDArray[numpy.intc]: ..."
+        )
+
+        result = ast.unparse(add_type_imports(tree))
+
+        assert result == (
+            "import numpy\n"
+            "from numpy.typing import NDArray\n"
+            "\n"
+            "def func(a: NDArray[numpy.intc], b: NDArray[numpy.single]) -> NDArray[numpy.intc]:\n"
+            "    ..."
+        )
 
 
 class TestCollectNames:
