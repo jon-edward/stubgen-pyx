@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import ast
+import logging
 from typing import Any
+
+_logger = logging.getLogger(__name__)
 
 
 def remove_identity_assignment(tree: ast.AST) -> ast.AST:
@@ -22,6 +25,7 @@ class _IdentityAssignmentRemover(ast.NodeTransformer):
             and isinstance(node.value, ast.Name)
             and node.targets[0].id == node.value.id
         ):
+            _logger.debug("Removed identity assignment: %s", node.targets[0].id)
             return None
         return node
 
@@ -32,5 +36,6 @@ class _IdentityAssignmentRemover(ast.NodeTransformer):
             and isinstance(node.value, ast.Name)
             and node.target.id == node.value.id
         ):
+            _logger.debug("Removed identity assignment: %s", node.target.id)
             return None
         return node
