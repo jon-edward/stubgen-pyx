@@ -2,7 +2,6 @@
 
 from . import (
     converter,
-    declarators,
     docstrings,
     signature,
     source_extraction,
@@ -12,7 +11,6 @@ from . import (
 
 __all__ = [
     "converter",
-    "declarators",
     "docstrings",
     "signature",
     "source_extraction",
