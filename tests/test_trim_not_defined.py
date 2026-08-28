@@ -375,3 +375,23 @@ class Foo:
         assert "@bar.setter" in result_str
         assert "@undefined_decorator" not in result_str
         assert "@foo.setter" in result_str
+
+    def test_comprehension_targets_are_preserved(self):
+        """Test that comprehension targets are preserved."""
+        code = """
+val = [x for x in range(10)]
+"""
+        tree = ast.parse(code)
+        result = trim_not_defined(tree)
+        result_str = ast.unparse(result)
+        assert "x" in result_str
+
+    def test_lambda_targets_are_preserved(self):
+        """Test that lambda targets are preserved."""
+        code = """
+val = lambda x: x
+"""
+        tree = ast.parse(code)
+        result = trim_not_defined(tree)
+        result_str = ast.unparse(result)
+        assert "x" in result_str
