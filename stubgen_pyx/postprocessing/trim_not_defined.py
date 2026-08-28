@@ -6,7 +6,7 @@ import ast
 import logging
 from collections.abc import Generator
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, Union
 
 from .utils import PUBLIC_BUILTIN_NAMES, dotted_name
 
@@ -26,7 +26,7 @@ _BUILTIN_NAMES.update(
     }  # Names that are usually defined but not in builtins
 )
 
-Scope = dict[str, Literal[True] | dict]
+Scope = dict[str, Union[Literal[True], dict]]
 Scopes = dict[tuple[str, ...], Scope]
 
 
