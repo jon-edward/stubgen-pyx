@@ -189,18 +189,6 @@ class _Import:
     name: str | None
     asname: str | None
 
-    def __str__(self) -> str:
-        if self.name is None and self.asname is None:
-            return f"import {self.module}"
-        if self.name is None:
-            return f"import {self.module} as {self.asname}"
-        if self.asname is None:
-            return f"from {self.module} import {self.name}"
-        return f"from {self.module} import {self.name} as {self.asname}"
-
-    def __repr__(self) -> str:
-        return f"{self.__class__.__name__}({str(self)!r})"
-
 
 @dataclass
 class _ImportVisitor(ast.NodeVisitor):
