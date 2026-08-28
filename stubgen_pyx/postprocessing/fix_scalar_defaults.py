@@ -24,7 +24,7 @@ from __future__ import annotations
 import ast
 import logging
 
-logger = logging.getLogger(__name__)
+_logger = logging.getLogger(__name__)
 
 # Both spellings are matched so this pass works whether or not the
 # `bint` -> `bool` rename (normalize_names, which is user-configurable) has
@@ -80,10 +80,11 @@ def _coerce(annotation: ast.expr | None, default: ast.expr) -> ast.expr | None:
         return None
 
     if name == "bytes" and isinstance(default.value, str):
+        _logger.debug("Coercing str default %r to bytes", default.value)
         try:
             new_value: object = default.value.encode("latin-1")
         except UnicodeEncodeError:
-            logger.warning(
+            _logger.debug(
                 "Could not coerce str default %r to bytes for a `bytes`-annotated "
                 "argument; left as a str literal",
                 default.value,
@@ -96,6 +97,7 @@ def _coerce(annotation: ast.expr | None, default: ast.expr) -> ast.expr | None:
         and isinstance(default.value, int)
         and not isinstance(default.value, bool)
     ):
+        _logger.debug("Coercing int default %r to bool", default.value)
         return ast.copy_location(ast.Constant(value=bool(default.value)), default)
 
     return None
