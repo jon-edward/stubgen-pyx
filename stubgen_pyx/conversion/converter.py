@@ -267,9 +267,7 @@ class Converter:
         ]
 
         conv_assignments = (
-            self.convert_assignment(
-                assignment, source_code, in_class=visitor.in_class
-            )
+            self.convert_assignment(assignment, source_code, in_class=visitor.in_class)
             for assignment in visitor.assignments
         )
 
