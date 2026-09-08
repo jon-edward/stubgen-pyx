@@ -267,7 +267,9 @@ class Converter:
         ]
 
         conv_assignments = (
-            self.convert_assignment(assignment, source_code)
+            self.convert_assignment(
+                assignment, source_code, in_class=visitor.in_class
+            )
             for assignment in visitor.assignments
         )
 
@@ -409,7 +411,11 @@ class Converter:
         )
 
     def convert_assignment(
-        self, assignment: Nodes.AssignmentNode | Nodes.ExprStatNode, source_code: str
+        self,
+        assignment: Nodes.AssignmentNode | Nodes.ExprStatNode,
+        source_code: str,
+        *,
+        in_class: bool = False,
     ) -> PyiAssignment | None:
         """Convert an assignment node to PyiAssignment, extracting type annotations."""
         out_assignment_str: str | None = None
@@ -461,6 +467,9 @@ class Converter:
             _logger.debug("Could not parse assignment source: %r", out_assignment_str)
             return None
 
+        if in_class and _is_unhashable_hash_assignment(node.body[0]):
+            out_assignment_str = "__hash__ = None  # type: ignore[assignment]"
+
         return PyiAssignment(out_assignment_str)
 
     def convert_enum(self, node: Nodes.CEnumDefNode) -> PyiEnum | PyiAssignment:
@@ -478,6 +487,17 @@ def _is_cxx_cimport(raw: str) -> bool:
 
 def _is_cython_import(raw: str) -> bool:
     return bool(_CYTHON_FROM_IMPORT_RE.search(raw) or _CYTHON_IMPORT_RE.search(raw))
+
+
+def _is_unhashable_hash_assignment(node: ast.stmt) -> bool:
+    return (
+        isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "__hash__"
+        and isinstance(node.value, ast.Constant)
+        and node.value.value is None
+    )
 
 
 def _restore_fused_memoryview_annotations(
