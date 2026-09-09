@@ -200,3 +200,27 @@ def hello():
             pyx_file.write_text("def hello():\n    pass\n")
             result = parse_pyx(pyx_file.read_text(), pyx_path=pyx_file)
             assert result is not None
+
+    def test_preprocess_strip_expand_semicolons_at_newline(self):
+        """Test preprocessing with semicolon at end of line."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pyx_file = Path(tmpdir) / "semicolon.pyx"
+            code = """
+class Test:
+    def __init__(self):
+        pass;
+    def func(self):
+        pass
+"""
+            pyx_file.write_text(code)
+
+            result = parse_pyx(pyx_file.read_text(), pyx_path=pyx_file).source
+            lines_in = [line.rstrip("; ") for line in code.splitlines() if line.strip()]
+            lines_out = [
+                line.rstrip(" ") for line in result.splitlines() if line.strip()
+            ]
+
+            for line_in, line_out in zip(lines_in, lines_out):
+                assert line_in == line_out
+
+            assert result is not None
