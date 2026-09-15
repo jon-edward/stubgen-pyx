@@ -117,6 +117,11 @@ class TestCreateParser:
         args = parser.parse_args([".", "--include-private"])
         assert args.include_private is True
 
+    def test_parser_with_symbol_overrides(self):
+        parser = cli._create_parser()
+        args = parser.parse_args([".", "--symbol-overrides", "overrides.toml"])
+        assert args.symbol_overrides == Path("overrides.toml")
+
     def test_parser_default_directory(self):
         """Test parser with default directory."""
         parser = cli._create_parser()

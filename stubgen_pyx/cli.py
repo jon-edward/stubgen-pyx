@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from ._version import __version__
-from .config import StubgenPyxConfig
+from .config import StubgenPyxConfig, load_symbol_overrides
 from .stubgen import ConversionResult, StubgenPyx
 
 logger = logging.getLogger(__name__)
@@ -161,6 +161,13 @@ Examples:
         action="store_true",
     )
 
+    parser.add_argument(
+        "--symbol-overrides",
+        help="TOML file defining project-specific generated symbol rewrites",
+        type=Path,
+        default=None,
+    )
+
     return parser
 
 
@@ -202,6 +209,17 @@ def main() -> None:
 
     logger.info(f"stubgen-pyx v{__version__}")
 
+    source_dir = Path(args.dir) if args.dir else Path(".")
+    try:
+        overrides_config = (
+            load_symbol_overrides(args.symbol_overrides)
+            if args.symbol_overrides is not None
+            else None
+        )
+    except ValueError as error:
+        logger.error("Invalid symbol overrides: %s", error)
+        sys.exit(1)
+
     # CLI uses --no-* flags; config now uses positive booleans
     config = StubgenPyxConfig(
         sort_imports=not args.no_sort_imports,
@@ -216,9 +234,13 @@ def main() -> None:
         continue_on_error=args.continue_on_error,
         include_private=args.include_private,
         verbose=args.verbose,
+        module_root=overrides_config.module_root if overrides_config else None,
+        source_root=source_dir.resolve() if overrides_config else None,
+        symbol_overrides=overrides_config.overrides
+        if overrides_config
+        else (),
     )
 
-    source_dir = Path(args.dir) if args.dir else Path(".")
     if args.file:
         pyx_file_pattern = str(source_dir / args.file)
     else:
@@ -227,11 +249,15 @@ def main() -> None:
 
     stubgen = StubgenPyx(config=config)
 
-    pyx_files = tuple(stubgen.resolve_glob(pyx_file_pattern, args.exclude_pattern))
+    pyx_files = tuple(
+        stubgen.resolve_glob(pyx_file_pattern, args.exclude_pattern)
+    )
 
     # Validate no-files before single-file check to give clearer error messages
     if not pyx_files:
-        logger.error(f"No .pyx files found matching pattern: {pyx_file_pattern}")
+        logger.error(
+            f"No .pyx files found matching pattern: {pyx_file_pattern}"
+        )
         sys.exit(1)
 
     if args.output_file is not None and ((_num := len(pyx_files)) != 1):

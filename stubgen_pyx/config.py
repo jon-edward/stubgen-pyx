@@ -1,9 +1,152 @@
 """Configuration for stubgen-pyx code generation."""
 
+from __future__ import annotations
+
+import ast
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised on Python < 3.11
+    import tomli as tomllib
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_dotted_name(value: str, field_name: str) -> None:
+    if (
+        not isinstance(value, str)
+        or not value
+        or any(not part.isidentifier() for part in value.split("."))
+    ):
+        raise ValueError(
+            f"{field_name} must be a dotted Python name: {value!r}"
+        )
+
+
+@dataclass(frozen=True)
+class SymbolOverride:
+    """A project-specific rewrite for a generated Cython-facing symbol."""
+
+    source: str
+    import_target: str | None = None
+    literal: str | None = None
+    action: str | None = None
+
+    def __post_init__(self) -> None:
+        _validate_dotted_name(self.source, "symbol override source")
+        configured_actions = sum(
+            value is not None
+            for value in (self.import_target, self.literal, self.action)
+        )
+        if configured_actions != 1:
+            raise ValueError(
+                f"symbol override {self.source!r} must specify exactly one of "
+                "import, literal, or action"
+            )
+        if self.import_target is not None:
+            _validate_dotted_name(self.import_target, "symbol override import")
+            if "." not in self.import_target:
+                raise ValueError(
+                    "symbol override import must include both a module and name: "
+                    f"{self.import_target!r}"
+                )
+        if self.literal is not None:
+            try:
+                ast.parse(self.literal, mode="eval")
+            except SyntaxError as error:
+                raise ValueError(
+                    f"symbol override literal is not a Python expression: "
+                    f"{self.literal!r}"
+                ) from error
+        if self.action is not None and self.action != "drop":
+            raise ValueError(
+                f"symbol override action must be 'drop': {self.action!r}"
+            )
+
+
+@dataclass(frozen=True)
+class SymbolOverridesConfig:
+    """Overrides loaded from a symbol override TOML file."""
+
+    module_root: str
+    overrides: tuple[SymbolOverride, ...]
+
+    def __post_init__(self) -> None:
+        _validate_dotted_name(self.module_root, "module_root")
+        sources = [override.source for override in self.overrides]
+        duplicates = sorted(
+            source for source in set(sources) if sources.count(source) > 1
+        )
+        if duplicates:
+            raise ValueError(
+                "symbol override sources must be unique: "
+                + ", ".join(duplicates)
+            )
+
+
+def load_symbol_overrides(path: Path) -> SymbolOverridesConfig:
+    """Load and validate a TOML symbol override file."""
+    try:
+        with path.open("rb") as file:
+            data = tomllib.load(file)
+    except OSError as error:
+        raise ValueError(
+            f"could not read symbol overrides file {path}: {error}"
+        ) from error
+    except tomllib.TOMLDecodeError as error:
+        raise ValueError(
+            f"could not parse symbol overrides file {path}: {error}"
+        ) from error
+
+    if not isinstance(data, dict):
+        raise ValueError("symbol overrides file must contain a TOML table")
+    module_root = data.get("module_root")
+    if not isinstance(module_root, str):
+        raise ValueError(
+            "symbol overrides file must define string module_root"
+        )
+    raw_overrides = data.get("symbol_overrides", [])
+    if not isinstance(raw_overrides, list):
+        raise ValueError("symbol_overrides must be an array of tables")
+
+    overrides = []
+    for index, raw_override in enumerate(raw_overrides, start=1):
+        if not isinstance(raw_override, dict):
+            raise ValueError(f"symbol_overrides[{index}] must be a table")
+        unexpected = set(raw_override) - {
+            "source",
+            "import",
+            "literal",
+            "action",
+        }
+        if unexpected:
+            raise ValueError(
+                f"symbol_overrides[{index}] has unexpected keys: "
+                + ", ".join(sorted(unexpected))
+            )
+        try:
+            overrides.append(
+                SymbolOverride(
+                    source=raw_override["source"],
+                    import_target=raw_override.get("import"),
+                    literal=raw_override.get("literal"),
+                    action=raw_override.get("action"),
+                )
+            )
+        except KeyError as error:
+            raise ValueError(
+                f"symbol_overrides[{index}] must define source"
+            ) from error
+
+    return SymbolOverridesConfig(
+        module_root=module_root, overrides=tuple(overrides)
+    )
 
 
 @dataclass
@@ -24,6 +167,9 @@ class StubgenPyxConfig:
         continue_on_error: Continue processing files that failed (default: False).
         include_private: Include private members (default: False).
         verbose: Enable verbose logging (default: False).
+        module_root: Package root used to resolve relative imports in overrides.
+        source_root: Directory containing modules under ``module_root``.
+        symbol_overrides: Explicit project-specific symbol rewrite rules.
     """
 
     sort_imports: bool = True
@@ -38,6 +184,9 @@ class StubgenPyxConfig:
     continue_on_error: bool = False
     include_private: bool = False
     verbose: bool = False
+    module_root: str | None = None
+    source_root: Path | None = None
+    symbol_overrides: tuple[SymbolOverride, ...] = field(default_factory=tuple)
 
     def __post_init__(self):
         """Validate configuration and log warnings for unusual settings."""
@@ -56,3 +205,6 @@ class StubgenPyxConfig:
 
         if self.continue_on_error:
             logger.info("Continuing on errors - failed files will be skipped")
+
+        if self.module_root is not None:
+            _validate_dotted_name(self.module_root, "module_root")

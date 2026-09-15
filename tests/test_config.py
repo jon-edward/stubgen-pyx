@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 
-from stubgen_pyx.config import StubgenPyxConfig
+import pytest
+from stubgen_pyx.config import StubgenPyxConfig, load_symbol_overrides
 
 
 def test_config_defaults():
@@ -39,3 +40,59 @@ def test_config_post_init_info_continue_on_error(caplog):
     with caplog.at_level(logging.INFO):
         StubgenPyxConfig(continue_on_error=True)
     assert "Continuing on errors" in caplog.text
+
+
+def test_load_symbol_overrides(tmp_path):
+    config_file = tmp_path / "overrides.toml"
+    config_file.write_text(
+        """
+module_root = "pkg"
+
+[[symbol_overrides]]
+source = "pkg.internal.thing_kind_t"
+import = "pkg.public.ThingKind"
+
+[[symbol_overrides]]
+source = "pkg.capi.size_type"
+literal = "int"
+"""
+    )
+
+    config = load_symbol_overrides(config_file)
+
+    assert config.module_root == "pkg"
+    assert config.overrides[0].import_target == "pkg.public.ThingKind"
+    assert config.overrides[1].literal == "int"
+
+
+@pytest.mark.parametrize(
+    "content, message",
+    [
+        ('module_root = "not-valid"', "module_root"),
+        (
+            """module_root = "pkg"
+[[symbol_overrides]]
+source = "pkg.a"
+literal = "int"
+action = "drop"
+""",
+            "exactly one",
+        ),
+        (
+            """module_root = "pkg"
+[[symbol_overrides]]
+source = "pkg.a"
+action = "replace"
+""",
+            "action must be 'drop'",
+        ),
+    ],
+)
+def test_load_symbol_overrides_rejects_invalid_configuration(
+    tmp_path, content, message
+):
+    config_file = tmp_path / "overrides.toml"
+    config_file.write_text(content)
+
+    with pytest.raises(ValueError, match=message):
+        load_symbol_overrides(config_file)

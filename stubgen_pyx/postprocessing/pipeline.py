@@ -7,9 +7,8 @@ from __future__ import annotations
 
 import ast
 import logging
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-from ..config import StubgenPyxConfig
 from .add_type_imports import add_type_imports
 from .attribution import stubgen_attribution
 from .collapse_funcdefs import collapse_funcdefs
@@ -22,9 +21,15 @@ from .overload_singledispatch import overload_singledispatch
 from .remove_identity_assignment import remove_identity_assignment
 from .remove_overload_implementations import remove_overload_implementations
 from .sort_imports import sort_imports
+from .symbol_overrides import apply_symbol_overrides
 from .trim_imports import trim_imports
 from .trim_not_defined import trim_not_defined
 from .unquote_annotations import unquote_annotations
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from ..config import StubgenPyxConfig
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +51,7 @@ def postprocessing_pipeline(
         Processed .pyi code after all enabled transformations.
     """
     pyi_ast = ast.parse(pyi_code, type_comments=True)
-    pyi_ast = _ast_transforms(pyi_ast, config, extra_translations)
+    pyi_ast = _ast_transforms(pyi_ast, config, extra_translations, pyx_path)
     pyi_code = ast.unparse(pyi_ast)
 
     pyi_code = collapse_funcdefs(pyi_code)
@@ -65,13 +70,24 @@ def _ast_transforms(
     tree: ast.AST,
     config: StubgenPyxConfig,
     extra_translations: dict[str, str] | None = None,
+    pyx_path: Path | None = None,
 ) -> ast.AST:
     """Apply all enabled AST-level transforms in the correct order."""
     if config.deduplicate_imports:
         tree = deduplicate_imports(tree)
 
     if config.normalize_names:
-        tree = normalize_names(tree, extra_translations=extra_translations or {})
+        tree = normalize_names(
+            tree, extra_translations=extra_translations or {}
+        )
+
+    tree = apply_symbol_overrides(
+        tree,
+        config.symbol_overrides,
+        module_root=config.module_root,
+        source_root=config.source_root,
+        pyx_path=pyx_path,
+    )
 
     tree = remove_identity_assignment(tree)
 
