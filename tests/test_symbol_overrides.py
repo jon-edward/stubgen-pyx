@@ -7,6 +7,7 @@ import sys
 from typing import TYPE_CHECKING
 
 import pytest
+
 from stubgen_pyx.config import StubgenPyxConfig, SymbolOverride
 from stubgen_pyx.postprocessing.pipeline import postprocessing_pipeline
 from stubgen_pyx.postprocessing.symbol_overrides import _module_name
@@ -15,9 +16,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def _config(
-    overrides: tuple[SymbolOverride, ...], tmp_path: Path
-) -> StubgenPyxConfig:
+def _config(overrides: tuple[SymbolOverride, ...], tmp_path: Path) -> StubgenPyxConfig:
     return StubgenPyxConfig(
         exclude_attribution=True,
         sort_imports=False,
@@ -226,9 +225,7 @@ def make(value: widget_type) -> widget_type: ...
     )
 
     assert "from pkg.public import Widget as _stubgen_pyx_Widget" in result
-    assert (
-        "def make(value: _stubgen_pyx_Widget) -> _stubgen_pyx_Widget" in result
-    )
+    assert "def make(value: _stubgen_pyx_Widget) -> _stubgen_pyx_Widget" in result
 
 
 def test_relative_import_without_context_is_rejected(tmp_path):
@@ -239,9 +236,7 @@ def test_relative_import_without_context_is_rejected(tmp_path):
                 exclude_attribution=True,
                 sort_imports=False,
                 symbol_overrides=(
-                    SymbolOverride(
-                        source="pkg.capi.widget_type", literal="int"
-                    ),
+                    SymbolOverride(source="pkg.capi.widget_type", literal="int"),
                 ),
             ),
             tmp_path / "widget.pyx",
