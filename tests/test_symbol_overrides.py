@@ -2,21 +2,29 @@
 
 from __future__ import annotations
 
+import ast
 import subprocess
 import sys
 from typing import TYPE_CHECKING
 
 import pytest
-
 from stubgen_pyx.config import StubgenPyxConfig, SymbolOverride
 from stubgen_pyx.postprocessing.pipeline import postprocessing_pipeline
-from stubgen_pyx.postprocessing.symbol_overrides import _module_name
+from stubgen_pyx.postprocessing.symbol_overrides import (
+    _dotted_expression,
+    _expression_from_dotted_name,
+    _module_name,
+    _resolve_import_from_module,
+    _SymbolOverrideTransformer,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 
-def _config(overrides: tuple[SymbolOverride, ...], tmp_path: Path) -> StubgenPyxConfig:
+def _config(
+    overrides: tuple[SymbolOverride, ...], tmp_path: Path
+) -> StubgenPyxConfig:
     return StubgenPyxConfig(
         exclude_attribution=True,
         sort_imports=False,
@@ -225,7 +233,9 @@ def make(value: widget_type) -> widget_type: ...
     )
 
     assert "from pkg.public import Widget as _stubgen_pyx_Widget" in result
-    assert "def make(value: _stubgen_pyx_Widget) -> _stubgen_pyx_Widget" in result
+    assert (
+        "def make(value: _stubgen_pyx_Widget) -> _stubgen_pyx_Widget" in result
+    )
 
 
 def test_relative_import_without_context_is_rejected(tmp_path):
@@ -236,7 +246,9 @@ def test_relative_import_without_context_is_rejected(tmp_path):
                 exclude_attribution=True,
                 sort_imports=False,
                 symbol_overrides=(
-                    SymbolOverride(source="pkg.capi.widget_type", literal="int"),
+                    SymbolOverride(
+                        source="pkg.capi.widget_type", literal="int"
+                    ),
                 ),
             ),
             tmp_path / "widget.pyx",
@@ -251,6 +263,87 @@ def test_module_name_handles_init_modules_and_missing_context(tmp_path):
 
     assert _module_name("pkg", package, init_file) == "pkg.models"
     assert _module_name(None, package, init_file) is None
+
+
+def test_symbol_override_helper_branches(tmp_path):
+    assert _dotted_expression(ast.Constant(value=1)) is None
+    assert ast.unparse(
+        _expression_from_dotted_name("pkg.Widget", ast.Load())
+    ) == ("pkg.Widget")
+
+    transformer = _SymbolOverrideTransformer(
+        overrides=(SymbolOverride(source="pkg.capi.kind", literal="int"),),
+        module_name="pkg.widget",
+    )
+    store_name = ast.Name(id="kind", ctx=ast.Store())
+    assert transformer.visit_Name(store_name) is store_name
+    store_attribute = ast.Attribute(
+        value=ast.Name(id="capi", ctx=ast.Load()),
+        attr="kind",
+        ctx=ast.Store(),
+    )
+    assert transformer.visit_Attribute(store_attribute) is store_attribute
+    assert (
+        transformer._replacement_for_expression(
+            ast.Name(id="unbound", ctx=ast.Load())
+        )
+        is None
+    )
+    transformer.bindings = {"capi": "pkg.capi", "kind": "pkg.capi.kind"}
+    assert (
+        transformer.visit_Attribute(
+            ast.Attribute(
+                value=ast.Name(id="capi", ctx=ast.Load()),
+                attr="unmatched",
+                ctx=ast.Load(),
+            )
+        )
+        is not None
+    )
+
+    drop_transformer = _SymbolOverrideTransformer(
+        overrides=(SymbolOverride(source="pkg.capi.kind", action="drop"),),
+        module_name="pkg.widget",
+    )
+    drop_transformer.bindings = {"kind": "pkg.capi.kind"}
+    assert (
+        drop_transformer._replacement_for_expression(
+            ast.Name(id="kind", ctx=ast.Load())
+        )
+        is None
+    )
+
+    with pytest.raises(ValueError, match="escapes package"):
+        _resolve_import_from_module(
+            ast.parse("from ....capi import kind").body[0], "pkg.models.widget"
+        )
+
+
+def test_import_override_handles_module_imports_and_repeated_collisions(
+    tmp_path,
+):
+    result = _process(
+        """
+import pkg.capi as capi
+
+Widget = object
+_stubgen_pyx_Widget = object
+def make(value: capi.widget_type) -> capi.widget_type: ...
+""",
+        (
+            SymbolOverride(
+                source="pkg.capi.widget_type",
+                import_target="pkg.public.Widget",
+            ),
+        ),
+        tmp_path,
+    )
+
+    assert "from pkg.public import Widget as _stubgen_pyx_Widget_2" in result
+    assert (
+        "def make(value: _stubgen_pyx_Widget_2) -> _stubgen_pyx_Widget_2"
+        in result
+    )
 
 
 def test_without_overrides_output_is_unchanged(tmp_path):

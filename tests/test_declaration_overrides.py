@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from stubgen_pyx.config import DeclarationOverride, StubgenPyxConfig
 from stubgen_pyx.postprocessing.pipeline import postprocessing_pipeline
 
@@ -18,7 +17,9 @@ def _config(overrides: tuple[DeclarationOverride, ...], tmp_path):
     )
 
 
-def _process(pyi_code: str, overrides: tuple[DeclarationOverride, ...], tmp_path):
+def _process(
+    pyi_code: str, overrides: tuple[DeclarationOverride, ...], tmp_path
+):
     return postprocessing_pipeline(
         pyi_code,
         _config(overrides, tmp_path),
@@ -100,6 +101,25 @@ def test_declaration_override_ignores_other_modules(tmp_path):
     )
 
     assert "def value() -> int: ..." in result
+
+
+def test_declaration_override_handles_missing_module_context(tmp_path):
+    result = postprocessing_pipeline(
+        "def value() -> int: ...\n",
+        StubgenPyxConfig(
+            exclude_attribution=True,
+            sort_imports=False,
+            declaration_overrides=(
+                DeclarationOverride(
+                    target="pkg.models.widget.value",
+                    declarations="def value() -> str: ...",
+                ),
+            ),
+        ),
+        tmp_path / "widget.pyx",
+    )
+
+    assert result == "def value() -> int: ..."
 
 
 def test_declaration_override_adds_literal_import(tmp_path):

@@ -24,7 +24,9 @@ def _validate_dotted_name(value: str, field_name: str) -> None:
         or not value
         or any(not part.isidentifier() for part in value.split("."))
     ):
-        raise ValueError(f"{field_name} must be a dotted Python name: {value!r}")
+        raise ValueError(
+            f"{field_name} must be a dotted Python name: {value!r}"
+        )
 
 
 @dataclass(frozen=True)
@@ -63,7 +65,9 @@ class SymbolOverride:
                     f"{self.literal!r}"
                 ) from error
         if self.action is not None and self.action != "drop":
-            raise ValueError(f"symbol override action must be 'drop': {self.action!r}")
+            raise ValueError(
+                f"symbol override action must be 'drop': {self.action!r}"
+            )
 
 
 @dataclass(frozen=True)
@@ -130,7 +134,8 @@ class SymbolOverridesConfig:
         )
         if duplicates:
             raise ValueError(
-                "symbol override sources must be unique: " + ", ".join(duplicates)
+                "symbol override sources must be unique: "
+                + ", ".join(duplicates)
             )
         declaration_targets = [
             override.target for override in self.declaration_overrides
@@ -161,8 +166,6 @@ def load_symbol_overrides(path: Path) -> SymbolOverridesConfig:
             f"could not parse symbol overrides file {path}: {error}"
         ) from error
 
-    if not isinstance(data, dict):
-        raise TypeError("symbol overrides file must contain a TOML table")
     module_root = data.get("module_root")
     if not isinstance(module_root, str):
         raise TypeError("symbol overrides file must define string module_root")
@@ -195,7 +198,9 @@ def load_symbol_overrides(path: Path) -> SymbolOverridesConfig:
                 )
             )
         except KeyError as error:
-            raise ValueError(f"symbol_overrides[{index}] must define source") from error
+            raise ValueError(
+                f"symbol_overrides[{index}] must define source"
+            ) from error
 
     raw_declaration_overrides = data.get("declaration_overrides", [])
     if not isinstance(raw_declaration_overrides, list):

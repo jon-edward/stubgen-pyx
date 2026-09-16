@@ -29,8 +29,11 @@ def apply_declaration_overrides(
     relevant_overrides = tuple(
         override
         for override in overrides
-        if module_name is not None and override.target.startswith(f"{module_name}.")
+        if module_name is not None
+        and override.target.startswith(f"{module_name}.")
     )
+    if not relevant_overrides:
+        return tree
     transformer = _DeclarationOverrideTransformer(
         overrides=relevant_overrides,
         module_name=module_name,
@@ -67,7 +70,11 @@ class _DeclarationOverrideTransformer(ast.NodeTransformer):
     ) -> ast.FunctionDef | list[ast.FunctionDef]:
         target = self._target_for(node.name)
         override = next(
-            (candidate for candidate in self.overrides if candidate.target == target),
+            (
+                candidate
+                for candidate in self.overrides
+                if candidate.target == target
+            ),
             None,
         )
         if override is None:
@@ -79,7 +86,6 @@ class _DeclarationOverrideTransformer(ast.NodeTransformer):
             ast.copy_location(replacement, node)
         return replacements
 
-    def _target_for(self, name: str) -> str | None:
-        if self.module_name is None:
-            return None
+    def _target_for(self, name: str) -> str:
+        assert self.module_name is not None
         return ".".join([self.module_name, *self.class_stack, name])
