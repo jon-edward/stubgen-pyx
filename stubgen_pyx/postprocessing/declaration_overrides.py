@@ -29,7 +29,8 @@ def apply_declaration_overrides(
     relevant_overrides = tuple(
         override
         for override in overrides
-        if module_name is not None and override.target.startswith(f"{module_name}.")
+        if module_name is not None
+        and override.target.startswith(f"{module_name}.")
     )
     transformer = _DeclarationOverrideTransformer(
         overrides=relevant_overrides,
@@ -67,7 +68,11 @@ class _DeclarationOverrideTransformer(ast.NodeTransformer):
     ) -> ast.FunctionDef | list[ast.FunctionDef]:
         target = self._target_for(node.name)
         override = next(
-            (candidate for candidate in self.overrides if candidate.target == target),
+            (
+                candidate
+                for candidate in self.overrides
+                if candidate.target == target
+            ),
             None,
         )
         if override is None:

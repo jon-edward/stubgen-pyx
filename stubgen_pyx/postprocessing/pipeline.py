@@ -13,8 +13,8 @@ from .add_type_imports import add_type_imports
 from .attribution import stubgen_attribution
 from .collapse_funcdefs import collapse_funcdefs
 from .collect_names import collect_names
-from .deduplicate_imports import deduplicate_imports
 from .declaration_overrides import apply_declaration_overrides
+from .deduplicate_imports import deduplicate_imports
 from .fix_scalar_defaults import fix_scalar_defaults
 from .normalize_member_spacing import normalize_member_spacing
 from .normalize_names import normalize_names

@@ -98,14 +98,20 @@ def _resolve_type_import(
         existing = _find_import(existing_imports, qualified_name, None)
         if existing and existing.asname:
             return None, existing.asname
-        return (None, None) if existing else (_Import(qualified_name, None, None), None)
+        return (
+            (None, None)
+            if existing
+            else (_Import(qualified_name, None, None), None)
+        )
 
     root, import_name = qualified_name.rsplit(".", 1)
     existing = _find_import(existing_imports, root, import_name)
     if existing is not None:
         return None, existing.asname or import_name
 
-    module_import = _find_longest_module_import(qualified_name, existing_imports)
+    module_import = _find_longest_module_import(
+        qualified_name, existing_imports
+    )
     if module_import is not None:
         if module_import.asname:
             suffix = qualified_name[len(module_import.module) + 1 :]
@@ -145,7 +151,9 @@ def _find_longest_module_import(
         )
     )
     return max(
-        module_imports, key=lambda candidate: len(candidate.module), default=None
+        module_imports,
+        key=lambda candidate: len(candidate.module),
+        default=None,
     )
 
 
@@ -165,7 +173,8 @@ def _prepend_imports(node: ast.Module, imports: set[_Import]) -> None:
         return
     insert_idx = _first_idx_after_docstring(node)
     node.body[insert_idx:insert_idx] = [
-        _to_ast_import(import_) for import_ in sorted(imports, key=_import_sort_key)
+        _to_ast_import(import_)
+        for import_ in sorted(imports, key=_import_sort_key)
     ]
 
 
@@ -231,7 +240,9 @@ class _AttributeRenamer(ast.NodeTransformer):
         if name in self.replace:
             replacement = self.replace[name]
             replacement_parts = replacement.split(".")
-            replacement_node: ast.expr = ast.Name(id=replacement_parts[0], ctx=node.ctx)
+            replacement_node: ast.expr = ast.Name(
+                id=replacement_parts[0], ctx=node.ctx
+            )
             for part in replacement_parts[1:]:
                 replacement_node = ast.Attribute(
                     value=replacement_node,

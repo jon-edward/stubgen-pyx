@@ -137,7 +137,9 @@ class SymbolOverridesConfig:
                 "symbol override sources must be unique: "
                 + ", ".join(duplicates)
             )
-        declaration_targets = [override.target for override in self.declaration_overrides]
+        declaration_targets = [
+            override.target for override in self.declaration_overrides
+        ]
         duplicate_targets = sorted(
             target
             for target in set(declaration_targets)

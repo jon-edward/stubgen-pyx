@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from stubgen_pyx.config import DeclarationOverride, StubgenPyxConfig
 from stubgen_pyx.postprocessing.pipeline import postprocessing_pipeline
 
@@ -18,7 +17,9 @@ def _config(overrides: tuple[DeclarationOverride, ...], tmp_path):
     )
 
 
-def _process(pyi_code: str, overrides: tuple[DeclarationOverride, ...], tmp_path):
+def _process(
+    pyi_code: str, overrides: tuple[DeclarationOverride, ...], tmp_path
+):
     return postprocessing_pipeline(
         pyi_code,
         _config(overrides, tmp_path),
@@ -133,7 +134,7 @@ def test_declaration_override_configuration_is_validated():
             target="pkg.models.widget.make",
             declarations="def other() -> int: ...",
         )
-    with pytest.raises(ValueError, match="typing.overload"):
+    with pytest.raises(ValueError, match=r"typing\.overload"):
         DeclarationOverride(
             target="pkg.models.widget.make",
             declarations="def make() -> int: ...\ndef make() -> str: ...",
