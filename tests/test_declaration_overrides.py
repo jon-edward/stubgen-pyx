@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+
 from stubgen_pyx.config import DeclarationOverride, StubgenPyxConfig
 from stubgen_pyx.postprocessing.pipeline import postprocessing_pipeline
 
@@ -17,9 +18,7 @@ def _config(overrides: tuple[DeclarationOverride, ...], tmp_path):
     )
 
 
-def _process(
-    pyi_code: str, overrides: tuple[DeclarationOverride, ...], tmp_path
-):
+def _process(pyi_code: str, overrides: tuple[DeclarationOverride, ...], tmp_path):
     return postprocessing_pipeline(
         pyi_code,
         _config(overrides, tmp_path),
