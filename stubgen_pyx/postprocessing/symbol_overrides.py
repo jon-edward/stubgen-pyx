@@ -35,9 +35,7 @@ def _module_name(
 ) -> str | None:
     if module_root is None or source_root is None or pyx_path is None:
         return None
-    relative = (
-        pyx_path.resolve().relative_to(source_root.resolve()).with_suffix("")
-    )
+    relative = pyx_path.resolve().relative_to(source_root.resolve()).with_suffix("")
     parts = list(relative.parts)
     if parts[-1] == "__init__":
         parts.pop()
@@ -70,9 +68,7 @@ class _SymbolOverrideTransformer(ast.NodeTransformer):
     bindings: dict[str, str] = field(default_factory=dict, init=False)
     defined_names: set[str] = field(default_factory=set, init=False)
     replacements: dict[str, str] = field(default_factory=dict, init=False)
-    added_imports: list[ast.ImportFrom] = field(
-        default_factory=list, init=False
-    )
+    added_imports: list[ast.ImportFrom] = field(default_factory=list, init=False)
 
     def visit_Module(self, node: ast.Module) -> ast.Module:
         self.bindings = _import_bindings(node, self.module_name)
@@ -91,11 +87,7 @@ class _SymbolOverrideTransformer(ast.NodeTransformer):
         if not isinstance(node.ctx, ast.Load):
             return node
         replacement = self._replacement_for_expression(node)
-        return (
-            ast.copy_location(replacement, node)
-            if replacement is not None
-            else node
-        )
+        return ast.copy_location(replacement, node) if replacement is not None else node
 
     def visit_Attribute(self, node: ast.Attribute) -> ast.expr:
         if not isinstance(node.ctx, ast.Load):
@@ -108,10 +100,7 @@ class _SymbolOverrideTransformer(ast.NodeTransformer):
     def _is_dropped_assignment(self, statement: ast.stmt) -> bool:
         if isinstance(statement, ast.Assign):
             return self._matches_drop(statement.value)
-        if (
-            isinstance(statement, ast.AnnAssign)
-            and statement.value is not None
-        ):
+        if isinstance(statement, ast.AnnAssign) and statement.value is not None:
             return self._matches_drop(statement.value)
         return False
 
@@ -132,9 +121,7 @@ class _SymbolOverrideTransformer(ast.NodeTransformer):
         rule = self._matching_rule(canonical, prefix=False)
         return rule is not None and rule.action == "drop"
 
-    def _replacement_for_expression(
-        self, expression: ast.expr
-    ) -> ast.expr | None:
+    def _replacement_for_expression(self, expression: ast.expr) -> ast.expr | None:
         canonical = self._canonical_name(expression)
         if canonical is None:
             return None
@@ -149,9 +136,7 @@ class _SymbolOverrideTransformer(ast.NodeTransformer):
             return None
         target_local_name = self._target_local_name(rule.import_target)
         suffix = canonical.removeprefix(rule.source).lstrip(".")
-        replacement = _expression_from_dotted_name(
-            target_local_name, ast.Load()
-        )
+        replacement = _expression_from_dotted_name(target_local_name, ast.Load())
         if suffix:
             for part in suffix.split("."):
                 replacement = ast.Attribute(
@@ -193,9 +178,7 @@ class _SymbolOverrideTransformer(ast.NodeTransformer):
         if local_name in self.defined_names or local_name in self.bindings:
             index = 1
             local_name = f"_stubgen_pyx_{target_name}"
-            while (
-                local_name in self.defined_names or local_name in self.bindings
-            ):
+            while local_name in self.defined_names or local_name in self.bindings:
                 index += 1
                 local_name = f"_stubgen_pyx_{target_name}_{index}"
         alias = ast.alias(
@@ -243,30 +226,22 @@ class _DroppedReferenceVisitor(ast.NodeVisitor):
             self.references.add(canonical)
 
 
-def _import_bindings(
-    tree: ast.Module, module_name: str | None
-) -> dict[str, str]:
+def _import_bindings(tree: ast.Module, module_name: str | None) -> dict[str, str]:
     bindings: dict[str, str] = {}
     for statement in tree.body:
         if isinstance(statement, ast.Import):
             for alias in statement.names:
                 local_name = alias.asname or alias.name.split(".", 1)[0]
-                bindings[local_name] = (
-                    alias.name if alias.asname else local_name
-                )
+                bindings[local_name] = alias.name if alias.asname else local_name
         elif isinstance(statement, ast.ImportFrom):
             module = _resolve_import_from_module(statement, module_name)
             for alias in statement.names:
                 if alias.name != "*":
-                    bindings[alias.asname or alias.name] = (
-                        f"{module}.{alias.name}"
-                    )
+                    bindings[alias.asname or alias.name] = f"{module}.{alias.name}"
     return bindings
 
 
-def _resolve_import_from_module(
-    node: ast.ImportFrom, module_name: str | None
-) -> str:
+def _resolve_import_from_module(node: ast.ImportFrom, module_name: str | None) -> str:
     if node.level == 0:
         return node.module or ""
     if module_name is None:
@@ -277,9 +252,7 @@ def _resolve_import_from_module(
         )
     package_parts = module_name.split(".")[:-1]
     if node.level > len(package_parts) + 1:
-        raise ValueError(
-            f"relative import escapes package: {ast.unparse(node)}"
-        )
+        raise ValueError(f"relative import escapes package: {ast.unparse(node)}")
     base_parts = package_parts[: len(package_parts) - node.level + 1]
     if node.module:
         base_parts.extend(node.module.split("."))
@@ -289,9 +262,7 @@ def _resolve_import_from_module(
 def _defined_names(tree: ast.Module) -> set[str]:
     names: set[str] = set()
     for statement in tree.body:
-        if isinstance(
-            statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
-        ):
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             names.add(statement.name)
         elif isinstance(statement, (ast.Assign, ast.AnnAssign)):
             targets = (

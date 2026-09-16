@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 import pytest
+
 from stubgen_pyx.config import StubgenPyxConfig, load_symbol_overrides
 
 

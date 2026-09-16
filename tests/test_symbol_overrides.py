@@ -7,6 +7,7 @@ import sys
 from typing import TYPE_CHECKING
 
 import pytest
+
 from stubgen_pyx.config import StubgenPyxConfig, SymbolOverride
 from stubgen_pyx.postprocessing.pipeline import postprocessing_pipeline
 
@@ -14,9 +15,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def _config(
-    overrides: tuple[SymbolOverride, ...], tmp_path: Path
-) -> StubgenPyxConfig:
+def _config(overrides: tuple[SymbolOverride, ...], tmp_path: Path) -> StubgenPyxConfig:
     return StubgenPyxConfig(
         exclude_attribution=True,
         sort_imports=False,

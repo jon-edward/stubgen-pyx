@@ -78,9 +78,7 @@ def _ast_transforms(
         tree = deduplicate_imports(tree)
 
     if config.normalize_names:
-        tree = normalize_names(
-            tree, extra_translations=extra_translations or {}
-        )
+        tree = normalize_names(tree, extra_translations=extra_translations or {})
 
     tree = apply_symbol_overrides(
         tree,
