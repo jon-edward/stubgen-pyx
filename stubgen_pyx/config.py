@@ -162,18 +162,18 @@ def load_symbol_overrides(path: Path) -> SymbolOverridesConfig:
         ) from error
 
     if not isinstance(data, dict):
-        raise ValueError("symbol overrides file must contain a TOML table")
+        raise TypeError("symbol overrides file must contain a TOML table")
     module_root = data.get("module_root")
     if not isinstance(module_root, str):
-        raise ValueError("symbol overrides file must define string module_root")
+        raise TypeError("symbol overrides file must define string module_root")
     raw_overrides = data.get("symbol_overrides", [])
     if not isinstance(raw_overrides, list):
-        raise ValueError("symbol_overrides must be an array of tables")
+        raise TypeError("symbol_overrides must be an array of tables")
 
     overrides = []
     for index, raw_override in enumerate(raw_overrides, start=1):
         if not isinstance(raw_override, dict):
-            raise ValueError(f"symbol_overrides[{index}] must be a table")
+            raise TypeError(f"symbol_overrides[{index}] must be a table")
         unexpected = set(raw_override) - {
             "source",
             "import",
@@ -199,12 +199,12 @@ def load_symbol_overrides(path: Path) -> SymbolOverridesConfig:
 
     raw_declaration_overrides = data.get("declaration_overrides", [])
     if not isinstance(raw_declaration_overrides, list):
-        raise ValueError("declaration_overrides must be an array of tables")
+        raise TypeError("declaration_overrides must be an array of tables")
 
     declaration_overrides = []
     for index, raw_override in enumerate(raw_declaration_overrides, start=1):
         if not isinstance(raw_override, dict):
-            raise ValueError(f"declaration_overrides[{index}] must be a table")
+            raise TypeError(f"declaration_overrides[{index}] must be a table")
         unexpected = set(raw_override) - {"target", "declarations"}
         if unexpected:
             raise ValueError(

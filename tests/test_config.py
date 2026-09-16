@@ -110,3 +110,32 @@ def test_load_symbol_overrides_rejects_invalid_configuration(
 
     with pytest.raises(ValueError, match=message):
         load_symbol_overrides(config_file)
+
+
+@pytest.mark.parametrize(
+    "content, message",
+    [
+        ('module_root = ["pkg"]', "string module_root"),
+        ('module_root = "pkg"\nsymbol_overrides = "not a list"', "array"),
+        (
+            'module_root = "pkg"\nsymbol_overrides = ["not a table"]',
+            "must be a table",
+        ),
+        (
+            'module_root = "pkg"\ndeclaration_overrides = "not a list"',
+            "array",
+        ),
+        (
+            'module_root = "pkg"\ndeclaration_overrides = ["not a table"]',
+            "must be a table",
+        ),
+    ],
+)
+def test_load_symbol_overrides_rejects_invalid_toml_shapes(
+    tmp_path, content, message
+):
+    config_file = tmp_path / "overrides.toml"
+    config_file.write_text(content)
+
+    with pytest.raises(TypeError, match=message):
+        load_symbol_overrides(config_file)
