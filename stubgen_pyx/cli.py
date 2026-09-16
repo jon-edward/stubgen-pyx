@@ -239,6 +239,9 @@ def main() -> None:
         symbol_overrides=overrides_config.overrides
         if overrides_config
         else (),
+        declaration_overrides=overrides_config.declaration_overrides
+        if overrides_config
+        else (),
     )
 
     if args.file:

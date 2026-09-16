@@ -14,6 +14,8 @@ TYPE_IMPORTS = (
     "_typeshed.Incomplete",
     "typing.Any",
     "typing.Callable",
+    "typing.Literal",
+    "typing.overload",
     "typing.TypedDict",
     "typing.TypeVar",
     "typing_extensions.TypeAlias",  # Use backport for Python < 3.10

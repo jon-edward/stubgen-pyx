@@ -55,6 +55,10 @@ import = "pkg.public.ThingKind"
 [[symbol_overrides]]
 source = "pkg.capi.size_type"
 literal = "int"
+
+[[declaration_overrides]]
+target = "pkg.widget.make"
+declarations = "def make() -> int: ..."
 """
     )
 
@@ -63,6 +67,7 @@ literal = "int"
     assert config.module_root == "pkg"
     assert config.overrides[0].import_target == "pkg.public.ThingKind"
     assert config.overrides[1].literal == "int"
+    assert config.declaration_overrides[0].target == "pkg.widget.make"
 
 
 @pytest.mark.parametrize(
@@ -85,6 +90,14 @@ source = "pkg.a"
 action = "replace"
 """,
             "action must be 'drop'",
+        ),
+        (
+            """module_root = "pkg"
+[[declaration_overrides]]
+target = "pkg.widget.make"
+declarations = "value = 1"
+""",
+            "must contain only function",
         ),
     ],
 )

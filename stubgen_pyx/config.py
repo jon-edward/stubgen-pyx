@@ -71,11 +71,60 @@ class SymbolOverride:
 
 
 @dataclass(frozen=True)
+class DeclarationOverride:
+    """A project-specific replacement for a generated public declaration."""
+
+    target: str
+    declarations: str
+
+    def __post_init__(self) -> None:
+        _validate_dotted_name(self.target, "declaration override target")
+        try:
+            tree = ast.parse(self.declarations)
+        except SyntaxError as error:
+            raise ValueError(
+                "declaration override declarations are not valid Python: "
+                f"{self.target!r}"
+            ) from error
+
+        if not tree.body or not all(
+            isinstance(statement, ast.FunctionDef) for statement in tree.body
+        ):
+            raise ValueError(
+                "declaration override declarations must contain only function "
+                f"declarations: {self.target!r}"
+            )
+
+        expected_name = self.target.rsplit(".", 1)[-1]
+        if any(statement.name != expected_name for statement in tree.body):
+            raise ValueError(
+                "declaration override declaration names must match target "
+                f"{self.target!r}"
+            )
+
+        if len(tree.body) > 1 and any(
+            not any(
+                isinstance(decorator, ast.Attribute)
+                and isinstance(decorator.value, ast.Name)
+                and decorator.value.id == "typing"
+                and decorator.attr == "overload"
+                for decorator in statement.decorator_list
+            )
+            for statement in tree.body
+        ):
+            raise ValueError(
+                "multiple declaration override declarations must all be "
+                f"typing.overload overloads: {self.target!r}"
+            )
+
+
+@dataclass(frozen=True)
 class SymbolOverridesConfig:
     """Overrides loaded from a symbol override TOML file."""
 
     module_root: str
     overrides: tuple[SymbolOverride, ...]
+    declaration_overrides: tuple[DeclarationOverride, ...]
 
     def __post_init__(self) -> None:
         _validate_dotted_name(self.module_root, "module_root")
@@ -87,6 +136,17 @@ class SymbolOverridesConfig:
             raise ValueError(
                 "symbol override sources must be unique: "
                 + ", ".join(duplicates)
+            )
+        declaration_targets = [override.target for override in self.declaration_overrides]
+        duplicate_targets = sorted(
+            target
+            for target in set(declaration_targets)
+            if declaration_targets.count(target) > 1
+        )
+        if duplicate_targets:
+            raise ValueError(
+                "declaration override targets must be unique: "
+                + ", ".join(duplicate_targets)
             )
 
 
@@ -144,8 +204,36 @@ def load_symbol_overrides(path: Path) -> SymbolOverridesConfig:
                 f"symbol_overrides[{index}] must define source"
             ) from error
 
+    raw_declaration_overrides = data.get("declaration_overrides", [])
+    if not isinstance(raw_declaration_overrides, list):
+        raise ValueError("declaration_overrides must be an array of tables")
+
+    declaration_overrides = []
+    for index, raw_override in enumerate(raw_declaration_overrides, start=1):
+        if not isinstance(raw_override, dict):
+            raise ValueError(f"declaration_overrides[{index}] must be a table")
+        unexpected = set(raw_override) - {"target", "declarations"}
+        if unexpected:
+            raise ValueError(
+                f"declaration_overrides[{index}] has unexpected keys: "
+                + ", ".join(sorted(unexpected))
+            )
+        try:
+            declaration_overrides.append(
+                DeclarationOverride(
+                    target=raw_override["target"],
+                    declarations=raw_override["declarations"],
+                )
+            )
+        except KeyError as error:
+            raise ValueError(
+                f"declaration_overrides[{index}] must define target and declarations"
+            ) from error
+
     return SymbolOverridesConfig(
-        module_root=module_root, overrides=tuple(overrides)
+        module_root=module_root,
+        overrides=tuple(overrides),
+        declaration_overrides=tuple(declaration_overrides),
     )
 
 
@@ -170,6 +258,7 @@ class StubgenPyxConfig:
         module_root: Package root used to resolve relative imports in overrides.
         source_root: Directory containing modules under ``module_root``.
         symbol_overrides: Explicit project-specific symbol rewrite rules.
+        declaration_overrides: Explicit replacements for generated declarations.
     """
 
     sort_imports: bool = True
@@ -187,6 +276,9 @@ class StubgenPyxConfig:
     module_root: str | None = None
     source_root: Path | None = None
     symbol_overrides: tuple[SymbolOverride, ...] = field(default_factory=tuple)
+    declaration_overrides: tuple[DeclarationOverride, ...] = field(
+        default_factory=tuple
+    )
 
     def __post_init__(self):
         """Validate configuration and log warnings for unusual settings."""

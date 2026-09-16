@@ -14,6 +14,7 @@ from .attribution import stubgen_attribution
 from .collapse_funcdefs import collapse_funcdefs
 from .collect_names import collect_names
 from .deduplicate_imports import deduplicate_imports
+from .declaration_overrides import apply_declaration_overrides
 from .fix_scalar_defaults import fix_scalar_defaults
 from .normalize_member_spacing import normalize_member_spacing
 from .normalize_names import normalize_names
@@ -84,6 +85,14 @@ def _ast_transforms(
     tree = apply_symbol_overrides(
         tree,
         config.symbol_overrides,
+        module_root=config.module_root,
+        source_root=config.source_root,
+        pyx_path=pyx_path,
+    )
+
+    tree = apply_declaration_overrides(
+        tree,
+        config.declaration_overrides,
         module_root=config.module_root,
         source_root=config.source_root,
         pyx_path=pyx_path,
