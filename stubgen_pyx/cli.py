@@ -216,7 +216,7 @@ def main() -> None:
             if args.symbol_overrides is not None
             else None
         )
-    except ValueError as error:
+    except (TypeError, ValueError) as error:
         logger.error("Invalid symbol overrides: %s", error)
         sys.exit(1)
 
@@ -236,7 +236,9 @@ def main() -> None:
         verbose=args.verbose,
         module_root=overrides_config.module_root if overrides_config else None,
         source_root=source_dir.resolve() if overrides_config else None,
-        symbol_overrides=overrides_config.overrides if overrides_config else (),
+        symbol_overrides=overrides_config.overrides
+        if overrides_config
+        else (),
         declaration_overrides=overrides_config.declaration_overrides
         if overrides_config
         else (),
@@ -250,11 +252,15 @@ def main() -> None:
 
     stubgen = StubgenPyx(config=config)
 
-    pyx_files = tuple(stubgen.resolve_glob(pyx_file_pattern, args.exclude_pattern))
+    pyx_files = tuple(
+        stubgen.resolve_glob(pyx_file_pattern, args.exclude_pattern)
+    )
 
     # Validate no-files before single-file check to give clearer error messages
     if not pyx_files:
-        logger.error(f"No .pyx files found matching pattern: {pyx_file_pattern}")
+        logger.error(
+            f"No .pyx files found matching pattern: {pyx_file_pattern}"
+        )
         sys.exit(1)
 
     if args.output_file is not None and ((_num := len(pyx_files)) != 1):

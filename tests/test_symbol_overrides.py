@@ -7,15 +7,17 @@ import sys
 from typing import TYPE_CHECKING
 
 import pytest
-
 from stubgen_pyx.config import StubgenPyxConfig, SymbolOverride
 from stubgen_pyx.postprocessing.pipeline import postprocessing_pipeline
+from stubgen_pyx.postprocessing.symbol_overrides import _module_name
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 
-def _config(overrides: tuple[SymbolOverride, ...], tmp_path: Path) -> StubgenPyxConfig:
+def _config(
+    overrides: tuple[SymbolOverride, ...], tmp_path: Path
+) -> StubgenPyxConfig:
     return StubgenPyxConfig(
         exclude_attribution=True,
         sort_imports=False,
@@ -164,6 +166,96 @@ def make(widget: cpp_widget) -> int: ...
             (SymbolOverride(source="pkg.capi.widget_type", action="drop"),),
             tmp_path,
         )
+
+
+def test_drop_override_ignores_unrelated_assignments(tmp_path):
+    result = _process(
+        """
+from pkg.capi import widget_type
+
+value: int = 1
+Widget = widget_type
+""",
+        (SymbolOverride(source="pkg.capi.widget_type", action="drop"),),
+        tmp_path,
+    )
+
+    assert result == "value: int = 1"
+
+
+def test_import_override_uses_existing_target_and_avoids_name_collisions(
+    tmp_path,
+):
+    result = _process(
+        """
+from pkg.capi import widget_type
+from pkg.public import Widget
+
+class WidgetType: ...
+
+def make(value: widget_type) -> widget_type: ...
+""",
+        (
+            SymbolOverride(
+                source="pkg.capi.widget_type",
+                import_target="pkg.public.Widget",
+            ),
+        ),
+        tmp_path,
+    )
+
+    assert result.count("from pkg.public import Widget") == 1
+    assert "def make(value: Widget) -> Widget" in result
+
+
+def test_import_override_aliases_a_colliding_target_name(tmp_path):
+    result = _process(
+        """
+from pkg.capi import widget_type
+
+Widget = object
+def make(value: widget_type) -> widget_type: ...
+""",
+        (
+            SymbolOverride(
+                source="pkg.capi.widget_type",
+                import_target="pkg.public.Widget",
+            ),
+        ),
+        tmp_path,
+    )
+
+    assert "from pkg.public import Widget as _stubgen_pyx_Widget" in result
+    assert (
+        "def make(value: _stubgen_pyx_Widget) -> _stubgen_pyx_Widget" in result
+    )
+
+
+def test_relative_import_without_context_is_rejected(tmp_path):
+    with pytest.raises(ValueError, match="cannot resolve relative import"):
+        postprocessing_pipeline(
+            "from .capi import widget_type\n",
+            StubgenPyxConfig(
+                exclude_attribution=True,
+                sort_imports=False,
+                symbol_overrides=(
+                    SymbolOverride(
+                        source="pkg.capi.widget_type", literal="int"
+                    ),
+                ),
+            ),
+            tmp_path / "widget.pyx",
+        )
+
+
+def test_module_name_handles_init_modules_and_missing_context(tmp_path):
+    package = tmp_path / "pkg"
+    init_file = package / "models" / "__init__.pyx"
+    init_file.parent.mkdir(parents=True)
+    init_file.touch()
+
+    assert _module_name("pkg", package, init_file) == "pkg.models"
+    assert _module_name(None, package, init_file) is None
 
 
 def test_without_overrides_output_is_unchanged(tmp_path):
