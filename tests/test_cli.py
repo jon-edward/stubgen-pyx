@@ -117,6 +117,11 @@ class TestCreateParser:
         args = parser.parse_args([".", "--include-private"])
         assert args.include_private is True
 
+    def test_parser_with_symbol_overrides(self):
+        parser = cli._create_parser()
+        args = parser.parse_args([".", "--symbol-overrides", "overrides.toml"])
+        assert args.symbol_overrides == Path("overrides.toml")
+
     def test_parser_default_directory(self):
         """Test parser with default directory."""
         parser = cli._create_parser()
@@ -180,6 +185,27 @@ class TestCreateParser:
 class TestMain:
     """Test the main function."""
 
+    @patch("stubgen_pyx.cli.logging.basicConfig")
+    @patch("stubgen_pyx.cli.load_symbol_overrides")
+    def test_main_rejects_malformed_override_shapes(
+        self, mock_load_overrides, mock_logging
+    ):
+        """Malformed TOML shapes are reported as CLI errors, not tracebacks."""
+        mock_load_overrides.side_effect = TypeError("must define string module_root")
+
+        with (
+            patch.object(
+                sys,
+                "argv",
+                ["stubgen-pyx", ".", "--symbol-overrides", "overrides.toml"],
+            ),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            cli.main()
+
+        assert exc_info.value.code == 1
+        mock_logging.assert_called_once()
+
     @patch("stubgen_pyx.cli.StubgenPyx")
     @patch("stubgen_pyx.cli.logging.basicConfig")
     def test_main_basic_success(self, mock_logging, mock_stubgen_class):
@@ -231,7 +257,9 @@ class TestMain:
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "new_stubs"
             with patch.object(
-                sys, "argv", ["stubgen-pyx", ".", "--output-dir", str(output_dir)]
+                sys,
+                "argv",
+                ["stubgen-pyx", ".", "--output-dir", str(output_dir)],
             ):
                 with pytest.raises(SystemExit) as exc_info:
                     cli.main()
@@ -296,7 +324,10 @@ class TestMain:
         mock_result2 = MagicMock()
         mock_result2.success = False
         mock_stubgen.resolve_glob.return_value = [Path("a.pyx"), Path("b.pyx")]
-        mock_stubgen.convert_multiple_files.return_value = [mock_result1, mock_result2]
+        mock_stubgen.convert_multiple_files.return_value = [
+            mock_result1,
+            mock_result2,
+        ]
 
         with patch.object(sys, "argv", ["stubgen-pyx", "."]):
             with pytest.raises(SystemExit) as exc_info:
@@ -333,7 +364,14 @@ class TestMain:
         with patch.object(
             sys,
             "argv",
-            ["stubgen-pyx", ".", "--file", "*.pyx", "--output-file", "out.pyi"],
+            [
+                "stubgen-pyx",
+                ".",
+                "--file",
+                "*.pyx",
+                "--output-file",
+                "out.pyi",
+            ],
         ):
             with pytest.raises(SystemExit) as exc_info:
                 cli.main()
@@ -355,7 +393,14 @@ class TestMain:
         with patch.object(
             sys,
             "argv",
-            ["stubgen-pyx", ".", "--file", "*.pyx", "--output-file", "out.pyi"],
+            [
+                "stubgen-pyx",
+                ".",
+                "--file",
+                "*.pyx",
+                "--output-file",
+                "out.pyi",
+            ],
         ):
             with pytest.raises(SystemExit) as exc_info:
                 cli.main()
@@ -380,7 +425,14 @@ class TestMain:
         with patch.object(
             sys,
             "argv",
-            ["stubgen-pyx", ".", "--file", "*.pyx", "--output-file", "out.pyi"],
+            [
+                "stubgen-pyx",
+                ".",
+                "--file",
+                "*.pyx",
+                "--output-file",
+                "out.pyi",
+            ],
         ):
             with pytest.raises(SystemExit) as exc_info:
                 cli.main()
@@ -403,7 +455,14 @@ class TestMain:
         with patch.object(
             sys,
             "argv",
-            ["stubgen-pyx", ".", "--output-dir", "out", "--output-file", "out.pyi"],
+            [
+                "stubgen-pyx",
+                ".",
+                "--output-dir",
+                "out",
+                "--output-file",
+                "out.pyi",
+            ],
         ):
             with pytest.raises(SystemExit) as exc_info:
                 cli.main()

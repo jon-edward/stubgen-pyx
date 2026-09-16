@@ -14,6 +14,8 @@ TYPE_IMPORTS = (
     "_typeshed.Incomplete",
     "typing.Any",
     "typing.Callable",
+    "typing.Literal",
+    "typing.overload",
     "typing.TypedDict",
     "typing.TypeVar",
     "typing_extensions.TypeAlias",  # Use backport for Python < 3.10
@@ -143,7 +145,9 @@ def _find_longest_module_import(
         )
     )
     return max(
-        module_imports, key=lambda candidate: len(candidate.module), default=None
+        module_imports,
+        key=lambda candidate: len(candidate.module),
+        default=None,
     )
 
 

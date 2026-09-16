@@ -7,13 +7,13 @@ from __future__ import annotations
 
 import ast
 import logging
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-from ..config import StubgenPyxConfig
 from .add_type_imports import add_type_imports
 from .attribution import stubgen_attribution
 from .collapse_funcdefs import collapse_funcdefs
 from .collect_names import collect_names
+from .declaration_overrides import apply_declaration_overrides
 from .deduplicate_imports import deduplicate_imports
 from .fix_scalar_defaults import fix_scalar_defaults
 from .normalize_member_spacing import normalize_member_spacing
@@ -22,9 +22,15 @@ from .overload_singledispatch import overload_singledispatch
 from .remove_identity_assignment import remove_identity_assignment
 from .remove_overload_implementations import remove_overload_implementations
 from .sort_imports import sort_imports
+from .symbol_overrides import apply_symbol_overrides
 from .trim_imports import trim_imports
 from .trim_not_defined import trim_not_defined
 from .unquote_annotations import unquote_annotations
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from ..config import StubgenPyxConfig
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +52,7 @@ def postprocessing_pipeline(
         Processed .pyi code after all enabled transformations.
     """
     pyi_ast = ast.parse(pyi_code, type_comments=True)
-    pyi_ast = _ast_transforms(pyi_ast, config, extra_translations)
+    pyi_ast = _ast_transforms(pyi_ast, config, extra_translations, pyx_path)
     pyi_code = ast.unparse(pyi_ast)
 
     pyi_code = collapse_funcdefs(pyi_code)
@@ -65,6 +71,7 @@ def _ast_transforms(
     tree: ast.AST,
     config: StubgenPyxConfig,
     extra_translations: dict[str, str] | None = None,
+    pyx_path: Path | None = None,
 ) -> ast.AST:
     """Apply all enabled AST-level transforms in the correct order."""
     if config.deduplicate_imports:
@@ -72,6 +79,22 @@ def _ast_transforms(
 
     if config.normalize_names:
         tree = normalize_names(tree, extra_translations=extra_translations or {})
+
+    tree = apply_symbol_overrides(
+        tree,
+        config.symbol_overrides,
+        module_root=config.module_root,
+        source_root=config.source_root,
+        pyx_path=pyx_path,
+    )
+
+    tree = apply_declaration_overrides(
+        tree,
+        config.declaration_overrides,
+        module_root=config.module_root,
+        source_root=config.source_root,
+        pyx_path=pyx_path,
+    )
 
     tree = remove_identity_assignment(tree)
 
