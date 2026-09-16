@@ -131,9 +131,7 @@ def test_load_symbol_overrides_rejects_invalid_configuration(
         ),
     ],
 )
-def test_load_symbol_overrides_rejects_invalid_toml_shapes(
-    tmp_path, content, message
-):
+def test_load_symbol_overrides_rejects_invalid_toml_shapes(tmp_path, content, message):
     config_file = tmp_path / "overrides.toml"
     config_file.write_text(content)
 
