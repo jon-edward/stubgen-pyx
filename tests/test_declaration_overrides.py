@@ -87,6 +87,21 @@ def split(input: Column) -> list[Column]: ...
     assert "@overload\ndef split(input: Column) -> list[Column]: ..." in result
 
 
+def test_declaration_override_ignores_other_modules(tmp_path):
+    result = _process(
+        "def value() -> int: ...\n",
+        (
+            DeclarationOverride(
+                target="pkg.other.value",
+                declarations="def value() -> str: ...",
+            ),
+        ),
+        tmp_path,
+    )
+
+    assert "def value() -> int: ..." in result
+
+
 def test_declaration_override_adds_literal_import(tmp_path):
     result = _process(
         "def names(include_children: bool=False) -> list[object]: ...\n",

@@ -26,14 +26,19 @@ def apply_declaration_overrides(
     if not overrides:
         return tree
     module_name = _module_name(module_root, source_root, pyx_path)
+    relevant_overrides = tuple(
+        override
+        for override in overrides
+        if module_name is not None and override.target.startswith(f"{module_name}.")
+    )
     transformer = _DeclarationOverrideTransformer(
-        overrides=overrides,
+        overrides=relevant_overrides,
         module_name=module_name,
     )
     tree = transformer.visit(tree)
     unmatched = sorted(
         override.target
-        for override in overrides
+        for override in relevant_overrides
         if override.target not in transformer.matched
     )
     if unmatched:
