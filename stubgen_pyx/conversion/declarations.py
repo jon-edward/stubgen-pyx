@@ -64,9 +64,7 @@ def convert_struct_or_union(node: Nodes.CStructOrUnionDefNode) -> PyiClass:
                 ]
             )
         else:
-            _logger.debug(
-                f"Unexpected attribute type {type(attribute)} in {node_name}"
-            )
+            _logger.debug(f"Unexpected attribute type {type(attribute)} in {node_name}")
     is_union = node.kind == "union"
     keywords = {"total": "False"} if is_union else {}
     return PyiClass(
@@ -92,7 +90,7 @@ def convert_struct_or_union_type(t) -> PyiClass:
     """
     member_scope = t.scope
     attributes = []
-    for mname, mentry in (member_scope.entries.items() if member_scope else ()):
+    for mname, mentry in member_scope.entries.items() if member_scope else ():
         if mname.startswith("__"):
             continue
         type_name = render_pyrex_type(mentry.type)

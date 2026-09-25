@@ -153,4 +153,3 @@ category, not the symptom.
   untouched, and afterward run a compile check across the files you edited:
   `python3 -W error::SyntaxWarning -c "compile(open(path).read(), path, 'exec')"`
   for each, or a scan across the whole tree if several files were touched.
-

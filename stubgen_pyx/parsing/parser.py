@@ -26,7 +26,11 @@ from pathlib import Path
 
 from Cython.Compiler import Options, Parsing
 from Cython.Compiler.ModuleNode import ModuleNode
-from Cython.Compiler.Scanning import FileSourceDescriptor, PyrexScanner, StringSourceDescriptor
+from Cython.Compiler.Scanning import (
+    FileSourceDescriptor,
+    PyrexScanner,
+    StringSourceDescriptor,
+)
 
 from .comments import CommentIndex, extract_comments
 from .context import StubgenContext, find_root_package_dir
@@ -87,7 +91,9 @@ def _check_include_cycles(
                 # here; we only care about the ones that are.
                 continue
             if include_path:
-                _check_include_cycles(Path(include_path), context, _visiting | {resolved})
+                _check_include_cycles(
+                    Path(include_path), context, _visiting | {resolved}
+                )
     finally:
         Errors.release_errors(ignore=True)
         del held
@@ -125,7 +131,13 @@ class ParsedSource:
     diagnostics: list = field(default_factory=list)
 
 
-def _resolve_scope(context: StubgenContext, module_name: str, initial_pos: tuple, *, allow_pxd_merge: bool):
+def _resolve_scope(
+    context: StubgenContext,
+    module_name: str,
+    initial_pos: tuple,
+    *,
+    allow_pxd_merge: bool,
+):
     """Get (creating if needed) the `ModuleScope` for `module_name` on `context`.
 
     When `allow_pxd_merge` is True, goes through `Context.find_module`,
@@ -270,7 +282,9 @@ def parse_str(
         context=context,
         initial_pos=initial_pos,
     )
-    tree = Parsing.p_module(scanner, pxd, module_name, ctx=Parsing.Ctx(allow_struct_enum_decorator=True))
+    tree = Parsing.p_module(
+        scanner, pxd, module_name, ctx=Parsing.Ctx(allow_struct_enum_decorator=True)
+    )
     tree.scope = scope
     tree.is_pxd = pxd
 

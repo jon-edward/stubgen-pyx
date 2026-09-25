@@ -514,7 +514,10 @@ cdef class MyClass:
         # a class attribute, so it's a plain top-level assignment here --
         # not tied to `cdef_variables`/property handling at all.
         assert len(result.scope.assignments) == 1
-        assert result.scope.assignments[0].statement == "module_global_not_a_class_var = -1"
+        assert (
+            result.scope.assignments[0].statement
+            == "module_global_not_a_class_var = -1"
+        )
 
     def test_char_ptr_type(self):
         """Test converting char pointer type."""

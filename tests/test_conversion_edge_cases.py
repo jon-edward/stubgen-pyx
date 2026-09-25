@@ -301,10 +301,7 @@ cdef class Processor:
             stubgen = StubgenPyx()
             result = stubgen.convert_str(pyx_file.read_text(), pyx_path=pyx_file)
             assert "from typing import Dict, List, Optional" in result
-            assert (
-                "def process(data: Dict[str, List[int]]) -> Optional[str]"
-                in result
-            )
+            assert "def process(data: Dict[str, List[int]]) -> Optional[str]" in result
             assert "class Processor" in result
             assert "def handle(self, x: Optional[Dict]) -> List[str]" in result
 

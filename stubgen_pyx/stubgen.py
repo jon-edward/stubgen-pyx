@@ -120,14 +120,12 @@ def _log_diagnostics(diagnostics: list[Exception], pyx_path: Path | None) -> Non
                 )
             else:
                 _logger.warning(f"Unresolved declaration{label}: {diagnostic}")
-        except Exception as e:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             # Formatting a diagnostic nicely is a courtesy, never a
             # requirement -- falling back to the raw exception (or
             # giving up on this one entirely) must never take the whole
             # conversion down with it.
-            _logger.warning(
-                f"Unresolved declaration{label} (unformattable diagnostic): {e}"
-            )
+            _logger.warning(f"Unresolved declaration{label} (unformattable diagnostic)")
 
 
 @dataclass

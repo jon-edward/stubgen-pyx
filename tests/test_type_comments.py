@@ -60,7 +60,9 @@ def test_find_signature_type_comment_none_when_leading_comment_isnt_type_shaped(
     """A leading comment block exists immediately above the body, but
     isn't `# type: ...` shaped at all -- not every comment there means
     something."""
-    comments = CommentIndex([Comment(text="# just a note", line=2, col=4, standalone=True)])
+    comments = CommentIndex(
+        [Comment(text="# just a note", line=2, col=4, standalone=True)]
+    )
     node = SimpleNamespace(pos=(None, 1, 0), body=SimpleNamespace(pos=(None, 3, 4)))
     assert _find_signature_type_comment(node, comments) is None
 
@@ -81,7 +83,9 @@ def test_find_per_argument_type_comments_skips_ignore_trailing_comment():
     """A trailing `# type: ignore` on an argument's own line isn't a
     real per-argument type and must be skipped, not misread as one."""
     arg = SimpleNamespace(pos=(None, 5, 4))
-    comments = CommentIndex([Comment(text="# type: ignore", line=5, col=10, standalone=False)])
+    comments = CommentIndex(
+        [Comment(text="# type: ignore", line=5, col=10, standalone=False)]
+    )
     assert _find_per_argument_type_comments([arg], comments) == {}
 
 

@@ -587,7 +587,10 @@ class TestConvertFusedTypesStructuralPath:
             initial_pos=initial_pos,
         )
         tree = Parsing.p_module(
-            scanner, False, module_name, ctx=Parsing.Ctx(allow_struct_enum_decorator=True)
+            scanner,
+            False,
+            module_name,
+            ctx=Parsing.Ctx(allow_struct_enum_decorator=True),
         )
 
         def find(node, out):
@@ -621,7 +624,9 @@ class TestConvertFusedTypesStructuralPath:
                 """
             )
         )
-        fake_visitor = SimpleNamespace(fused_types=[node], node=SimpleNamespace(scope=None))
+        fake_visitor = SimpleNamespace(
+            fused_types=[node], node=SimpleNamespace(scope=None)
+        )
         result = convert_fused_types(fake_visitor)
         assert result == {
             "numeric": PyiFusedType(

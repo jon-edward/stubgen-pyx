@@ -74,7 +74,9 @@ def apply_ctypedef_aliases(
     )
 
 
-def _substitute_ctypedef_aliases(annotation: str | None, alias_map: dict[str, str]) -> str | None:
+def _substitute_ctypedef_aliases(
+    annotation: str | None, alias_map: dict[str, str]
+) -> str | None:
     """Replace any `ctypedef` alias name appearing in `annotation` with
     its resolved type, per `alias_map` (name -> resolved type string,
     built by `ctypedef_alias_map`).
@@ -185,7 +187,9 @@ def pyi_module_uses_name(module: PyiModule, name: str) -> bool:
             _text_uses_name(arg.annotation, name) for arg in function.signature.args
         ) or _text_uses_name(function.signature.return_type, name):
             return True
-    return any(_text_uses_name(a.statement, name) for a in _scope_assignments(module.scope))
+    return any(
+        _text_uses_name(a.statement, name) for a in _scope_assignments(module.scope)
+    )
 
 
 def _text_uses_name(text: str | None, name: str) -> bool:

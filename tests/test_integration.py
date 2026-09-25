@@ -819,9 +819,9 @@ ctypedef double MyFloat
 cpdef MyFloat f(MyFloat y):
     pass
 """)
-        result = StubgenPyx(StubgenPyxConfig(resolve_ctypedef_aliases=True)).convert_str(
-            pyx_file.read_text(), pyx_path=pyx_file
-        )
+        result = StubgenPyx(
+            StubgenPyxConfig(resolve_ctypedef_aliases=True)
+        ).convert_str(pyx_file.read_text(), pyx_path=pyx_file)
         assert "def f(y: float) -> float: ..." in result
         # The alias is never actually importable from the compiled module
         # (a plain `ctypedef` has no runtime binding at all), and every
@@ -846,9 +846,9 @@ def f(y: MyFloat) -> MyFloat:
 def g(z: MyFloat2) -> MyFloat2:
     pass
 """)
-        result = StubgenPyx(StubgenPyxConfig(resolve_ctypedef_aliases=True)).convert_str(
-            pyx_file.read_text(), pyx_path=pyx_file
-        )
+        result = StubgenPyx(
+            StubgenPyxConfig(resolve_ctypedef_aliases=True)
+        ).convert_str(pyx_file.read_text(), pyx_path=pyx_file)
         assert "def f(y: float) -> float: ..." in result
         assert "def g(z: float) -> float: ..." in result
         # Both f and g get fully substituted, so neither alias is used
@@ -868,9 +868,9 @@ ctypedef MyFloat MyFloat2
 def f(y: MyFloat2) -> MyFloat2:
     pass
 """)
-        result = StubgenPyx(StubgenPyxConfig(resolve_ctypedef_aliases=True)).convert_str(
-            pyx_file.read_text(), pyx_path=pyx_file
-        )
+        result = StubgenPyx(
+            StubgenPyxConfig(resolve_ctypedef_aliases=True)
+        ).convert_str(pyx_file.read_text(), pyx_path=pyx_file)
         assert "def f(y: float) -> float: ..." in result
         assert "MyFloat" not in result
 
@@ -901,9 +901,9 @@ ctypedef double MyFloat
 def f(values: Iterable[MyFloat]) -> None:
     pass
 """)
-        result = StubgenPyx(StubgenPyxConfig(resolve_ctypedef_aliases=True)).convert_str(
-            pyx_file.read_text(), pyx_path=pyx_file
-        )
+        result = StubgenPyx(
+            StubgenPyxConfig(resolve_ctypedef_aliases=True)
+        ).convert_str(pyx_file.read_text(), pyx_path=pyx_file)
         assert "def f(values: Iterable[float]) -> None: ..." in result
 
     def test_resolves_chained_aliases(self, temp_dir):
@@ -917,9 +917,9 @@ ctypedef MyFloat MyFloat2
 def f(y: MyFloat2) -> MyFloat2:
     pass
 """)
-        result = StubgenPyx(StubgenPyxConfig(resolve_ctypedef_aliases=True)).convert_str(
-            pyx_file.read_text(), pyx_path=pyx_file
-        )
+        result = StubgenPyx(
+            StubgenPyxConfig(resolve_ctypedef_aliases=True)
+        ).convert_str(pyx_file.read_text(), pyx_path=pyx_file)
         assert "def f(y: float) -> float: ..." in result
 
     def test_resolves_cdef_class_attribute(self, temp_dir):
@@ -930,9 +930,9 @@ ctypedef double MyFloat
 cdef class Ops:
     cdef public MyFloat value
 """)
-        result = StubgenPyx(StubgenPyxConfig(resolve_ctypedef_aliases=True)).convert_str(
-            pyx_file.read_text(), pyx_path=pyx_file
-        )
+        result = StubgenPyx(
+            StubgenPyxConfig(resolve_ctypedef_aliases=True)
+        ).convert_str(pyx_file.read_text(), pyx_path=pyx_file)
         assert "value: float" in result
 
     def test_resolves_dataclass_style_bare_annotation_attribute(self, temp_dir):
@@ -946,9 +946,9 @@ ctypedef double MyFloat
 class Point:
     x: MyFloat
 """)
-        result = StubgenPyx(StubgenPyxConfig(resolve_ctypedef_aliases=True)).convert_str(
-            pyx_file.read_text(), pyx_path=pyx_file
-        )
+        result = StubgenPyx(
+            StubgenPyxConfig(resolve_ctypedef_aliases=True)
+        ).convert_str(pyx_file.read_text(), pyx_path=pyx_file)
         assert "x: float" in result
 
     def test_does_not_substitute_substring_match(self, temp_dir):
@@ -965,9 +965,9 @@ cdef class MyFloatValue:
 def f(a: MyFloatValue, b: MyFloat) -> MyFloatValue:
     pass
 """)
-        result = StubgenPyx(StubgenPyxConfig(resolve_ctypedef_aliases=True)).convert_str(
-            pyx_file.read_text(), pyx_path=pyx_file
-        )
+        result = StubgenPyx(
+            StubgenPyxConfig(resolve_ctypedef_aliases=True)
+        ).convert_str(pyx_file.read_text(), pyx_path=pyx_file)
         assert "def f(a: MyFloatValue, b: float) -> MyFloatValue: ..." in result
 
     def test_resolves_alias_declared_only_in_companion_pxd(self, temp_dir):
@@ -985,7 +985,9 @@ ctypedef double MyFloat
 
 cpdef object process(MyFloat x)
 """)
-        result = StubgenPyx(StubgenPyxConfig(resolve_ctypedef_aliases=True)).convert_str(
+        result = StubgenPyx(
+            StubgenPyxConfig(resolve_ctypedef_aliases=True)
+        ).convert_str(
             pyx_file.read_text(), pxd_str=pxd_file.read_text(), pyx_path=pyx_file
         )
         assert "def process(x: float) -> float: ..." in result
@@ -1008,10 +1010,7 @@ class TestQualifiedModuleTypeReferences:
         (pkg / "mod.pxd").write_text("cdef class Foo:\n    pass\n")
         (pkg / "mod.pyx").write_text("cdef class Foo:\n    pass\n")
         (pkg / "consumer.pyx").write_text(
-            "cimport pkg.mod as mod\n"
-            "\n"
-            "cpdef mod.Foo foo(mod.Foo x):\n"
-            "    pass\n"
+            "cimport pkg.mod as mod\n\ncpdef mod.Foo foo(mod.Foo x):\n    pass\n"
         )
         stubgen = StubgenPyx(StubgenPyxConfig(continue_on_error=True))
         results = stubgen.convert_glob(str(temp_dir / "**" / "*.pyx"))
@@ -1027,10 +1026,7 @@ class TestQualifiedModuleTypeReferences:
         (pkg / "mod.pxd").write_text("cdef class Foo:\n    pass\n")
         (pkg / "mod.pyx").write_text("cdef class Foo:\n    pass\n")
         (pkg / "consumer.pyx").write_text(
-            "from . cimport mod\n"
-            "\n"
-            "cdef class Holder:\n"
-            "    cdef public mod.Foo item\n"
+            "from . cimport mod\n\ncdef class Holder:\n    cdef public mod.Foo item\n"
         )
         stubgen = StubgenPyx(StubgenPyxConfig(continue_on_error=True))
         results = stubgen.convert_glob(str(temp_dir / "**" / "*.pyx"))
@@ -1049,16 +1045,16 @@ class TestQualifiedModuleTypeReferences:
         result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
         assert "bar: bytes" in result
 
-    def test_genuinely_unresolvable_qualified_attribute_still_incomplete(self, temp_dir):
+    def test_genuinely_unresolvable_qualified_attribute_still_incomplete(
+        self, temp_dir
+    ):
         """A qualified reference to something that genuinely doesn't
         exist (no real cimport backing it) still degrades to
         `_typeshed.Incomplete` via `postprocessing/trim_not_defined.py`:
         qualifier recovery only applies to a name that otherwise
         resolves, not a fabricated one for something that never did."""
         pyx_file = temp_dir / "test.pyx"
-        pyx_file.write_text(
-            "cdef class Foo:\n    cdef public other.val[3][3] baz\n"
-        )
+        pyx_file.write_text("cdef class Foo:\n    cdef public other.val[3][3] baz\n")
         result = StubgenPyx(StubgenPyxConfig(continue_on_error=True)).convert_str(
             pyx_file.read_text(), pyx_path=pyx_file
         )
@@ -1186,9 +1182,7 @@ class TestPrivateCdefGlobalExclusion:
 
     def test_initialized_private_cdef_global_excluded(self, temp_dir):
         pyx_file = temp_dir / "test.pyx"
-        pyx_file.write_text(
-            "PLAIN_PY_VAR = 5\n\ncdef int PRIVATE_INIT_VAR = 5\n"
-        )
+        pyx_file.write_text("PLAIN_PY_VAR = 5\n\ncdef int PRIVATE_INIT_VAR = 5\n")
         result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
         assert "PLAIN_PY_VAR = 5" in result
         assert "PRIVATE_INIT_VAR" not in result
@@ -1223,6 +1217,7 @@ cdef binop_t GLOBAL_FP = add
 """)
         result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
         assert "GLOBAL_FP" not in result
+
 
 class TestFunctionPointerCtypedefExclusion:
     """A `ctypedef` for a C function pointer -- e.g. `ctypedef int
@@ -1284,6 +1279,7 @@ def f(MyFloat x):
         assert "MyFloat: TypeAlias = float" in result
         assert "PointAlias: TypeAlias = Point" in result
         assert "def f(x: MyFloat)" in result
+
 
 class TestCppScopedEnumClass:
     """A C++11 scoped ``enum class`` (`PyrexTypes.CppScopedEnumType`) has
@@ -1359,6 +1355,7 @@ cdef extern from "foo.hpp" namespace "ns" nogil:
         assert "class Color(IntEnum):" in result
         assert "RED = ..." in result
 
+
 class TestExternCpdefFunctionDeclaration:
     """A `cpdef` function declared with no body of its own -- the normal
     shape for exposing an external C/C++ function to Python directly,
@@ -1401,7 +1398,9 @@ cdef extern from "foo.hpp" nogil:
 
     def test_zero_arg_void_return(self, temp_dir):
         pyx_file = temp_dir / "test.pyx"
-        pyx_file.write_text('cdef extern from "foo.hpp" nogil:\n    cpdef void do_thing()\n')
+        pyx_file.write_text(
+            'cdef extern from "foo.hpp" nogil:\n    cpdef void do_thing()\n'
+        )
         result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
         assert "def do_thing() -> None: ..." in result
 
@@ -1423,6 +1422,7 @@ cdef class Wrapper:
         assert result.count("def method(self, x: int) -> int: ...") == 1
         assert "def standalone_func(x: int) -> int: ..." in result
 
+
 class TestReplaceDefaultsWithEllipsis:
     """`StubgenPyxConfig.replace_defaults_with_ellipsis` renders every
     argument default as `...` rather than its real value, matching the
@@ -1431,9 +1431,7 @@ class TestReplaceDefaultsWithEllipsis:
 
     def test_defaults_replaced_with_ellipsis(self, temp_dir):
         pyx_file = temp_dir / "test.pyx"
-        pyx_file.write_text(
-            'def f(x: int = 5, y: str = "hello"):\n    pass\n'
-        )
+        pyx_file.write_text('def f(x: int = 5, y: str = "hello"):\n    pass\n')
         result = StubgenPyx(
             StubgenPyxConfig(replace_defaults_with_ellipsis=True)
         ).convert_str(pyx_file.read_text(), pyx_path=pyx_file)
@@ -1465,6 +1463,7 @@ class TestReplaceDefaultsWithEllipsis:
             StubgenPyxConfig(replace_defaults_with_ellipsis=True)
         ).convert_str(pyx_file.read_text(), pyx_path=pyx_file)
         assert "x: int | None=..." in result
+
 
 class TestResolveCtypedefAliasesAcrossPxdMerge:
     """A `ctypedef` alias declared only in a companion `.pxd` -- not the
@@ -1562,10 +1561,11 @@ cpdef gba_ptr use_it():
         must keep being pruned exactly as before."""
         pyx_file = temp_dir / "test.pyx"
         pyx_file.write_text("ctypedef double MyFloat\ndef f(int x):\n    pass\n")
-        result = StubgenPyx(StubgenPyxConfig(resolve_ctypedef_aliases=True)).convert_str(
-            pyx_file.read_text(), pyx_path=pyx_file
-        )
+        result = StubgenPyx(
+            StubgenPyxConfig(resolve_ctypedef_aliases=True)
+        ).convert_str(pyx_file.read_text(), pyx_path=pyx_file)
         assert "MyFloat" not in result
+
 
 class TestPropertyReturnTypeAnnotation:
     """A `@property`-decorated `def` method becomes the exact same

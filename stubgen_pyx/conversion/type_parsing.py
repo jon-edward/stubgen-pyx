@@ -20,8 +20,12 @@ _logger = logging.getLogger(__name__)
 # (`.base`/`.base_type`, `.is_const`, `.is_volatile`). Resolved once
 # here so the rest of this module can use one name regardless of which
 # Cython version (>=3.0) is installed.
-_ConstDeclaratorNode = getattr(Nodes, "CQualifierDeclaratorNode", None) or Nodes.CConstDeclaratorNode
-_ConstOrVolatileTypeNode = getattr(Nodes, "CQualifierTypeNode", None) or Nodes.CConstOrVolatileTypeNode
+_ConstDeclaratorNode = (
+    getattr(Nodes, "CQualifierDeclaratorNode", None) or Nodes.CConstDeclaratorNode
+)
+_ConstOrVolatileTypeNode = (
+    getattr(Nodes, "CQualifierTypeNode", None) or Nodes.CConstOrVolatileTypeNode
+)
 
 _CYTHON_TO_NUMPY_SCALAR: dict[str, str] = {
     "bint": "bool_",
@@ -76,7 +80,9 @@ def parameterize_builtin_generic(name: str | None) -> str | None:
     return _CYTHON_BUILTIN_GENERIC_MAPPING.get(name, name)
 
 
-def render_pyrex_type(t: _PyrexTypes.PyrexType | None, *, _depth: int = 0) -> str | None:
+def render_pyrex_type(
+    t: _PyrexTypes.PyrexType | None, *, _depth: int = 0
+) -> str | None:
     """Render a resolved ``PyrexTypes.Type`` as a Python annotation string.
 
     The Entry/Type-based counterpart to ``extract_type_from_base_type``,
@@ -132,7 +138,9 @@ def render_pyrex_type(t: _PyrexTypes.PyrexType | None, *, _depth: int = 0) -> st
             with_debug_fallback(
                 render_pyrex_type(c, _depth=_depth + 1),
                 "object",
-                lambda c_idx_=c_idx: f"Replaced tuple component at index {c_idx_} with 'object'",
+                lambda c_idx_=c_idx: (
+                    f"Replaced tuple component at index {c_idx_} with 'object'"
+                ),
             )
             for c_idx, c in enumerate(t.components)
         ]
@@ -195,7 +203,9 @@ def _render_cfunction_type(t: _PyrexTypes.CFuncType, *, _depth: int) -> str:
         with_debug_fallback(
             render_pyrex_type(arg.type, _depth=_depth + 1),
             "_typeshed.Incomplete",
-            lambda arg_idx_=arg_idx: f"Replaced argument {arg_idx_} type with '_typeshed.Incomplete'",
+            lambda arg_idx_=arg_idx: (
+                f"Replaced argument {arg_idx_} type with '_typeshed.Incomplete'"
+            ),
         )
         for arg_idx, arg in enumerate(t.args)
     ]
@@ -313,12 +323,18 @@ def get_cdef_variables(
         entry = node.entry
         type_name = render_pyrex_type(entry.type) if entry else None
         getter = next(
-            (s for s in getattr(node.body, "stats", ()) if getattr(s, "name", None) == "__get__"),
+            (
+                s
+                for s in getattr(node.body, "stats", ())
+                if getattr(s, "name", None) == "__get__"
+            ),
             None,
         )
         annotation_node = getattr(getter, "return_type_annotation", None)
         if annotation_node is not None:
-            from .signature import _decode_or_pass  # local: avoids a circular import with signature.py
+            from .signature import (
+                _decode_or_pass,  # local: avoids a circular import with signature.py
+            )
 
             type_name = parameterize_builtin_generic(
                 _decode_or_pass(annotation_node.string.value)
@@ -509,7 +525,9 @@ def _capture_static_types_recursive(node, enclosing, seen: set[int]) -> None:
                 decl_name = _cvardef_declarator_name(declarator)
                 if decl_name is None:
                     continue
-                property_types = getattr(enclosing, "_stubgen_static_property_types", None)
+                property_types = getattr(
+                    enclosing, "_stubgen_static_property_types", None
+                )
                 if property_types is None:
                     property_types = enclosing._stubgen_static_property_types = {}
                 property_types[decl_name] = type_str

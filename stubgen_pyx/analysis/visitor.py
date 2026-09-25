@@ -8,7 +8,9 @@ from Cython.Compiler import ExprNodes, ModuleNode, Nodes
 from Cython.Compiler.Visitor import TreeVisitor
 
 
-def _collect_fused_specialization_ids(node, out: set[int], _seen: set[int] | None = None) -> None:
+def _collect_fused_specialization_ids(
+    node, out: set[int], _seen: set[int] | None = None
+) -> None:
     """Find every ``FusedCFuncDefNode`` reachable from ``node`` and record
     the ids of the nodes its expansion leaves behind as ordinary siblings
     (each specialization, plus its own Python-visible wrapper and the
@@ -92,7 +94,6 @@ def _is_decorator_rebinding(
     if arg_name != name:
         return False
     return def_positions.get(name) == node.pos
-
 
 
 def _declared_name(node) -> str | None:
@@ -287,14 +288,18 @@ class ScopeVisitor(TreeVisitor):
     def visit_PyClassDefNode(self, node):
         """Collect Python class definitions."""
         self.classes.append(
-            ClassVisitor(node=node, _fused_specialization_ids=self._fused_specialization_ids)
+            ClassVisitor(
+                node=node, _fused_specialization_ids=self._fused_specialization_ids
+            )
         )
         return node
 
     def visit_CClassDefNode(self, node):
         """Collect Cython extension type (cdef class) definitions."""
         self.classes.append(
-            ClassVisitor(node=node, _fused_specialization_ids=self._fused_specialization_ids)
+            ClassVisitor(
+                node=node, _fused_specialization_ids=self._fused_specialization_ids
+            )
         )
         return node
 
@@ -378,12 +383,18 @@ class ScopeVisitor(TreeVisitor):
         here is not just imprecise but actively false: nothing in real
         Python code could ever be assigned to or receive that alias.
         """
-        from ..conversion.type_parsing import _declarator_name  # local: avoids a circular import with conversion.converter
+        from ..conversion.type_parsing import (
+            _declarator_name,  # local: avoids a circular import with conversion.converter
+        )
 
         name = _declarator_name(node.declarator)
         scope = getattr(self.node, "scope", None)
         entry = scope.entries.get(name) if scope is not None and name else None
-        if entry is not None and entry.is_type and getattr(entry.type, "is_typedef", False):
+        if (
+            entry is not None
+            and entry.is_type
+            and getattr(entry.type, "is_typedef", False)
+        ):
             base = entry.type.typedef_base_type
             if getattr(base, "is_cfunction", False) or (
                 getattr(base, "is_ptr", False)
