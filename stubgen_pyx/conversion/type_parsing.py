@@ -101,104 +101,141 @@ def render_pyrex_type(
     """
     if t is None:
         return None
-
     if getattr(t, "is_cv_qualified", False):
-        # `const`/`volatile` (both represented by `CConstOrVolatileType`,
-        # distinguished by `is_const`/`is_volatile`) have no Python-level
-        # equivalent -- render the underlying type, same as the
-        # structural path (`extract_type_from_base_type` unwraps
-        # `CConstOrVolatileTypeNode` the same way).
+        # Qualifiers have no Python-level equivalent; render the base type.
         return render_pyrex_type(t.cv_base_type, _depth=_depth)
+    return _render_unqualified_pyrex_type(t, _depth=_depth)
 
+
+def _render_unqualified_pyrex_type(
+    t: _PyrexTypes.PyrexType, *, _depth: int
+) -> str | None:
     if t.is_void:
         return "None"
 
-    if t.is_ptr:
-        base = t.base_type
-        if base is _PyrexTypes.c_char_type:
-            return "bytes"
-        if base.is_void:
-            return "typing.Any"
-        if getattr(base, "is_cfunction", False):
-            return _render_cfunction_type(base, _depth=_depth)
-        # Cython pointers to anything else aren't meaningfully
-        # Python-representable; matches the structural path, which never
-        # gives pointer-ness special treatment beyond char*/void* either
-        # (see `extract_type_from_base_type`).
-        return render_pyrex_type(base, _depth=_depth + 1)
-
-    if t.is_array:
-        if t.base_type is _PyrexTypes.c_char_type:
-            return "bytes"
-        inner = render_pyrex_type(t.base_type, _depth=_depth + 1)
-        return f"list[{inner}]" if inner is not None else None
-
-    if getattr(t, "is_ctuple", False):
-        parts = [
-            with_debug_fallback(
-                render_pyrex_type(c, _depth=_depth + 1),
-                "object",
-                lambda c_idx_=c_idx: (
-                    f"Replaced tuple component at index {c_idx_} with 'object'"
-                ),
-            )
-            for c_idx, c in enumerate(t.components)
-        ]
-        return f"tuple[{', '.join(parts)}]"
-
-    if getattr(t, "is_memoryviewslice", False):
-        dtype_name = str(t.dtype) if t.dtype is not None else None
-        scalar = None if dtype_name is None else _CYTHON_TO_NUMPY_SCALAR.get(dtype_name)
-        if scalar:
-            return f"numpy.typing.NDArray[numpy.{scalar}]"
-        return "memoryview"
-
-    if getattr(t, "is_cpp_class", False) and getattr(t, "templates", None):
-        base = t.name
-        parts = [
-            with_debug_fallback(
-                render_pyrex_type(a, _depth=_depth + 1),
-                "_typeshed.Incomplete",
-                lambda a_idx_=a_idx: (
-                    f"Replaced template argument of {base} at index {a_idx_} with '_typeshed.Incomplete'"
-                ),
-            )
-            for a_idx, a in enumerate(t.templates)
-        ]
-        return f"{base}[{', '.join(parts)}]"
-
-    # Struct/union, enum (including a C++11 scoped `enum class`, whose
-    # `is_enum` is `False` -- `is_cpp_enum` instead), extension type
-    # ("cdef class"), plain (non-template) cpp class: all expose a plain
-    # `.name` matching what the structural path would have produced from
-    # the declaration's own base-type name.
-    name = getattr(t, "name", None)
-    if name is not None and (
-        getattr(t, "is_struct_or_union", False)
-        or getattr(t, "is_enum", False)
-        or getattr(t, "is_cpp_enum", False)
-        or getattr(t, "is_extension_type", False)
-        or getattr(t, "is_cpp_class", False)
-        or getattr(t, "is_fused", False)
-    ):
-        return name
-
-    if getattr(t, "is_cfunction", False):
-        return _render_cfunction_type(t, _depth=_depth)
-
-    if t.is_pyobject or t.is_numeric or t.is_string:
-        # `py_type_name()` already returns Cython's own best Python-facing
-        # name for these (int/float/bool/str/bytes/object/...); no need
-        # to hand-roll a second mapping that would inevitably drift from
-        # Cython's own as new C types are added.
-        py_name = t.py_type_name()
-        return parameterize_builtin_generic(py_name)
-
+    renderers = (
+        _render_pointer_type,
+        _render_array_type,
+        _render_ctuple_type,
+        _render_memoryview_type,
+        _render_cpp_template_type,
+        _render_named_type,
+        _render_cfunction_type,
+        _render_builtin_type,
+    )
+    for renderer in renderers:
+        rendered = renderer(t, _depth=_depth)
+        if rendered is not None:
+            return rendered
     return None
 
 
-def _render_cfunction_type(t: _PyrexTypes.CFuncType, *, _depth: int) -> str:
+def _render_pointer_type(
+    t: _PyrexTypes.PyrexType, *, _depth: int
+) -> str | None:
+    if not t.is_ptr:
+        return None
+    base = t.base_type
+    if base is _PyrexTypes.c_char_type:
+        return "bytes"
+    if base.is_void:
+        return "typing.Any"
+    if getattr(base, "is_cfunction", False):
+        return _render_cfunction_type(base, _depth=_depth)
+    return render_pyrex_type(base, _depth=_depth + 1)
+
+
+def _render_array_type(
+    t: _PyrexTypes.PyrexType, *, _depth: int
+) -> str | None:
+    if not t.is_array:
+        return None
+    if t.base_type is _PyrexTypes.c_char_type:
+        return "bytes"
+    inner = render_pyrex_type(t.base_type, _depth=_depth + 1)
+    return f"list[{inner}]" if inner is not None else None
+
+
+def _render_ctuple_type(
+    t: _PyrexTypes.PyrexType, *, _depth: int
+) -> str | None:
+    if not getattr(t, "is_ctuple", False):
+        return None
+    parts = [
+        with_debug_fallback(
+            render_pyrex_type(component, _depth=_depth + 1),
+            "object",
+            lambda component_idx=component_idx: (
+                f"Replaced tuple component at index {component_idx} with 'object'"
+            ),
+        )
+        for component_idx, component in enumerate(t.components)
+    ]
+    return f"tuple[{', '.join(parts)}]"
+
+
+def _render_memoryview_type(
+    t: _PyrexTypes.PyrexType, *, _depth: int
+) -> str | None:
+    if not getattr(t, "is_memoryviewslice", False):
+        return None
+    dtype_name = str(t.dtype) if t.dtype is not None else None
+    scalar = None if dtype_name is None else _CYTHON_TO_NUMPY_SCALAR.get(dtype_name)
+    return (
+        f"numpy.typing.NDArray[numpy.{scalar}]" if scalar else "memoryview"
+    )
+
+
+def _render_cpp_template_type(
+    t: _PyrexTypes.PyrexType, *, _depth: int
+) -> str | None:
+    if not getattr(t, "is_cpp_class", False) or not getattr(t, "templates", None):
+        return None
+    base = t.name
+    parts = [
+        with_debug_fallback(
+            render_pyrex_type(argument, _depth=_depth + 1),
+            "_typeshed.Incomplete",
+            lambda argument_idx=argument_idx: (
+                f"Replaced template argument of {base} at index {argument_idx} with '_typeshed.Incomplete'"
+            ),
+        )
+        for argument_idx, argument in enumerate(t.templates)
+    ]
+    return f"{base}[{', '.join(parts)}]"
+
+
+def _render_named_type(
+    t: _PyrexTypes.PyrexType, *, _depth: int
+) -> str | None:
+    name = getattr(t, "name", None)
+    if name is None:
+        return None
+    type_flags = (
+        "is_struct_or_union",
+        "is_enum",
+        "is_cpp_enum",
+        "is_extension_type",
+        "is_cpp_class",
+        "is_fused",
+    )
+    return name if any(getattr(t, flag, False) for flag in type_flags) else None
+
+
+def _render_builtin_type(
+    t: _PyrexTypes.PyrexType, *, _depth: int
+) -> str | None:
+    if not (t.is_pyobject or t.is_numeric or t.is_string):
+        return None
+    return parameterize_builtin_generic(t.py_type_name())
+
+
+def _render_cfunction_type(
+    t: _PyrexTypes.CFuncType, *, _depth: int
+) -> str | None:
     """Render a resolved ``CFuncType`` (a function pointer's pointee, typically) as ``Callable[[...], ...]``."""
+    if not getattr(t, "is_cfunction", False):
+        return None
     args = [
         with_debug_fallback(
             render_pyrex_type(arg.type, _depth=_depth + 1),
