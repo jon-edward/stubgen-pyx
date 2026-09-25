@@ -319,7 +319,13 @@ def test_fused_unicode_and_str_deduplicated():
 
 
 def test_fused_typed_memoryview_annotation_preserved():
-    """``numeric[:]`` typed memoryviews with fused element types must keep an annotation."""
+    """A fused type shared between a memoryview argument and its return renders as ``memoryview``.
+
+    ``numeric`` is used in both the argument and the return, which would
+    normally resolve to a scalar-bound ``TypeVar`` shared between them --
+    but that TypeVar doesn't type-check against an array, so both render
+    as the unspecific but honest ``memoryview`` instead.
+    """
     result = _stubgen().convert_str(
         _cy("""
         ctypedef fused numeric:
@@ -331,7 +337,44 @@ def test_fused_typed_memoryview_annotation_preserved():
     """)
     )
     assert "def f(x)" not in result
-    assert "TypeVar" in result or "|" in result
+    assert "def f(x: memoryview) -> memoryview" in result
+    assert "int" not in result
+    assert "float" not in result
+
+
+def test_fused_typed_memoryview_single_usage_renders_ndarray_union():
+    """A fused memoryview used in only one position renders as an ``NDArray`` union, not a scalar union."""
+    result = _stubgen().convert_str(
+        _cy("""
+        ctypedef fused numeric:
+            int
+            double
+
+        def f(numeric[:, :] x):
+            pass
+    """)
+    )
+    assert "def f(x)" not in result
+    assert "x: NDArray[numpy.intc] | NDArray[numpy.double]" in result
+    assert "def f(x: int" not in result
+    assert "def f(x: double" not in result
+
+
+def test_fused_typed_memoryview_does_not_affect_sibling_scalar_usage():
+    """A fused type shared between a memoryview arg and a scalar arg keeps each usage's own shape."""
+    result = _stubgen().convert_str(
+        _cy("""
+        ctypedef fused numeric:
+            int
+            double
+
+        def f(numeric[:, :] arr, numeric scale):
+            pass
+    """)
+    )
+    assert "numeric = TypeVar('numeric', int, float)" in result
+    assert "arr: memoryview" in result
+    assert "scale: numeric" in result
 
 
 def test_fused_type_with_object_member():
@@ -505,3 +548,115 @@ def test_pxd_declared_fused_type_used_by_pyx_method():
     )
     assert result.count("FooOrBar = TypeVar('FooOrBar', Foo, Bar)") == 1
     assert "def f(self, x: FooOrBar) -> FooOrBar" in result
+
+
+class TestConvertFusedTypesStructuralPath:
+    """`convert_fused_types`' first branch -- a structural walk of
+    `visitor.fused_types` -- is effectively dead in real usage: a
+    `ctypedef fused` declaration has no surviving node once real
+    declaration analysis runs, so `visitor.fused_types` is always empty
+    by the time any real conversion reaches it (the entries-based and
+    pre-pipeline-snapshot fallbacks below it are what actually fire).
+    Tested directly here against a real, raw (pre-pipeline) parse of a
+    `ctypedef fused`, since that's the only way to get a populated
+    `FusedTypeNode` to exercise this branch's own logic at all.
+    """
+
+    @staticmethod
+    def _raw_fused_type_node(source: str):
+        from io import StringIO
+
+        from Cython.Compiler import Nodes, Parsing
+        from Cython.Compiler.Scanning import PyrexScanner, StringSourceDescriptor
+
+        from stubgen_pyx.parsing.context import StubgenContext
+        from stubgen_pyx.parsing.parser import _DEFAULT_MODULE_NAME, _resolve_scope
+
+        context = StubgenContext()
+        module_name = _DEFAULT_MODULE_NAME
+        source_desc = StringSourceDescriptor(module_name, source)
+        initial_pos = (source_desc, 1, 0)
+        scope = _resolve_scope(context, module_name, initial_pos, allow_pxd_merge=False)
+        scope.cpp = context.cpp
+        scanner = PyrexScanner(
+            StringIO(source),
+            source_desc,
+            source_encoding="UTF-8",
+            scope=scope,
+            context=context,
+            initial_pos=initial_pos,
+        )
+        tree = Parsing.p_module(
+            scanner, False, module_name, ctx=Parsing.Ctx(allow_struct_enum_decorator=True)
+        )
+
+        def find(node, out):
+            if isinstance(node, Nodes.FusedTypeNode):
+                out.append(node)
+                return
+            for attr in getattr(node, "child_attrs", None) or ():
+                child = getattr(node, attr, None)
+                if isinstance(child, list):
+                    for c in child:
+                        find(c, out)
+                else:
+                    find(child, out)
+
+        found: list = []
+        find(tree, found)
+        return found[0]
+
+    def test_structural_fused_type_node_resolves_concrete_types_and_numpy_scalars(self):
+        from types import SimpleNamespace
+
+        from stubgen_pyx.conversion.fused_types import convert_fused_types
+        from stubgen_pyx.models.pyi_elements import PyiFusedType
+
+        node = self._raw_fused_type_node(
+            _cy(
+                """
+                ctypedef fused numeric:
+                    int
+                    double
+                """
+            )
+        )
+        fake_visitor = SimpleNamespace(fused_types=[node], node=SimpleNamespace(scope=None))
+        result = convert_fused_types(fake_visitor)
+        assert result == {
+            "numeric": PyiFusedType(
+                name="numeric",
+                concrete_types=("int", "float"),
+                numpy_scalars=("intc", "double"),
+            )
+        }
+
+    def test_static_snapshot_skips_a_name_already_found_structurally(self):
+        """A name found via the structural walk must not be
+        overwritten/reprocessed by the pre-pipeline static-snapshot
+        fallback, even if (as here) it also has an entry there."""
+        from types import SimpleNamespace
+
+        from stubgen_pyx.conversion.fused_types import convert_fused_types
+
+        node = self._raw_fused_type_node(
+            _cy(
+                """
+                ctypedef fused numeric:
+                    int
+                    double
+                """
+            )
+        )
+        fake_visitor = SimpleNamespace(
+            fused_types=[node],
+            node=SimpleNamespace(
+                scope=None,
+                _stubgen_static_fused_members={"numeric": ["float", "long"]},
+            ),
+        )
+        result = convert_fused_types(fake_visitor)
+        # Still the structurally-resolved members, not the static
+        # snapshot's ("float", "long") -- confirming the `continue`
+        # actually skipped reprocessing it.
+        assert result["numeric"].concrete_types == ("int", "float")
