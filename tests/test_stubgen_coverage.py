@@ -235,7 +235,7 @@ class TestResolvePyiPath:
         `output_dir` rather than raising."""
         stubgen = StubgenPyx()
         result = stubgen._resolve_pyi_path(
-            Path("/some/other/place/mod.pyx"), temp_dir, Path("/tmp/unrelated-root")
+            Path("/some/other/place/mod.pyx"), temp_dir, Path("/unrelated-root")
         )
         assert result == temp_dir / "mod.pyi"
 
