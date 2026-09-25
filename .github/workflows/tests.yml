@@ -46,7 +46,7 @@ jobs:
         run: |
           uv python install ${{ matrix.python-version }}
           uv venv
-          uv pip install ".[test]" "cython==${{ matrix.cython-version }}"
+          uv pip install ".[test]" "cython==${{ matrix.cython-version }}" --upgrade-package cython
       - name: Verify installed Cython version
         run: |
           uv run python -c "import Cython; assert Cython.__version__ == '${{ matrix.cython-version }}', Cython.__version__; print('Cython', Cython.__version__)"
