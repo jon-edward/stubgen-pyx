@@ -7,8 +7,8 @@ import tokenize
 
 from Cython.Compiler import ExprNodes, Nodes
 
-from .unparse import unparse_expr
 from ..parsing.utils import tokenize_py
+from .unparse import unparse_expr
 
 
 def get_source(source: str, node: Nodes.Node) -> str:
@@ -47,9 +47,12 @@ def _unbalanced_brackets(text: str) -> bool:
                 continue
             if token.string in "([{":
                 stack.append(token.string)
-            elif token.string in _BRACKET_PAIRS:
-                if stack and stack[-1] == _BRACKET_PAIRS[token.string]:
-                    stack.pop()
+            elif (
+                token.string in _BRACKET_PAIRS
+                and stack
+                and stack[-1] == _BRACKET_PAIRS[token.string]
+            ):
+                stack.pop()
     except (tokenize.TokenError, IndentationError, SyntaxError):
         # Incomplete/malformed-so-far text is exactly the case this is
         # called for mid-extension; a tokenize error here just means
@@ -91,7 +94,9 @@ def get_decorators(
     rendered = []
     for decorator in decorators:
         expr = unparse_expr(decorator.decorator)
-        rendered.append(f"@{expr}" if expr is not None else get_source(source, decorator))
+        rendered.append(
+            f"@{expr}" if expr is not None else get_source(source, decorator)
+        )
     return rendered
 
 
