@@ -8,13 +8,13 @@ from Cython.Compiler import Parsing
 from Cython.Compiler.Scanning import PyrexScanner, StringSourceDescriptor
 
 from stubgen_pyx.analysis.visitor import ModuleVisitor
-from stubgen_pyx.conversion import converter as converter_module
 from stubgen_pyx.conversion.converter import Converter
 from stubgen_pyx.conversion.declarations import (
     convert_assignment,
     convert_cpp_class,
     convert_struct_or_union,
 )
+from stubgen_pyx.conversion.fused_types import _type_name
 from stubgen_pyx.models.pyi_elements import (
     PyiClass,
     PyiEnum,
@@ -1147,6 +1147,6 @@ def test_type_name_handles_nested_template_and_unknown_parsed_nodes():
     templated = _first_node("cdef Foo[int] value", "TemplatedTypeNode")
     simple = templated.base_type_node
 
-    assert converter_module._type_name(templated) == "Foo"
-    assert converter_module._type_name(simple) == "Foo"
-    assert converter_module._type_name(templated.positional_args[0]) is None
+    assert _type_name(templated) == "Foo"
+    assert _type_name(simple) == "Foo"
+    assert _type_name(templated.positional_args[0]) is None
