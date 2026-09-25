@@ -30,6 +30,7 @@ class Builder:
     """
 
     include_private: bool = False
+    replace_defaults_with_ellipsis: bool = False
 
     def _is_private(self, name: str) -> bool:
         """Check if a name is private (starts with _ but doesn't end with _)."""
@@ -50,7 +51,15 @@ class Builder:
         if argument.annotation is not None:
             parts.append(f": {argument.annotation}")
         if argument.default is not None:
-            parts.append(f" = {argument.default}")
+            # The real default value has already done its job by this
+            # point (e.g. `signature._to_argument`'s `default == "None"`
+            # check, which widens the annotation with `| None` -- that
+            # depends on the actual value, not this rendering-time
+            # choice of what to display). Substituting here, not at
+            # extraction, keeps that inference intact regardless of
+            # this option.
+            default = "..." if self.replace_defaults_with_ellipsis else argument.default
+            parts.append(f" = {default}")
         return "".join(parts)
 
     def build_signature(self, signature: PyiSignature) -> str:
@@ -159,7 +168,11 @@ class Builder:
     def build_assignment(self, assignment: PyiAssignment) -> str | None:
         """Build an assignment statement string."""
         if not self.include_private:
-            name = assignment.statement.partition("=")[0].partition(":")[0].strip()
+            name = assignment.name
+            if name is None:
+                # Fallback for the rare case a `PyiAssignment` was built
+                # without a known name (see its docstring).
+                name = assignment.statement.partition("=")[0].partition(":")[0].strip()
             if self._is_private(name):
                 return None
         return assignment.statement
@@ -262,7 +275,9 @@ class Builder:
                 name=enum.enum_name,
                 bases=["enum.IntEnum"],
                 scope=PyiScope(
-                    assignments=[PyiAssignment(f"{name} = ...") for name in enum.names],
+                    assignments=[
+                        PyiAssignment(f"{name} = ...", name=name) for name in enum.names
+                    ],
                 ),
             )
             return self.build_class(class_)
