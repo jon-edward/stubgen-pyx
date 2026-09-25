@@ -333,6 +333,252 @@ class Converter:
 
         return extra_assignments, extra_enums, extra_structs, extra_functions
 
+    def _convert_cdef_assignments(
+        self,
+        visitor: ScopeVisitor,
+        ctypedef_aliases: dict[str, str],
+    ) -> tuple[list[PyiAssignment], set[str]]:
+        assignments: list[PyiAssignment] = []
+        handled_names: set[str] = set()
+        static_property_types = (
+            getattr(visitor.node, "_stubgen_static_property_types", None) or {}
+        )
+        for cdef_variable in visitor.cdef_variables:
+            for name, base_type in get_cdef_variables(cdef_variable):
+                static_type = static_property_types.get(name)
+                if (
+                    static_type is not None
+                    and base_type is not None
+                    and static_type.endswith(f".{base_type}")
+                ):
+                    base_type = static_type
+
+                resolved_type = with_debug_fallback(
+                    base_type,
+                    "_typeshed.Incomplete",
+                    f"Unable to determine type for {name}",
+                )
+                resolved_type = _substitute_ctypedef_aliases(
+                    resolved_type, ctypedef_aliases
+                )
+                assignments.append(
+                    PyiAssignment(f"{name}: {resolved_type}", name=name)
+                )
+                handled_names.add(name)
+        return assignments, handled_names
+
+    def _convert_scope_members(
+        self,
+        visitor: ScopeVisitor,
+        source_code: str,
+        comments: CommentIndex,
+        include_docstrings: bool,
+        fused_types: dict[str, PyiFusedType],
+        ctypedef_aliases: dict[str, str],
+        resolve_ctypedef_aliases: bool,
+        defer_ctypedef_pruning: bool,
+        prunable_ctypedef_aliases: dict[str, PyiAssignment] | None,
+    ) -> tuple[list[PyiFunction], list[PyiClass], list[PyiClass]]:
+        cdef_funcs = [
+            (
+                node.pos[1],
+                self.convert_cdef_func(
+                    node,
+                    source_code,
+                    comments,
+                    include_docstrings,
+                    fused_types,
+                    ctypedef_aliases=ctypedef_aliases,
+                ),
+            )
+            for node in visitor.cdef_functions
+        ]
+        py_funcs = [
+            (
+                node.pos[1],
+                self.convert_py_func(
+                    node,
+                    source_code,
+                    comments,
+                    include_docstrings,
+                    fused_types,
+                    ctypedef_aliases=ctypedef_aliases,
+                ),
+            )
+            for node in visitor.py_functions
+        ]
+
+        contains_init = any(py_func.name == "__init__" for _, py_func in py_funcs)
+        for idx, (_, py_func) in enumerate(py_funcs):
+            if py_func.name == "__cinit__" and not contains_init:
+                py_func.name = "__init__"
+            elif py_func.name == "__cinit__" and contains_init:
+                del py_funcs[idx]
+                break
+
+        functions = [
+            function
+            for _, function in sorted(cdef_funcs + py_funcs, key=lambda item: item[0])
+        ]
+        structs_or_enums = [
+            convert_struct_or_union(node) for node in visitor.cdef_structs_or_unions
+        ]
+        classes = [
+            self.convert_class(
+                class_visitor,
+                source_code,
+                comments,
+                include_docstrings,
+                fused_types,
+                resolve_ctypedef_aliases=resolve_ctypedef_aliases,
+                inherited_ctypedef_aliases=ctypedef_aliases,
+                defer_ctypedef_pruning=defer_ctypedef_pruning,
+                prunable_ctypedef_aliases=prunable_ctypedef_aliases,
+            )
+            for class_visitor in visitor.classes
+        ]
+        return functions, classes, structs_or_enums
+
+    @staticmethod
+    def _collect_scope_handled_names(
+        visitor: ScopeVisitor,
+        functions: list[PyiFunction],
+        cdef_handled_names: set[str],
+    ) -> set[str]:
+        handled_names = set(cdef_handled_names)
+        handled_names.update(function.name for function in functions)
+        handled_names.update(
+            (
+                class_visitor.node.class_name
+                if isinstance(class_visitor.node, Nodes.CClassDefNode)
+                else class_visitor.node.name
+            )
+            for class_visitor in visitor.classes
+        )
+        handled_names.update(
+            name
+            for name in (
+                getattr(node, "name", None)
+                for node in visitor.cdef_structs_or_unions
+            )
+            if name
+        )
+        handled_names.update(
+            name
+            for name in (getattr(node, "name", None) for node in visitor.cpp_classes)
+            if name
+        )
+        handled_names.update(
+            name
+            for name in (
+                getattr(getattr(assignment, "lhs", None), "name", None)
+                for assignment in visitor.assignments
+            )
+            if name
+        )
+        handled_names.update(
+            name
+            for name in (
+                getattr(getattr(assignment, "declarator", None), "name", None)
+                for assignment in visitor.assignments
+            )
+            if name
+        )
+        handled_names.update(
+            name for name in (getattr(enum, "name", None) for enum in visitor.enums) if name
+        )
+        return handled_names
+
+    @staticmethod
+    def _find_fused_typevar_names(
+        typevar_candidates: dict[str, PyiFusedType],
+        functions: list[PyiFunction],
+        classes: list[PyiClass],
+    ) -> list[str]:
+        scope = PyiScope(functions=functions, classes=classes)
+        return [
+            name
+            for name in typevar_candidates
+            if any(
+                any(
+                    _annotation_uses_name(argument.annotation, name)
+                    for argument in function.signature.args
+                )
+                or _annotation_uses_name(function.signature.return_type, name)
+                for function in _scope_functions(scope)
+            )
+        ]
+
+    def _prune_scope_assignments(
+        self,
+        conv_assignments_with_source: list[tuple[object, PyiAssignment | None]],
+        functions: list[PyiFunction],
+        classes: list[PyiClass],
+        cdef_assignments: list[PyiAssignment],
+        extra_assignments: list[PyiAssignment],
+        local_ctypedef_aliases: dict[str, str],
+        resolve_ctypedef_aliases: bool,
+        defer_ctypedef_pruning: bool,
+    ) -> tuple[list[PyiAssignment], list[tuple[str, PyiAssignment]]]:
+        functions_and_classes = PyiScope(functions=functions, classes=classes)
+        other_statements = [assignment.statement for assignment in cdef_assignments] + [
+            assignment.statement
+            for assignment in extra_assignments
+            if isinstance(assignment, PyiAssignment)
+        ]
+
+        def _ctypedef_alias_name(raw_node) -> str | None:
+            if not (
+                resolve_ctypedef_aliases and isinstance(raw_node, Nodes.CTypeDefNode)
+            ):
+                return None
+            name, _ = extract_name_and_type(raw_node)
+            return name if name in local_ctypedef_aliases else None
+
+        def _is_used_elsewhere(
+            name: str, own_statement: str | None, live: list[PyiAssignment]
+        ) -> bool:
+            for function in _scope_functions(functions_and_classes):
+                if any(
+                    _text_uses_name(argument.annotation, name)
+                    for argument in function.signature.args
+                ) or _text_uses_name(function.signature.return_type, name):
+                    return True
+            for converted in live:
+                if converted.statement != own_statement and _text_uses_name(
+                    converted.statement, name
+                ):
+                    return True
+            return any(_text_uses_name(statement, name) for statement in other_statements)
+
+        live_assignments = [
+            (raw_node, converted)
+            for raw_node, converted in conv_assignments_with_source
+            if converted is not None
+        ]
+        locally_dead: list[tuple[str, PyiAssignment]] = []
+        for _ in range(len(live_assignments)):
+            pruned_this_pass = False
+            still_live = []
+            live_converted = [converted for _, converted in live_assignments]
+            for raw_node, converted in live_assignments:
+                alias_name = _ctypedef_alias_name(raw_node)
+                if alias_name is not None and not _is_used_elsewhere(
+                    alias_name, converted.statement, live_converted
+                ):
+                    pruned_this_pass = True
+                    locally_dead.append((alias_name, converted))
+                    continue
+                still_live.append((raw_node, converted))
+            live_assignments = still_live
+            if not pruned_this_pass:
+                break
+
+        converted_assignments = [converted for _, converted in live_assignments]
+        if defer_ctypedef_pruning:
+            converted_assignments += [converted for _, converted in locally_dead]
+        return converted_assignments, locally_dead
+
     def convert_scope(
         self,
         visitor: ScopeVisitor,
@@ -404,125 +650,26 @@ class Converter:
             **local_ctypedef_aliases,
         }
 
-        cdef_assignments: list[PyiAssignment] = []
-        cdef_handled_names: set[str] = set()
-        static_property_types = (
-            getattr(visitor.node, "_stubgen_static_property_types", None) or {}
+        cdef_assignments, cdef_handled_names = self._convert_cdef_assignments(
+            visitor, ctypedef_aliases
         )
-        for cdef_variable in visitor.cdef_variables:
-            for name, base_type in get_cdef_variables(cdef_variable):
-                # Prefer the pre-pipeline-captured qualified type (see
-                # `type_parsing.capture_static_types`'s CVarDefNode
-                # branch) only when it's recovering a genuinely lost
-                # module qualifier -- `get_cdef_variables`'s own result
-                # already correctly handles special cases the captured
-                # text alone doesn't know about (`char*` -> `bytes`;
-                # blindly preferring the capture would regress exactly
-                # that, producing `char` instead), so this only
-                # overrides when the entries-based result is a plain
-                # name and the capture is that same name with a
-                # `.`-qualifier in front of it (`Foo` vs `mod.Foo`) --
-                # never when entries-based resolution returned nothing
-                # at all (`None`, a genuinely unresolvable reference;
-                # leave that to `_typeshed.
-                # Incomplete`/`postprocessing/trim_not_defined.py`
-                # exactly as before) or something unrelated.
-                static_type = static_property_types.get(name)
-                if (
-                    static_type is not None
-                    and base_type is not None
-                    and static_type.endswith(f".{base_type}")
-                ):
-                    base_type = static_type
-
-                resolved_type = with_debug_fallback(
-                    base_type,
-                    "_typeshed.Incomplete",
-                    f"Unable to determine type for {name}",
-                )
-                resolved_type = _substitute_ctypedef_aliases(
-                    resolved_type, ctypedef_aliases
-                )
-                cdef_assignments.append(
-                    PyiAssignment(f"{name}: {resolved_type}", name=name)
-                )
-                cdef_handled_names.add(name)
-
-        # Preserve source order across cdef and def functions
-        cdef_funcs = [
-            (
-                node.pos[1],
-                self.convert_cdef_func(
-                    node,
-                    source_code,
-                    comments,
-                    include_docstrings,
-                    fused_types,
-                    ctypedef_aliases=ctypedef_aliases,
-                ),
-            )
-            for node in visitor.cdef_functions
-        ]
-        py_funcs = [
-            (
-                node.pos[1],
-                self.convert_py_func(
-                    node,
-                    source_code,
-                    comments,
-                    include_docstrings,
-                    fused_types,
-                    ctypedef_aliases=ctypedef_aliases,
-                ),
-            )
-            for node in visitor.py_functions
-        ]
-
-        # Replace __cinit__ with __init__ if no __init__ is present, otherwise remove
-        contains_init = any(py_func.name == "__init__" for _, py_func in py_funcs)
-
-        for idx, (_, py_func) in enumerate(py_funcs):
-            if py_func.name == "__cinit__" and not contains_init:
-                py_func.name = "__init__"
-            elif py_func.name == "__cinit__" and contains_init:
-                del py_funcs[idx]
-                break
-
-        all_funcs_sorted = sorted(cdef_funcs + py_funcs, key=lambda t: t[0])
-        functions = [f for _, f in all_funcs_sorted]
-        structs_or_enums = [
-            convert_struct_or_union(node) for node in visitor.cdef_structs_or_unions
-        ]
-        classes = [
-            self.convert_class(
-                class_visitor,
-                source_code,
-                comments,
-                include_docstrings,
-                fused_types,
-                resolve_ctypedef_aliases=resolve_ctypedef_aliases,
-                inherited_ctypedef_aliases=ctypedef_aliases,
-                defer_ctypedef_pruning=defer_ctypedef_pruning,
-                prunable_ctypedef_aliases=prunable_ctypedef_aliases,
-            )
-            for class_visitor in visitor.classes
-        ]
+        functions, classes, structs_or_enums = self._convert_scope_members(
+            visitor,
+            source_code,
+            comments,
+            include_docstrings,
+            fused_types,
+            ctypedef_aliases,
+            resolve_ctypedef_aliases,
+            defer_ctypedef_pruning,
+            prunable_ctypedef_aliases,
+        )
         typevar_candidates = (
             fused_types if emit_inherited_fused_typevars else local_fused_types
         )
-        typevar_scan_scope = PyiScope(functions=functions, classes=classes)
-        fused_typevar_names = [
-            name
-            for name in typevar_candidates
-            if any(
-                any(
-                    _annotation_uses_name(arg.annotation, name)
-                    for arg in function.signature.args
-                )
-                or _annotation_uses_name(function.signature.return_type, name)
-                for function in _scope_functions(typevar_scan_scope)
-            )
-        ]
+        fused_typevar_names = self._find_fused_typevar_names(
+            typevar_candidates, functions, classes
+        )
 
         conv_assignments_with_source = [
             (
@@ -534,42 +681,8 @@ class Converter:
 
         cpp_classes = (convert_cpp_class(node) for node in visitor.cpp_classes)
 
-        handled_names: set[str] = set(cdef_handled_names)
-        handled_names.update(f.name for f in functions)
-        handled_names.update(
-            (
-                c.node.class_name
-                if isinstance(c.node, Nodes.CClassDefNode)
-                else c.node.name
-            )
-            for c in visitor.classes
-        )
-        handled_names.update(
-            n
-            for n in (getattr(s, "name", None) for s in visitor.cdef_structs_or_unions)
-            if n
-        )
-        handled_names.update(
-            n for n in (getattr(n, "name", None) for n in visitor.cpp_classes) if n
-        )
-        handled_names.update(
-            n
-            for n in (
-                getattr(getattr(a, "lhs", None), "name", None)
-                for a in visitor.assignments
-            )
-            if n
-        )
-        handled_names.update(
-            n
-            for n in (
-                getattr(getattr(a, "declarator", None), "name", None)
-                for a in visitor.assignments
-            )
-            if n
-        )
-        handled_names.update(
-            n for n in (getattr(e, "name", None) for e in visitor.enums) if n
+        handled_names = self._collect_scope_handled_names(
+            visitor, functions, cdef_handled_names
         )
 
         extra_assignments, extra_enums, extra_structs, extra_functions = (
@@ -577,87 +690,16 @@ class Converter:
         )
         functions = functions + extra_functions
 
-        # A ctypedef alias declared *in this scope* (local_ctypedef_aliases,
-        # as opposed to one merely visible here because an outer scope
-        # declared it) whose every usage `resolve_ctypedef_aliases`
-        # substituted away is now dead code -- and, empirically confirmed,
-        # misleading dead code: a `ctypedef` has no runtime/Python-level
-        # binding at all (confirmed by actually compiling and importing a
-        # module -- `from mod import MyFloat` raises ImportError even
-        # though `mod.pyx` declares `ctypedef double MyFloat`), so a
-        # module-level `MyFloat: TypeAlias = float` a type checker sees in
-        # the stub but nothing else in the stub actually uses claims an
-        # importable name that was never real to begin with. Pruned only
-        # once every other usage is confirmed gone (a still-live sibling
-        # alias's own declaration, e.g. `MyFloat2: TypeAlias = MyFloat`,
-        # counts as a use, conservatively keeping `MyFloat` around in that
-        # case rather than risking a dangling reference).
-        functions_and_classes = PyiScope(functions=functions, classes=classes)
-        other_statements = [a.statement for a in cdef_assignments] + [
-            a.statement for a in extra_assignments if isinstance(a, PyiAssignment)
-        ]
-
-        def _ctypedef_alias_name(raw_node) -> str | None:
-            if not (
-                resolve_ctypedef_aliases and isinstance(raw_node, Nodes.CTypeDefNode)
-            ):
-                return None
-            name, _ = extract_name_and_type(raw_node)
-            return name if name in local_ctypedef_aliases else None
-
-        def _is_used_elsewhere(name: str, own_statement: str | None, live) -> bool:
-            for function in _scope_functions(functions_and_classes):
-                if any(
-                    _text_uses_name(arg.annotation, name)
-                    for arg in function.signature.args
-                ) or _text_uses_name(function.signature.return_type, name):
-                    return True
-            for converted in live:
-                if converted.statement == own_statement:
-                    continue
-                if _text_uses_name(converted.statement, name):
-                    return True
-            return any(_text_uses_name(s, name) for s in other_statements)
-
-        # A fixed-point loop, not a single pass: pruning MyFloat2 (once
-        # confirmed unused *within this file*) can be exactly what makes
-        # MyFloat -- only ever referenced via MyFloat2's own declaration
-        # -- unused too. Bounded by len(...) since each successful pass
-        # removes at least one item; a pass that removes nothing ends
-        # the loop immediately regardless. This is always safe to run,
-        # deferred or not: it only ever *shrinks* the set of candidates
-        # `defer_ctypedef_pruning` needs the batch-wide check for, since
-        # "still used somewhere in this file" only gets stronger as
-        # provisional removals compound, never weaker.
-        live_assignments = [
-            (raw_node, converted)
-            for raw_node, converted in conv_assignments_with_source
-            if converted is not None
-        ]
-        locally_dead: list[tuple[str, PyiAssignment]] = []
-        for _ in range(len(live_assignments)):
-            pruned_this_pass = False
-            still_live = []
-            live_converted = [converted for _, converted in live_assignments]
-            for raw_node, converted in live_assignments:
-                alias_name = _ctypedef_alias_name(raw_node)
-                if alias_name is not None and not _is_used_elsewhere(
-                    alias_name, converted.statement, live_converted
-                ):
-                    pruned_this_pass = True
-                    locally_dead.append((alias_name, converted))
-                    continue
-                still_live.append((raw_node, converted))
-            live_assignments = still_live
-            if not pruned_this_pass:
-                break
-        conv_assignments = [converted for _, converted in live_assignments]
-        if defer_ctypedef_pruning:
-            # Not actually dead yet -- just locally unreferenced. Left in
-            # the output; the caller (stubgen.py's convert_multiple_files)
-            # cross-checks every other file in the batch before deciding
-            # whether to really remove any of these.
-            conv_assignments += [converted for _, converted in locally_dead]
+        conv_assignments, locally_dead = self._prune_scope_assignments(
+            conv_assignments_with_source,
+            functions,
+            classes,
+            cdef_assignments,
+            extra_assignments,
+            local_ctypedef_aliases,
+            resolve_ctypedef_aliases,
+            defer_ctypedef_pruning,
+        )
 
         scope = PyiScope(
             assignments=[
