@@ -46,10 +46,10 @@ jobs:
         run: |
           uv python install ${{ matrix.python-version }}
           uv venv
-          uv pip install ".[test]" "cython==${{ matrix.cython-version }}" --upgrade-package cython
+          uv pip install ".[test]"
       - name: Verify installed Cython version
         run: |
-          uv run python -c "import Cython; assert Cython.__version__ == '${{ matrix.cython-version }}', Cython.__version__; print('Cython', Cython.__version__)"
+          uv run --with "cython==${{ matrix.cython-version }}" python -c "import Cython; assert Cython.__version__ == '${{ matrix.cython-version }}', Cython.__version__; print('Cython', Cython.__version__)"
       - name: Test with pytest
         run: |
           uv run pytest tests/
