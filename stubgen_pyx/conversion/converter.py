@@ -199,6 +199,76 @@ class Converter:
                 if python_type:
                     self.cimport_alias_map[alias] = python_type
 
+    @staticmethod
+    def _recover_static_annotations(
+        visitor: ScopeVisitor,
+        handled_names: set[str],
+        ctypedef_aliases: dict[str, str] | None,
+    ) -> list[PyiAssignment]:
+        assignments = []
+        for name, type_str in (
+            getattr(visitor.node, "_stubgen_static_annotations", ()) or ()
+        ):
+            if name in handled_names:
+                continue
+            type_str = _substitute_ctypedef_aliases(type_str, ctypedef_aliases or {})
+            assignments.append(PyiAssignment(f"{name}: {type_str}", name=name))
+            handled_names.add(name)
+        return assignments
+
+    @staticmethod
+    def _convert_declared_entry(
+        visitor: ScopeVisitor,
+        name: str,
+        entry,
+        ctypedef_aliases: dict[str, str] | None,
+    ) -> tuple[
+        PyiAssignment | None,
+        PyiEnum | None,
+        PyiClass | None,
+        PyiFunction | None,
+    ]:
+        t = entry.type
+        if entry.is_type:
+            if getattr(t, "is_enum", False) or getattr(t, "is_cpp_enum", False):
+                if entry.create_wrapper:
+                    return (
+                        None,
+                        PyiEnum(enum_name=name, names=list(t.values)),
+                        None,
+                        None,
+                    )
+                return (
+                    PyiAssignment(
+                        f"{name}: typing_extensions.TypeAlias = int", name=name
+                    ),
+                    None,
+                    None,
+                    None,
+                )
+            if getattr(t, "is_struct_or_union", False):
+                return None, None, convert_struct_or_union_type(t), None
+            return None, None, None, None
+
+        if entry.is_cfunction:
+            function = (
+                _convert_declared_function(name, t) if entry.create_wrapper else None
+            )
+            return None, None, None, function
+
+        if not entry.is_variable or not (
+            visitor.in_class and entry.visibility in ("public", "readonly")
+        ):
+            return None, None, None, None
+        type_name = render_pyrex_type(t)
+        resolved = with_debug_fallback(
+            type_name,
+            "_typeshed.Incomplete",
+            lambda name_=name: f"Unable to determine type for {name_}",
+        )
+        resolved = _substitute_ctypedef_aliases(resolved, ctypedef_aliases or {})
+        return PyiAssignment(f"{name}: {resolved}", name=name), None, None, None
+
     def _convert_declared_entries(
         self,
         visitor: ScopeVisitor,
@@ -233,103 +303,29 @@ class Converter:
         extra_structs: list[PyiClass] = []
         extra_functions: list[PyiFunction] = []
 
-        # Bare annotated attributes (`x: int`, no `= ...`) at module or
-        # plain-class scope are folded by `AnalyseDeclarationsTransform`
-        # into a single synthetic `__annotations__ = {...}` dict assignment
-        # -- `ScopeVisitor.visit_SingleAssignmentNode` drops that synthetic
-        # node on sight, so the individually-typed attributes it was built
-        # from are recovered here instead, from the pre-pipeline snapshot
-        # `capture_static_types` stashed on the enclosing module/class node.
-        for name, type_str in (
-            getattr(visitor.node, "_stubgen_static_annotations", ()) or ()
-        ):
-            if name in handled_names:
-                continue
-            type_str = _substitute_ctypedef_aliases(type_str, ctypedef_aliases or {})
-            extra_assignments.append(PyiAssignment(f"{name}: {type_str}", name=name))
-            handled_names.add(name)
+        extra_assignments.extend(
+            self._recover_static_annotations(visitor, handled_names, ctypedef_aliases)
+        )
 
         for name, entry in scope.entries.items():
             if name in handled_names or (name.startswith("__") and name.endswith("__")):
                 continue
             if name.startswith("__pyx_"):
-                # Compiler-synthesized (e.g. `__pyx_opt_args_...` structs
-                # bundling optional C arguments) -- never user-declared.
-                # See `analysis/visitor.py::visit_CStructOrUnionDefNode`.
                 continue
             if entry.scope is not scope:
                 continue
 
-            t = entry.type
-            # `is_enum` alone misses a C++11 scoped `enum class`
-            # (`PyrexTypes.CppScopedEnumType`, which sets `is_cpp_enum`
-            # instead) -- confirmed directly: `entry.type.is_enum` is
-            # `False` for one even though `.values`/`.create_wrapper`
-            # (both shared via `EnumMixin`) work identically to a plain
-            # enum, so it was falling through this branch entirely and
-            # being silently dropped from the stub.
-            if entry.is_type and (
-                getattr(t, "is_enum", False) or getattr(t, "is_cpp_enum", False)
-            ):
-                if entry.create_wrapper:
-                    extra_enums.append(PyiEnum(enum_name=name, names=list(t.values)))
-                else:
-                    extra_assignments.append(
-                        PyiAssignment(
-                            f"{name}: typing_extensions.TypeAlias = int", name=name
-                        )
-                    )
-                continue
-            if entry.is_type and getattr(t, "is_struct_or_union", False):
-                extra_structs.append(convert_struct_or_union_type(t))
-                continue
-            if entry.is_type:
-                # Fused types without a surviving node are emitted via the
-                # existing `fused_types`/`convert_fused_type` machinery
-                # elsewhere in `convert_scope`; other bare type entries
-                # (e.g. a `ctypedef` with no further use) are skipped
-                # rather than guessed at.
-                continue
-            if entry.is_cfunction:
-                # A `cpdef` function declared with no body of its own --
-                # directly inside `cdef extern from ...:`, the common
-                # case -- has no surviving `CFuncDefNode`/`DefNode` to
-                # convert structurally (there's nothing to keep a node
-                # *for*: no body, no decorators, nothing but the
-                # signature, which the pipeline resolves straight onto
-                # the entry's own `CFuncType`). `create_wrapper` is the
-                # same signal used for a struct/enum/variable above:
-                # `False` for a plain, non-`cpdef` extern `cdef`
-                # declaration, which has no Python wrapper and is
-                # correctly skipped, same as any other C-only name.
-                if entry.create_wrapper:
-                    extra_functions.append(_convert_declared_function(name, t))
-                continue
-            if entry.is_variable:
-                # Matches `visit_CVarDefNode`'s own filter (see
-                # `analysis/visitor.py`): a bare variable is only
-                # Python-visible -- and thus only worth emitting -- when
-                # it's an in-class `public`/`readonly` attribute. At
-                # module scope, a "private"/no-visibility `cdef` variable
-                # is a pure C global with no Python binding at all (not
-                # importable), so it's skipped here exactly as it always
-                # was when it still had a `CVarDefNode` to filter.
-                if not (
-                    visitor.in_class and entry.visibility in ("public", "readonly")
-                ):
-                    continue
-                type_name = render_pyrex_type(t)
-                resolved = with_debug_fallback(
-                    type_name,
-                    "_typeshed.Incomplete",
-                    lambda name_=name: f"Unable to determine type for {name_}",
-                )
-                resolved = _substitute_ctypedef_aliases(
-                    resolved, ctypedef_aliases or {}
-                )
-                extra_assignments.append(
-                    PyiAssignment(f"{name}: {resolved}", name=name)
-                )
+            assignment, enum, struct, function = self._convert_declared_entry(
+                visitor, name, entry, ctypedef_aliases
+            )
+            if assignment is not None:
+                extra_assignments.append(assignment)
+            if enum is not None:
+                extra_enums.append(enum)
+            if struct is not None:
+                extra_structs.append(struct)
+            if function is not None:
+                extra_functions.append(function)
 
         return extra_assignments, extra_enums, extra_structs, extra_functions
 
@@ -361,9 +357,7 @@ class Converter:
                 resolved_type = _substitute_ctypedef_aliases(
                     resolved_type, ctypedef_aliases
                 )
-                assignments.append(
-                    PyiAssignment(f"{name}: {resolved_type}", name=name)
-                )
+                assignments.append(PyiAssignment(f"{name}: {resolved_type}", name=name))
                 handled_names.add(name)
         return assignments, handled_names
 
@@ -458,8 +452,7 @@ class Converter:
         handled_names.update(
             name
             for name in (
-                getattr(node, "name", None)
-                for node in visitor.cdef_structs_or_unions
+                getattr(node, "name", None) for node in visitor.cdef_structs_or_unions
             )
             if name
         )
@@ -485,7 +478,9 @@ class Converter:
             if name
         )
         handled_names.update(
-            name for name in (getattr(enum, "name", None) for enum in visitor.enums) if name
+            name
+            for name in (getattr(enum, "name", None) for enum in visitor.enums)
+            if name
         )
         return handled_names
 
@@ -549,7 +544,9 @@ class Converter:
                     converted.statement, name
                 ):
                     return True
-            return any(_text_uses_name(statement, name) for statement in other_statements)
+            return any(
+                _text_uses_name(statement, name) for statement in other_statements
+            )
 
         live_assignments = [
             (raw_node, converted)
