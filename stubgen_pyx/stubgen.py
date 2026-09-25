@@ -530,34 +530,13 @@ class StubgenPyx:
 
         return results
 
-    def _convert_multiple_files_with_ctypedef_pruning(
+    def _prepare_multiple_file_conversions(
         self,
         pyx_paths: list[Path],
         context: StubgenContext,
         output_dir: Path | None,
         common_root: Path | None,
-        dry_run: bool,
-    ) -> list[ConversionResult]:
-        """`convert_multiple_files`'s batch-aware path for
-        `resolve_ctypedef_aliases`, in three phases:
-
-        1. Convert every file to a `PyiModule` (deferring any ctypedef
-           -alias-pruning decision -- see `Converter.convert_scope`'s
-           docstring) without rendering or writing any of them yet.
-        2. For each file's provisionally-dead alias, check every *other*
-           successfully-converted file's module in this batch
-           (`pyi_module_uses_name`) -- only actually remove it from its
-           origin file's assignments once nothing else in the batch
-           needs it either.
-        3. Render (`_finalize`) and write each file, same as
-           `convert_single_file` does for one.
-
-        `continue_on_error`/exception behavior matches
-        `convert_single_file` exactly at each file, just spread across
-        these phases instead of one contiguous try/except.
-        """
-        # (pyx_path, pyi_path, early_result | None, converter | None,
-        #  module | None, diagnostics | None, prunable | None)
+    ) -> list[tuple]:
         prepared: list[tuple] = []
         for pyx_path in pyx_paths:
             pyi_path = self._resolve_pyi_path(pyx_path, output_dir, common_root)
@@ -600,7 +579,10 @@ class StubgenPyx:
                 prepared.append(
                     (pyx_path, pyi_path, early_result, None, None, None, None)
                 )
+        return prepared
 
+    @staticmethod
+    def _prune_prepared_ctypedef_aliases(prepared: list[tuple]) -> None:
         successful_modules = [entry[4] for entry in prepared if entry[4] is not None]
         for _, _, early_result, _, module, _, prunable in prepared:
             if early_result is not None or not prunable:
@@ -613,6 +595,9 @@ class StubgenPyx:
                 if not used_elsewhere:
                     remove_assignment_from_module(module, assignment)
 
+    def _finalize_prepared_conversions(
+        self, prepared: list[tuple], dry_run: bool
+    ) -> list[ConversionResult]:
         results: list[ConversionResult] = []
         for (
             pyx_path,
@@ -657,8 +642,39 @@ class StubgenPyx:
             results.append(result)
             if self.config.verbose or not result.success:
                 _logger.info(result.status_message)
-
         return results
+
+    def _convert_multiple_files_with_ctypedef_pruning(
+        self,
+        pyx_paths: list[Path],
+        context: StubgenContext,
+        output_dir: Path | None,
+        common_root: Path | None,
+        dry_run: bool,
+    ) -> list[ConversionResult]:
+        """`convert_multiple_files`'s batch-aware path for
+        `resolve_ctypedef_aliases`, in three phases:
+
+        1. Convert every file to a `PyiModule` (deferring any ctypedef
+           -alias-pruning decision -- see `Converter.convert_scope`'s
+           docstring) without rendering or writing any of them yet.
+        2. For each file's provisionally-dead alias, check every *other*
+           successfully-converted file's module in this batch
+           (`pyi_module_uses_name`) -- only actually remove it from its
+           origin file's assignments once nothing else in the batch
+           needs it either.
+        3. Render (`_finalize`) and write each file, same as
+           `convert_single_file` does for one.
+
+        `continue_on_error`/exception behavior matches
+        `convert_single_file` exactly at each file, just spread across
+        these phases instead of one contiguous try/except.
+        """
+        prepared = self._prepare_multiple_file_conversions(
+            pyx_paths, context, output_dir, common_root
+        )
+        self._prune_prepared_ctypedef_aliases(prepared)
+        return self._finalize_prepared_conversions(prepared, dry_run)
 
     def _compile_file_with_error_handling(
         self,

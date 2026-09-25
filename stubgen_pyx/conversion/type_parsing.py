@@ -83,26 +83,10 @@ def parameterize_builtin_generic(name: str | None) -> str | None:
 def render_pyrex_type(
     t: _PyrexTypes.PyrexType | None, *, _depth: int = 0
 ) -> str | None:
-    """Render a resolved ``PyrexTypes.Type`` as a Python annotation string.
-
-    The Entry/Type-based counterpart to ``extract_type_from_base_type``,
-    for the (common, post-analysis) case where there's no raw
-    ``base_type`` AST node left to walk structurally -- see the design
-    doc, "FileDescriptors instead of StringDescriptors": once real
-    declaration analysis runs, many declarations (module/class-level
-    variables with no initializer, ``cdef enum``, ``cdef struct``/
-    ``union``) are removed from the tree entirely and exist only as
-    ``Entry`` objects, each carrying a resolved ``.type``. Follows the
-    same output conventions as the structural path (``char *`` ->
-    ``"bytes"``, fixed arrays -> ``list[T]``, C++ templates ->
-    ``"Base[T1, T2]"``, typed memoryviews -> ``numpy.typing.NDArray[...]``)
-    so callers don't see a difference depending on which path resolved a
-    given declaration.
-    """
+    """Render a resolved ``PyrexTypes.Type`` as a Python annotation string."""
     if t is None:
         return None
     if getattr(t, "is_cv_qualified", False):
-        # Qualifiers have no Python-level equivalent; render the base type.
         return render_pyrex_type(t.cv_base_type, _depth=_depth)
     return _render_unqualified_pyrex_type(t, _depth=_depth)
 
@@ -112,7 +96,6 @@ def _render_unqualified_pyrex_type(
 ) -> str | None:
     if t.is_void:
         return "None"
-
     renderers = (
         _render_pointer_type,
         _render_array_type,
@@ -191,6 +174,82 @@ def _render_cpp_template_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str |
         for argument_idx, argument in enumerate(t.templates)
     ]
     return f"{base}[{', '.join(parts)}]"
+
+
+def _extract_resolved_type(node) -> str | None:
+    resolved_type = getattr(node, "type", None) or getattr(
+        getattr(node, "entry", None), "type", None
+    )
+    expected = resolved_type is None or (
+        resolved_type is _PyrexTypes.py_object_type
+        or isinstance(node, (Nodes.CFuncDefNode, Nodes.DefNode))
+    )
+    if expected:
+        if resolved_type is None:
+            _logger.debug("Unknown base type: %s", type(node).__name__)
+        return None
+    rendered = render_pyrex_type(resolved_type)
+    if rendered is not None:
+        return rendered
+    _logger.debug("Unknown base type: %s", type(node).__name__)
+    return None
+
+
+def _extract_structural_type(node, base_type, is_ptr: bool) -> str | None:
+    if not is_ptr:
+        is_ptr = isinstance(getattr(node, "declarator", None), Nodes.CPtrDeclaratorNode)
+
+    if isinstance(base_type, Nodes.CTupleBaseTypeNode):
+        return _extract_tuple_type(base_type)
+    if isinstance(base_type, Nodes.TemplatedTypeNode):
+        return _extract_templated_type(base_type)
+    if isinstance(base_type, Nodes.MemoryViewSliceTypeNode):
+        return _extract_memoryview_type(base_type)
+
+    name = _type_from_base_type_name(base_type)
+    if isinstance(node, Nodes.CVarDefNode) and name is None:
+        return "typing.Any"
+    if is_ptr and name == "char":
+        return "bytes"
+    if is_ptr and name == "void":
+        return "typing.Any"
+    return parameterize_builtin_generic(name)
+
+
+def extract_type_from_base_type(node, is_ptr: bool = False) -> str | None:
+    """Extract a type annotation string from a base_type node.
+
+    Handles plain named types, pointer types (``char *`` -> ``bytes``),
+    tuple types, C++ templated types, fixed-size C arrays, and typed
+    memoryviews.
+
+    Checks for a value stashed by `capture_static_types` first: some
+    Python-generic-parameterized types (``list[int]``) lose their
+    parameters once resolved to a real `PyrexTypes.Type` (there's no
+    equivalent to `CppClassType.templates` for them), so a pre-pipeline
+    snapshot of the structural extraction can be strictly more precise
+    than either a live walk of the (possibly since-cleared) node or the
+    `Entry`/`Type` fallback below. Only trusted when it's a real result;
+    a captured `None` falls through to the logic below instead, since
+    `Entry`/`Type` info didn't exist yet at capture time and might still
+    resolve something now.
+    """
+    static_type = getattr(node, "_stubgen_static_type", None)
+    if static_type is not None:
+        return static_type
+
+    try:
+        base_type = node.base_type
+        if isinstance(base_type, _ConstOrVolatileTypeNode):
+            base_type = base_type.base_type
+    except AttributeError:
+        if isinstance(node, ExprNodes.ExprNode):
+            return unparse_expr(node)
+        base_type = None
+
+    if base_type is None:
+        return _extract_resolved_type(node)
+    return _extract_structural_type(node, base_type, is_ptr)
 
 
 def _render_named_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str | None:
@@ -598,127 +657,6 @@ def _capture_static_types_recursive(node, enclosing, seen: set[int]) -> None:
     _capture_fused_members(node, enclosing)
 
     _capture_children(node, enclosing, seen)
-
-
-def extract_type_from_base_type(node, is_ptr: bool = False) -> str | None:
-    """Extract a type annotation string from a base_type node.
-
-    Handles plain named types, pointer types (``char *`` -> ``bytes``),
-    tuple types, C++ templated types, fixed-size C arrays, and typed
-    memoryviews.
-
-    Checks for a value stashed by `capture_static_types` first: some
-    Python-generic-parameterized types (``list[int]``) lose their
-    parameters once resolved to a real `PyrexTypes.Type` (there's no
-    equivalent to `CppClassType.templates` for them), so a pre-pipeline
-    snapshot of the structural extraction can be strictly more precise
-    than either a live walk of the (possibly since-cleared) node or the
-    `Entry`/`Type` fallback below. Only trusted when it's a real result;
-    a captured `None` falls through to the logic below instead, since
-    `Entry`/`Type` info didn't exist yet at capture time and might still
-    resolve something now.
-    """
-    # Trust a captured value only when it's a real, positive result --
-    # `capture_static_types` runs before `Entry`/`Type` info exists, so a
-    # `None` there just means structural extraction alone found nothing
-    # *at that point*; the `Entry`/`Type` fallback below might still
-    # succeed once the pipeline has run, and should get the chance to.
-    static_type = getattr(node, "_stubgen_static_type", None)
-    if static_type is not None:
-        return static_type
-
-    try:
-        base_type = node.base_type
-        if isinstance(base_type, _ConstOrVolatileTypeNode):
-            base_type = base_type.base_type
-    except AttributeError:
-        base_type = None
-        if isinstance(node, ExprNodes.ExprNode):
-            return unparse_expr(node)
-
-    if base_type is None:
-        resolved_type = getattr(node, "type", None) or getattr(
-            getattr(node, "entry", None), "type", None
-        )
-        # A CFuncDefNode/DefNode's own `.type` is its *whole* function
-        # signature, not a value type -- never the right thing to render
-        # here. Leave those to the caller (e.g.
-        # `signature._get_return_type_annotation`, which narrows to
-        # `.type.return_type` itself) rather than rendering the callable.
-        #
-        # `py_object_type` (Cython's exact singleton for "no C type was
-        # ever written here") is likewise not real fallback info: a
-        # genuinely untyped `cdef`/`cpdef` argument (`def f(x): ...`,
-        # no annotation at all) resolves to this same singleton, just
-        # like an explicitly-typed one would -- there's nothing in the
-        # resolved `Type` that distinguishes "explicitly typed as
-        # object" from "not typed at all". Rendering "object" for a
-        # plain, unannotated argument would be new, unwarranted
-        # information the source never actually stated -- matches the
-        # pre-migration structural extraction, which simply had no node
-        # to find for an untyped argument and produced no annotation.
-        # Also the routine outcome for `self`/`cls` in a plain Python
-        # class (as opposed to a `cdef class`): `is_self_arg` is never
-        # set for it (Cython has no need to give a non-extension-type
-        # `self` a real C-level type), so it falls
-        # through to here rather than the dedicated, silent handling
-        # `signature._to_argument` has for a `cdef class`'s `self`/`cls`
-        # -- and resolves to this exact singleton, same reasoning as
-        # any other untyped argument.
-        skip_reason_is_expected = resolved_type is None or (
-            resolved_type is _PyrexTypes.py_object_type
-            or isinstance(node, (Nodes.CFuncDefNode, Nodes.DefNode))
-        )
-        if not skip_reason_is_expected:
-            # Post-analysis, several declaration kinds no longer carry a
-            # `base_type` AST node at all -- either because `node` itself
-            # has no `.base_type` attribute (caught above), or because it
-            # does but analysis has since cleared it, as happens for a
-            # `CArgDeclNode` whose real type lives on `.type` instead once
-            # resolved (see `render_pyrex_type`'s docstring). Fall back to
-            # whatever real `Entry`/`Type` info survived instead of
-            # giving up.
-            rendered = render_pyrex_type(resolved_type)
-            if rendered is not None:
-                return rendered
-            # `resolved_type` existed but `render_pyrex_type` couldn't
-            # render it -- a genuine "don't know what this is" case,
-            # worth logging (unlike the expected cases above, which
-            # return None just below without logging anything).
-            _logger.debug("Unknown base type: %s", type(node).__name__)
-            return None
-        if resolved_type is None:
-            # Nothing was found at all -- also genuinely unexpected,
-            # and worth logging, unlike the `py_object_type`/function
-            # -node cases just above (both routine, not logged).
-            _logger.debug("Unknown base type: %s", type(node).__name__)
-        return None
-
-    # CArgDeclNode carries a single .declarator; check it for pointer-ness.
-    if not is_ptr:
-        is_ptr = isinstance(getattr(node, "declarator", None), Nodes.CPtrDeclaratorNode)
-
-    if isinstance(base_type, Nodes.CTupleBaseTypeNode):
-        return _extract_tuple_type(base_type)
-    if isinstance(base_type, Nodes.TemplatedTypeNode):
-        return _extract_templated_type(base_type)
-    if isinstance(base_type, Nodes.MemoryViewSliceTypeNode):
-        return _extract_memoryview_type(base_type)
-
-    name = _type_from_base_type_name(base_type)
-
-    if isinstance(node, Nodes.CVarDefNode) and name is None:
-        # CVarDefNode may not have a named type, e.g. ``cdef public x``.
-        # In this case, use ``typing.Any`` without debug message.
-        return "typing.Any"
-
-    if is_ptr and name == "char":
-        return "bytes"
-
-    if is_ptr and name == "void":
-        return "typing.Any"
-
-    return parameterize_builtin_generic(name)
 
 
 def _extract_tuple_type(node: Nodes.CTupleBaseTypeNode) -> str:
