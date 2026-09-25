@@ -361,9 +361,7 @@ class Converter:
                 resolved_type = _substitute_ctypedef_aliases(
                     resolved_type, ctypedef_aliases
                 )
-                assignments.append(
-                    PyiAssignment(f"{name}: {resolved_type}", name=name)
-                )
+                assignments.append(PyiAssignment(f"{name}: {resolved_type}", name=name))
                 handled_names.add(name)
         return assignments, handled_names
 
@@ -458,8 +456,7 @@ class Converter:
         handled_names.update(
             name
             for name in (
-                getattr(node, "name", None)
-                for node in visitor.cdef_structs_or_unions
+                getattr(node, "name", None) for node in visitor.cdef_structs_or_unions
             )
             if name
         )
@@ -485,7 +482,9 @@ class Converter:
             if name
         )
         handled_names.update(
-            name for name in (getattr(enum, "name", None) for enum in visitor.enums) if name
+            name
+            for name in (getattr(enum, "name", None) for enum in visitor.enums)
+            if name
         )
         return handled_names
 
@@ -549,7 +548,9 @@ class Converter:
                     converted.statement, name
                 ):
                     return True
-            return any(_text_uses_name(statement, name) for statement in other_statements)
+            return any(
+                _text_uses_name(statement, name) for statement in other_statements
+            )
 
         live_assignments = [
             (raw_node, converted)

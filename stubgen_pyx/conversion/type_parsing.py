@@ -130,9 +130,7 @@ def _render_unqualified_pyrex_type(
     return None
 
 
-def _render_pointer_type(
-    t: _PyrexTypes.PyrexType, *, _depth: int
-) -> str | None:
+def _render_pointer_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str | None:
     if not t.is_ptr:
         return None
     base = t.base_type
@@ -145,9 +143,7 @@ def _render_pointer_type(
     return render_pyrex_type(base, _depth=_depth + 1)
 
 
-def _render_array_type(
-    t: _PyrexTypes.PyrexType, *, _depth: int
-) -> str | None:
+def _render_array_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str | None:
     if not t.is_array:
         return None
     if t.base_type is _PyrexTypes.c_char_type:
@@ -156,9 +152,7 @@ def _render_array_type(
     return f"list[{inner}]" if inner is not None else None
 
 
-def _render_ctuple_type(
-    t: _PyrexTypes.PyrexType, *, _depth: int
-) -> str | None:
+def _render_ctuple_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str | None:
     if not getattr(t, "is_ctuple", False):
         return None
     parts = [
@@ -174,21 +168,15 @@ def _render_ctuple_type(
     return f"tuple[{', '.join(parts)}]"
 
 
-def _render_memoryview_type(
-    t: _PyrexTypes.PyrexType, *, _depth: int
-) -> str | None:
+def _render_memoryview_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str | None:
     if not getattr(t, "is_memoryviewslice", False):
         return None
     dtype_name = str(t.dtype) if t.dtype is not None else None
     scalar = None if dtype_name is None else _CYTHON_TO_NUMPY_SCALAR.get(dtype_name)
-    return (
-        f"numpy.typing.NDArray[numpy.{scalar}]" if scalar else "memoryview"
-    )
+    return f"numpy.typing.NDArray[numpy.{scalar}]" if scalar else "memoryview"
 
 
-def _render_cpp_template_type(
-    t: _PyrexTypes.PyrexType, *, _depth: int
-) -> str | None:
+def _render_cpp_template_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str | None:
     if not getattr(t, "is_cpp_class", False) or not getattr(t, "templates", None):
         return None
     base = t.name
@@ -205,9 +193,7 @@ def _render_cpp_template_type(
     return f"{base}[{', '.join(parts)}]"
 
 
-def _render_named_type(
-    t: _PyrexTypes.PyrexType, *, _depth: int
-) -> str | None:
+def _render_named_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str | None:
     name = getattr(t, "name", None)
     if name is None:
         return None
@@ -222,17 +208,13 @@ def _render_named_type(
     return name if any(getattr(t, flag, False) for flag in type_flags) else None
 
 
-def _render_builtin_type(
-    t: _PyrexTypes.PyrexType, *, _depth: int
-) -> str | None:
+def _render_builtin_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str | None:
     if not (t.is_pyobject or t.is_numeric or t.is_string):
         return None
     return parameterize_builtin_generic(t.py_type_name())
 
 
-def _render_cfunction_type(
-    t: _PyrexTypes.CFuncType, *, _depth: int
-) -> str | None:
+def _render_cfunction_type(t: _PyrexTypes.CFuncType, *, _depth: int) -> str | None:
     """Render a resolved ``CFuncType`` (a function pointer's pointee, typically) as ``Callable[[...], ...]``."""
     if not getattr(t, "is_cfunction", False):
         return None
