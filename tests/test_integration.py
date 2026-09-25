@@ -512,6 +512,25 @@ def shifted(it: AbstractSet[Any]) -> Any:  # type: ignore[override,misc]
     assert "# type: ignore[override,misc]" in shifted_line
 
 
+def test_unhashable_class_assignment_is_mypy_compatible(temp_dir):
+    """Class-level ``__hash__ = None`` needs an ignore in pyi files."""
+    pyx_file = temp_dir / "test.pyx"
+    pyx_file.write_text(
+        """
+__hash__ = None
+
+cdef class UnhashableThing:
+    __hash__ = None
+"""
+    )
+
+    stubgen = StubgenPyx()
+    result = stubgen.convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+
+    assert "\n__hash__ = None\n" in result
+    assert "    __hash__ = None # type: ignore[assignment]" in result
+
+
 def test_conversion_succeeds_with_comments_inside_brackets(temp_dir):
     """A `#` comment inside a bracketed expression is terminated by its
     newline. Stub generation must not collapse that newline away, or the

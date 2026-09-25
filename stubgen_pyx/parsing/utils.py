@@ -52,7 +52,7 @@ def remove_indices(
     left = code[:start]
     right = code[end:]
     if strip_middle:
-        right = right.lstrip()
+        right = right.lstrip(" \t")
     return f"{left}{replace_with}{right}"
 
 
