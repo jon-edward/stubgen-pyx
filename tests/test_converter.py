@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
+from io import StringIO
+
+from Cython.Compiler import Parsing
+from Cython.Compiler.Scanning import PyrexScanner, StringSourceDescriptor
+
 from stubgen_pyx.analysis.visitor import ModuleVisitor
 from stubgen_pyx.conversion import converter as converter_module
 from stubgen_pyx.conversion.converter import Converter
+from stubgen_pyx.conversion.declarations import (
+    convert_assignment,
+    convert_cpp_class,
+    convert_struct_or_union,
+)
 from stubgen_pyx.models.pyi_elements import (
     PyiClass,
     PyiEnum,
@@ -12,11 +22,46 @@ from stubgen_pyx.models.pyi_elements import (
     PyiModule,
     PyiScope,
 )
-from stubgen_pyx.parsing.parser import parse_pyx
+from stubgen_pyx.parsing.context import StubgenContext
+from stubgen_pyx.parsing.parser import _DEFAULT_MODULE_NAME, _resolve_scope
+from stubgen_pyx.parsing.parser import parse_str as parse_pyx
+
+
+def _parse_raw(source: str):
+    """Parse `source` into a raw AST, stopping right after Cython's own
+    parser -- before `capture_static_types`/`run_stub_pipeline` run and
+    can remove or rewrite declarations that have no runtime component.
+    See `test_type_parsing.py::_parse_raw`, which this mirrors -- needed
+    here for the same reason: a handful of tests below exercise a
+    converter method directly against a hand-built raw node shape
+    (a struct/union or ctypedef with a still-intact `base_type`/
+    `.attributes`), which the full pipeline would otherwise remove or
+    resolve out from under `_first_node` before the test ever sees it.
+    """
+    context = StubgenContext()
+    module_name = _DEFAULT_MODULE_NAME
+    source_desc = StringSourceDescriptor(module_name, source)
+    initial_pos = (source_desc, 1, 0)
+    scope = _resolve_scope(context, module_name, initial_pos, allow_pxd_merge=False)
+    scope.cpp = context.cpp
+    scanner = PyrexScanner(
+        StringIO(source),
+        source_desc,
+        source_encoding="UTF-8",
+        scope=scope,
+        context=context,
+        initial_pos=initial_pos,
+    )
+    tree = Parsing.p_module(
+        scanner, False, module_name, ctx=Parsing.Ctx(allow_struct_enum_decorator=True)
+    )
+    tree.scope = scope
+    tree.is_pxd = False
+    return tree
 
 
 def _first_node(source: str, class_name: str):
-    tree = parse_pyx(source).source_ast
+    tree = _parse_raw(source)
     pending = [tree]
     while pending:
         node = pending.pop()
@@ -453,8 +498,8 @@ cdef extern from "<header.h>":
 cdef public int module_global_not_a_class_var = -1  # not a class var, should be ignored
 
 cdef class MyClass:
-    cdef public int value = 1
-    cdef int other = -1
+    cdef public int value
+    cdef int other
 """
         parsed = parse_pyx(code)
         visitor = ModuleVisitor(parsed.source_ast)
@@ -465,7 +510,11 @@ cdef class MyClass:
         assert len(result.scope.classes) == 1
         cls = result.scope.classes[0]
         assert len(cls.scope.assignments) == 1
-        assert len(result.scope.assignments) == 0
+        # The module-level `public` var has a real initializer and isn't
+        # a class attribute, so it's a plain top-level assignment here --
+        # not tied to `cdef_variables`/property handling at all.
+        assert len(result.scope.assignments) == 1
+        assert result.scope.assignments[0].statement == "module_global_not_a_class_var = -1"
 
     def test_char_ptr_type(self):
         """Test converting char pointer type."""
@@ -554,7 +603,13 @@ cdef class Foo:
         cls = result.scope.classes[0]
         assert len(cls.scope.assignments) == 2
         assert cls.scope.assignments[0].statement == "bar: list[list[int]]"
-        assert cls.scope.assignments[1].statement == "baz: list[list[other.val]]"
+        # `other.val` doesn't resolve to anything real (no `other` module
+        # is declared/cimported anywhere in this snippet) -- declaration
+        # analysis genuinely can't determine a type for it, so this falls
+        # back to `_typeshed.Incomplete` rather than reconstructing the
+        # unresolvable source text verbatim, the way the pre-migration,
+        # purely-structural extraction did.
+        assert cls.scope.assignments[1].statement == "baz: _typeshed.Incomplete"
 
     def test_sized_array_type_var_bytes(self):
         """Test converting sized array type."""
@@ -673,40 +728,41 @@ class TestConverterStateless:
         """A single Converter instance must be safely reusable."""
         from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
-        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.parsing.parser import parse_str as parse_pyx
 
         converter = Converter()
 
         for src in ("def foo(): pass", "def bar(x: int) -> str: pass"):
             pr = parse_pyx(src)
             mv = ModuleVisitor(pr.source_ast)
-            module = converter.convert_module(mv, pr.source, pr.type_comments)
+            module = converter.convert_module(mv, pr.source, pr.comments)
             assert len(module.scope.functions) == 1
 
     def test_type_comments_not_shared_between_calls(self):
         """type_comments from one parse must not affect a second call."""
         from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
-        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.parsing.parser import parse_str as parse_pyx
 
         converter = Converter()
 
         pr1 = parse_pyx("def foo(x): pass  # type: (int) -> None")
         mv1 = ModuleVisitor(pr1.source_ast)
-        converter.convert_module(mv1, pr1.source, pr1.type_comments)
+        converter.convert_module(mv1, pr1.source, pr1.comments)
 
         # Second call with no type comments: must not inherit from first
         pr2 = parse_pyx("def bar(y): pass")
         mv2 = ModuleVisitor(pr2.source_ast)
-        module2 = converter.convert_module(mv2, pr2.source, {})
+        module2 = converter.convert_module(mv2, pr2.source, None)
         assert module2.scope.functions[0].type_comment is None
+        assert module2.scope.functions[0].signature.args[0].annotation is None
 
 
 class TestExcludeDocstrings:
     def test_docstrings_excluded(self):
         from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
-        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.parsing.parser import parse_str as parse_pyx
 
         converter = Converter()
 
@@ -718,14 +774,14 @@ def foo():
 """)
         mv = ModuleVisitor(pr.source_ast)
         module = converter.convert_module(
-            mv, pr.source, pr.type_comments, include_docstrings=False
+            mv, pr.source, pr.comments, include_docstrings=False
         )
 
         assert len(module.scope.functions) == 1
         assert module.scope.functions[0].doc is None
 
         module = converter.convert_module(
-            mv, pr.source, pr.type_comments, include_docstrings=True
+            mv, pr.source, pr.comments, include_docstrings=True
         )
 
         assert len(module.scope.functions) == 1
@@ -736,7 +792,7 @@ class TestTupleBaseType:
     def test_tuple_base_type(self):
         from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
-        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.parsing.parser import parse_str as parse_pyx
 
         converter = Converter()
 
@@ -745,7 +801,7 @@ cpdef (int, int) foo(int x, int y):
     return (x, y)
 """)
         mv = ModuleVisitor(pr.source_ast)
-        module = converter.convert_module(mv, pr.source, pr.type_comments)
+        module = converter.convert_module(mv, pr.source, pr.comments)
 
         assert len(module.scope.functions) == 1
         assert module.scope.functions[0].signature.return_type == "tuple[int, int]"
@@ -753,7 +809,7 @@ cpdef (int, int) foo(int x, int y):
     def test_tuple_base_type_nested(self):
         from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
-        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.parsing.parser import parse_str as parse_pyx
 
         converter = Converter()
 
@@ -762,7 +818,7 @@ cpdef ((int, int), int) foo(int x, int y):
     return ((x, x), y)
 """)
         mv = ModuleVisitor(pr.source_ast)
-        module = converter.convert_module(mv, pr.source, pr.type_comments)
+        module = converter.convert_module(mv, pr.source, pr.comments)
 
         assert len(module.scope.functions) == 1
         assert (
@@ -775,7 +831,7 @@ class TestCinitInitHandling:
     def test_cinit_to_init_absent_init(self):
         from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
-        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.parsing.parser import parse_str as parse_pyx
 
         converter = Converter()
 
@@ -785,7 +841,7 @@ cdef class Foo:
         pass
 """)
         mv = ModuleVisitor(pr.source_ast)
-        module = converter.convert_module(mv, pr.source, pr.type_comments)
+        module = converter.convert_module(mv, pr.source, pr.comments)
 
         assert len(module.scope.classes) == 1
         assert module.scope.classes[0].scope.functions[0].name == "__init__"
@@ -793,7 +849,7 @@ cdef class Foo:
     def test_drop_cinit_present_init(self):
         from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
-        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.parsing.parser import parse_str as parse_pyx
 
         converter = Converter()
 
@@ -805,7 +861,7 @@ cdef class Foo:
         pass
 """)
         mv = ModuleVisitor(pr.source_ast)
-        module = converter.convert_module(mv, pr.source, pr.type_comments)
+        module = converter.convert_module(mv, pr.source, pr.comments)
 
         assert len(module.scope.classes) == 1
         assert len(module.scope.classes[0].scope.functions) == 1
@@ -816,7 +872,7 @@ class TestReadonlyVisibility:
     def test_readonly_visibility(self):
         from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
-        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.parsing.parser import parse_str as parse_pyx
 
         converter = Converter()
 
@@ -825,7 +881,7 @@ cdef class Foo:
     cdef readonly int value
 """)
         mv = ModuleVisitor(pr.source_ast)
-        module = converter.convert_module(mv, pr.source, pr.type_comments)
+        module = converter.convert_module(mv, pr.source, pr.comments)
 
         assert len(module.scope.classes) == 1
         assert "value" in module.scope.classes[0].scope.assignments[0].statement
@@ -835,7 +891,7 @@ class TestInferredNoneUnion:
     def test_inferred_none_union(self):
         from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
-        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.parsing.parser import parse_str as parse_pyx
 
         converter = Converter()
 
@@ -845,7 +901,7 @@ cdef class Foo:
         return x
 """)
         mv = ModuleVisitor(pr.source_ast)
-        module = converter.convert_module(mv, pr.source, pr.type_comments)
+        module = converter.convert_module(mv, pr.source, pr.comments)
 
         assert len(module.scope.classes) == 1
         assert (
@@ -856,7 +912,7 @@ cdef class Foo:
     def test_inferred_none_no_annotation(self):
         from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
-        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.parsing.parser import parse_str as parse_pyx
 
         converter = Converter()
 
@@ -866,7 +922,7 @@ cdef class Foo:
         return x
 """)
         mv = ModuleVisitor(pr.source_ast)
-        module = converter.convert_module(mv, pr.source, pr.type_comments)
+        module = converter.convert_module(mv, pr.source, pr.comments)
 
         assert len(module.scope.classes) == 1
         # Does not add ``| None`` to instances where no annotation
@@ -880,7 +936,7 @@ class TestStructOrUnionType:
     def test_struct_or_union_type(self):
         from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
-        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.parsing.parser import parse_str as parse_pyx
 
         converter = Converter()
 
@@ -890,7 +946,7 @@ cdef struct Foo:
     int y
 """)
         mv = ModuleVisitor(pr.source_ast)
-        module = converter.convert_module(mv, pr.source, pr.type_comments)
+        module = converter.convert_module(mv, pr.source, pr.comments)
 
         assert len(module.scope.classes) == 1
         assert module.scope.classes[0].bases[0] == "typing.TypedDict"
@@ -902,7 +958,7 @@ cdef union Foo:
     int y
 """)
         mv = ModuleVisitor(pr.source_ast)
-        module = converter.convert_module(mv, pr.source, pr.type_comments)
+        module = converter.convert_module(mv, pr.source, pr.comments)
 
         assert len(module.scope.classes) == 1
         assert module.scope.classes[0].bases[0] == "typing.TypedDict"
@@ -911,7 +967,7 @@ cdef union Foo:
     def test_cdef_ptr_attributes(self):
         from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
-        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.parsing.parser import parse_str as parse_pyx
 
         converter = Converter()
 
@@ -923,7 +979,7 @@ cdef struct Foo:
     BarStruct* bar
 """)
         mv = ModuleVisitor(pr.source_ast)
-        module = converter.convert_module(mv, pr.source, pr.type_comments)
+        module = converter.convert_module(mv, pr.source, pr.comments)
 
         assert len(module.scope.classes) == 2
         assert (
@@ -933,7 +989,7 @@ cdef struct Foo:
     def test_cfunc_ptr_attribute(self):
         from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
-        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.parsing.parser import parse_str as parse_pyx
 
         converter = Converter()
 
@@ -942,7 +998,7 @@ cdef struct Foo:
     int (*bar)(int)
 """)
         mv = ModuleVisitor(pr.source_ast)
-        module = converter.convert_module(mv, pr.source, pr.type_comments)
+        module = converter.convert_module(mv, pr.source, pr.comments)
 
         assert len(module.scope.classes) == 1
         assert (
@@ -955,7 +1011,7 @@ class TestMemoryviewConversion:
     def test_memoryview_to_numpy(self):
         from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
-        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.parsing.parser import parse_str as parse_pyx
 
         converter = Converter()
 
@@ -967,7 +1023,7 @@ cdef class Foo:
     cdef public double[:, :] bar
 """)
         mv = ModuleVisitor(pr.source_ast)
-        module = converter.convert_module(mv, pr.source, pr.type_comments)
+        module = converter.convert_module(mv, pr.source, pr.comments)
 
         assert len(module.scope.classes) == 1
         assert (
@@ -984,7 +1040,7 @@ class TestTemplateTypeConversion:
     def test_template_type_conversion(self):
         from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
-        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.parsing.parser import parse_str as parse_pyx
 
         converter = Converter()
 
@@ -993,7 +1049,7 @@ cpdef list[int] foo():
     return []
 """)
         mv = ModuleVisitor(pr.source_ast)
-        module = converter.convert_module(mv, pr.source, pr.type_comments)
+        module = converter.convert_module(mv, pr.source, pr.comments)
 
         assert len(module.scope.functions) == 1
         assert module.scope.functions[0].signature.return_type == "list[int]"
@@ -1003,7 +1059,7 @@ cpdef imported.array[list[int]] foo():
     return []
 """)
         mv = ModuleVisitor(pr.source_ast)
-        module = converter.convert_module(mv, pr.source, pr.type_comments)
+        module = converter.convert_module(mv, pr.source, pr.comments)
 
         assert len(module.scope.functions) == 1
         assert (
@@ -1016,7 +1072,7 @@ class TestCdefEnumConversion:
     def test_cdef_enum_no_wrapper(self):
         from stubgen_pyx.analysis.visitor import ModuleVisitor
         from stubgen_pyx.conversion.converter import Converter
-        from stubgen_pyx.parsing.parser import parse_pyx
+        from stubgen_pyx.parsing.parser import parse_str as parse_pyx
 
         converter = Converter()
 
@@ -1027,7 +1083,7 @@ cdef enum:
     C = 3
 """)
         mv = ModuleVisitor(pr.source_ast)
-        module = converter.convert_module(mv, pr.source, pr.type_comments)
+        module = converter.convert_module(mv, pr.source, pr.comments)
 
         assert len(module.scope.classes) == 0
         assert len(module.scope.assignments) == 0
@@ -1052,7 +1108,7 @@ from pathlib import Path
 def test_convert_cpp_class_falls_back_to_incomplete_alias():
     node = _first_node("cdef cppclass Native:\n    int value", "CppClassNode")
 
-    result = Converter().convert_cpp_class(node)
+    result = convert_cpp_class(node)
 
     assert result is not None
     assert (
@@ -1065,24 +1121,23 @@ def test_convert_struct_logs_unexpected_parsed_attribute(caplog):
     node = _first_node("cdef struct Header:\n    int version", "CStructOrUnionDefNode")
     node.attributes.append(_first_node("def helper():\n    pass", "DefNode"))
 
-    result = Converter().convert_struct_or_union(node)
+    result = convert_struct_or_union(node)
 
     assert result.name == "Header"
     assert "Unexpected attribute type" in caplog.text
 
 
 def test_convert_assignment_handles_ctypedef_fallbacks():
-    converter = Converter()
     source = "ctypedef int Alias"
     node = _first_node(source, "CTypeDefNode")
 
     node.base_type = None
-    fallback = converter.convert_assignment(node, source)
+    fallback = convert_assignment(node, source)
     assert fallback is not None
     assert fallback.statement == "Alias = ..."
 
     node.declarator.name = None
-    assert converter.convert_assignment(node, source) is None
+    assert convert_assignment(node, source) is None
 
 
 def test_type_name_handles_nested_template_and_unknown_parsed_nodes():
