@@ -2,14 +2,26 @@
 
 from __future__ import annotations
 
+from Cython.Compiler import Nodes
+
 from stubgen_pyx.analysis.visitor import (
     ClassVisitor,
     ImportVisitor,
     ModuleVisitor,
     ScopeVisitor,
     _collect_attribute,
+    _is_decorator_rebinding,
 )
-from stubgen_pyx.parsing.parser import parse_pyx
+from stubgen_pyx.config import StubgenPyxConfig
+from stubgen_pyx.parsing.parser import parse_str as parse_pyx
+from stubgen_pyx.stubgen import StubgenPyx
+
+
+def _convert(code: str) -> str:
+    """Render `code` through the full pipeline (parse -> convert -> build)."""
+    return StubgenPyx(
+        StubgenPyxConfig(exclude_attribution=True, sort_imports=False)
+    ).convert_str(code)
 
 
 def _find_nodes(source: str, class_name: str):
@@ -331,7 +343,19 @@ cdef enum Priority:
         assert isinstance(visitor.enums, list)
 
     def test_scope_visitor_multiple_enums_with_extern(self):
-        """Test collecting multiple enums, some extern"""
+        """cdef/cpdef enums, plain and extern -- all four representable in the rendered stub.
+
+        A bare ``cdef enum`` has no runtime/executable component and is
+        removed from ``body.stats`` entirely once real declaration
+        analysis runs (same as a struct/union), whether or not it's
+        inside a ``cdef extern from`` block: ``ScopeVisitor.enums`` (a
+        structural, ``body.stats``-only walk) is always empty
+        post-pipeline now, for every one of these. Recovered instead by
+        ``Converter._convert_declared_entries`` walking ``scope.entries``
+        directly; this now asserts against the full pipeline's rendered
+        output rather than ``ScopeVisitor`` internals, which can no
+        longer see any of this.
+        """
         code = """
 cdef enum NotWrappedInternal:
     V1 = 0
@@ -349,32 +373,20 @@ cdef extern from "<header.h>":
         V6
         V7
 """
-        parsed = parse_pyx(code)
-        visitor = ScopeVisitor(parsed.source_ast)
+        result = _convert(code)
 
-        # Should collect enums
-        assert isinstance(visitor.enums, list)
-        assert len(visitor.enums) == 4
+        # cpdef enums (both internal and extern) become a real IntEnum
+        # subclass wrapping their members.
+        assert "class WrappedInternal(IntEnum):" in result
+        assert "V3 = ..." in result
+        assert "V4 = ..." in result
+        assert "class WrappedExternal(IntEnum):" in result
+        assert "V6 = ..." in result
+        assert "V7 = ..." in result
 
-        assert all(
-            e.name == exp_val
-            for e, exp_val in zip(
-                visitor.enums,
-                [
-                    "NotWrappedInternal",
-                    "WrappedInternal",
-                    "NotWrappedExternal",
-                    "WrappedExternal",
-                ],
-            )
-        )
-        for e, exp_val in zip(
-            visitor.enums, ["private", "private", "extern", "extern"]
-        ):
-            assert e.visibility == exp_val
-
-        for e, exp_val in zip(visitor.enums, [False, True, False, True]):
-            assert e.create_wrapper == exp_val
+        # Plain cdef enums (no Python wrapper) become an int TypeAlias.
+        assert "NotWrappedInternal: TypeAlias = int" in result
+        assert "NotWrappedExternal: TypeAlias = int" in result
 
 
 class TestImportVisitorBasics:
@@ -794,6 +806,18 @@ cdef class CythonClass:
 
 
 def test_scope_visitor_filters_cdef_visibility_and_collects_structures():
+    """cdef class attribute visibility + struct/union/cppclass, via the full pipeline.
+
+    ``cdef public``/``cdef readonly`` attributes, ``cdef struct``/
+    ``union``, and a plain (no Python wrapper) ``cdef`` attribute are
+    all declarations with no runtime/executable component once real
+    declaration analysis runs, and vanish from ``body.stats`` entirely,
+    same as the enum case above. ``ScopeVisitor``'s structural walk can
+    no longer see any of them directly; recovered instead by
+    ``Converter.convert_struct_or_union``/``_convert_declared_entries``.
+    Asserts against the full pipeline's rendered output rather than
+    ``ScopeVisitor`` internals.
+    """
     code = """
 cdef class Visible:
     cdef public int public_value
@@ -810,26 +834,43 @@ cdef union Value:
 cdef cppclass Native:
     int value
 """
-    parsed = parse_pyx(code)
-    visitor = ScopeVisitor(parsed.source_ast)
+    result = _convert(code)
 
-    assert len(visitor.classes) == 1
-    assert len(visitor.classes[0].scope.cdef_variables) == 2
-    assert len(visitor.cdef_structs_or_unions) == 2
-    assert len(visitor.cpp_classes) == 1
+    assert "class Visible:" in result
+    assert "public_value: int" in result
+    assert "readonly_value: int" in result
+    # A plain (no visibility keyword) cdef attribute is pure C state,
+    # never Python-visible -- not importable, so not in the stub at all.
+    assert "private_value" not in result
+
+    assert "class Header(TypedDict):" in result
+    assert "version: int" in result
+
+    assert "class Value(TypedDict" in result
+    assert "total=False" in result
+    assert "integer: int" in result
+    assert "decimal: float" in result
+
+    # A C++ class has no direct Python-facing representation; the
+    # converter currently emits an Incomplete type alias for it.
+    assert "Native" in result
 
 
 def test_scope_visitor_skips_unnamed_enum():
-    parsed = parse_pyx("""
+    """An unnamed ``cdef enum`` has no name to expose in a stub and is skipped.
+
+    Both enums vanish from ``body.stats`` post-pipeline (see the two
+    tests above); asserts against the full pipeline's rendered output.
+    """
+    result = _convert("""
 cdef enum:
     INTERNAL = 1
 
 cdef enum Public:
     EXPORTED = 2
 """)
-    visitor = ScopeVisitor(parsed.source_ast)
-
-    assert [enum.name for enum in visitor.enums] == ["Public"]
+    assert "Public: TypeAlias = int" in result
+    assert "INTERNAL" not in result
 
 
 def test_import_visitor_handles_all_import_forms_and_type_checking():
@@ -859,3 +900,310 @@ def test_collect_attribute_handles_name_and_qualified_attribute():
 
     name_nodes = _find_nodes("if TYPE_CHECKING:\n    pass\n", "IfStatNode")
     assert _collect_attribute(name_nodes[0].if_clauses[0].condition) == "TYPE_CHECKING"
+
+
+def test_decorator_rebinding_vs_real_manual_rebinding():
+    """A synthetic `name = decorator(name)` is dropped; real, hand-written
+    code with the exact same shape is not.
+
+    `AnalyseDeclarationsTransform` rewrites any decorated function/method
+    into a bare `DefNode` plus a separate `name = decorator(name)`
+    assignment -- dropped as redundant (the decorator itself is
+    re-emitted directly on the `DefNode`, from the pre-pipeline
+    `_stubgen_static_decorators` snapshot). But `foo = trace(foo)`,
+    written by hand rather than produced by decorator syntax, is
+    structurally identical and is a real, meaningful rebinding that must
+    survive. Distinguished by source position, not shape alone (see
+    `visitor._is_decorator_rebinding`) -- shape alone can't tell the two
+    apart.
+    """
+    result = _convert("""
+@classmethod
+def class_func(cls):
+    pass
+
+def trace(f):
+    return f
+
+def foo():
+    pass
+
+foo = trace(foo)
+""")
+    # The synthetic rebinding for the decorated function never appears.
+    assert "class_func = classmethod(class_func)" not in result
+    assert "@classmethod" in result
+    assert "def class_func(cls): ..." in result
+
+    # The hand-written rebinding survives, in both directions: present,
+    # and not turned into a second, bogus `def foo` definition either.
+    assert "foo = trace(foo)" in result
+    assert result.count("def foo(") == 1
+
+
+def test_decorator_rebinding_vs_real_manual_rebinding_in_class():
+    """Same disambiguation, at class/method scope."""
+    result = _convert("""
+def trace(f):
+    return f
+
+cdef class Foo:
+    def bar(self):
+        pass
+    bar = trace(bar)
+""")
+    assert "bar = trace(bar)" in result
+    assert result.count("def bar(") == 1
+
+
+
+class TestScopeVisitorMethodsDirectly:
+    """`ScopeVisitor`'s individual `visit_*` methods, exercised
+    directly against a real or minimal node -- several of these have
+    no real trigger through the full pipeline at all, since a
+    synthesized node (a `PropertyNode` for `cdef public`, an
+    `Entry`-only enum/struct, ...) intercepts first once real
+    declaration analysis runs, same pattern documented throughout this
+    module and `conversion/converter.py`. Constructing a `ScopeVisitor`
+    around a trivial, empty module first (so `__post_init__`'s own
+    walk finds nothing) and then calling the target method directly
+    tests each method's own logic in isolation, regardless of whether
+    real source can currently route a node to it.
+    """
+
+    @staticmethod
+    def _empty_visitor(**kwargs) -> ScopeVisitor:
+        result = parse_pyx("")
+        return ScopeVisitor(node=result.source_ast, **kwargs)
+
+    def test_visit_cenumdefnode_skips_an_unnamed_enum(self):
+        from types import SimpleNamespace
+
+        visitor = self._empty_visitor()
+        visitor.visit_CEnumDefNode(SimpleNamespace(name=None))
+        assert visitor.enums == []
+
+    def test_visit_cenumdefnode_collects_a_named_enum(self):
+        from types import SimpleNamespace
+
+        visitor = self._empty_visitor()
+        node = SimpleNamespace(name="Color")
+        visitor.visit_CEnumDefNode(node)
+        assert visitor.enums == [node]
+
+    def test_visit_exprstatnode_collects_an_annotated_bare_name(self):
+        """`x: int` (no assignment) -- only ever reachable this way for
+        a class body's own individually-typed attributes at the point
+        this visitor sees them (a module-level one is already folded
+        into a single synthetic `__annotations__` dict by the time
+        real declaration analysis finishes; see
+        `Converter._convert_declared_entries`'s docstring)."""
+        from Cython.Compiler import ExprNodes
+        from types import SimpleNamespace
+
+        visitor = self._empty_visitor()
+        name_node = ExprNodes.NameNode(None, name="x")
+        name_node.annotation = "int"
+        visitor.visit_ExprStatNode(SimpleNamespace(expr=name_node))
+        assert len(visitor.assignments) == 1
+
+    def test_visit_exprstatnode_ignores_a_non_annotated_name(self):
+        from Cython.Compiler import ExprNodes
+        from types import SimpleNamespace
+
+        visitor = self._empty_visitor()
+        name_node = ExprNodes.NameNode(None, name="y")
+        name_node.annotation = None
+        visitor.visit_ExprStatNode(SimpleNamespace(expr=name_node))
+        assert visitor.assignments == []
+
+    def test_visit_defnode_skips_a_fused_specialization(self):
+        from types import SimpleNamespace
+
+        visitor = self._empty_visitor()
+        node = SimpleNamespace(name="f", pos=(None, 1, 0))
+        visitor._fused_specialization_ids.add(id(node))
+        visitor.visit_DefNode(node)
+        assert visitor.py_functions == []
+
+    def test_visit_cfuncdefnode_skips_a_fused_specialization(self):
+        from types import SimpleNamespace
+
+        visitor = self._empty_visitor()
+        node = SimpleNamespace(
+            declarator=SimpleNamespace(overridable=True), pos=(None, 1, 0)
+        )
+        visitor._fused_specialization_ids.add(id(node))
+        visitor.visit_CFuncDefNode(node)
+        assert visitor.cdef_functions == []
+
+    def test_visit_cfuncdefnode_skips_a_non_overridable_plain_cdef(self):
+        """A plain `cdef` function (no `cpdef`) is never Python-visible
+        -- `.declarator.overridable` is `False` for it -- and must not
+        be collected."""
+        from types import SimpleNamespace
+
+        visitor = self._empty_visitor()
+        node = SimpleNamespace(
+            declarator=SimpleNamespace(overridable=False), pos=(None, 1, 0)
+        )
+        visitor.visit_CFuncDefNode(node)
+        assert visitor.cdef_functions == []
+
+    def test_visit_cfuncdefnode_records_its_def_position_when_named(self):
+        """The success path -- collected, and its `pos` recorded for
+        `_is_decorator_rebinding`'s later disambiguation. In practice
+        `_declared_name` returns `None` for an ordinary `CFuncDefNode`
+        (its name lives structurally on a `CFuncDeclaratorNode`, which
+        `_declared_name`'s single-level unwrap doesn't reach -- same
+        known limitation as `TestDeclaredNamePointerDeclarator` below),
+        so this exercises `visit_CFuncDefNode`'s own "if named, record
+        it" branch directly rather than relying on that resolving for
+        a real node."""
+        from types import SimpleNamespace
+
+        visitor = self._empty_visitor()
+        node = SimpleNamespace(
+            name="add", declarator=SimpleNamespace(overridable=True), pos=(None, 3, 0)
+        )
+        visitor.visit_CFuncDefNode(node)
+        assert visitor.cdef_functions == [node]
+        assert visitor._def_positions == {"add": (None, 3, 0)}
+
+    def test_visit_fusedtypenode_collects_it(self):
+        from types import SimpleNamespace
+
+        visitor = self._empty_visitor()
+        node = SimpleNamespace(name="numeric")
+        visitor.visit_FusedTypeNode(node)
+        assert visitor.fused_types == [node]
+
+    def test_visit_cvardefnode_collects_a_public_class_attribute(self):
+        """The structural (`CVarDefNode`) path for a `public`/`readonly`
+        attribute -- `visit_PropertyNode`'s own docstring notes this
+        node type is superseded by a synthesized `PropertyNode` once
+        real declaration analysis runs, so this exercises the method's
+        own logic directly rather than via the full pipeline."""
+        from types import SimpleNamespace
+
+        visitor = self._empty_visitor(in_class=True)
+        node = SimpleNamespace(visibility="public")
+        visitor.visit_CVarDefNode(node)
+        assert visitor.cdef_variables == [node]
+
+    def test_visit_cvardefnode_skips_outside_a_class(self):
+        from types import SimpleNamespace
+
+        visitor = self._empty_visitor(in_class=False)
+        node = SimpleNamespace(visibility="public")
+        visitor.visit_CVarDefNode(node)
+        assert visitor.cdef_variables == []
+
+    def test_visit_cstructoruniondefnode_skips_compiler_synthesized_names(self):
+        from types import SimpleNamespace
+
+        visitor = self._empty_visitor()
+        synthetic = SimpleNamespace(name="__pyx_opt_args_4mod_5func")
+        visitor.visit_CStructOrUnionDefNode(synthetic)
+        assert visitor.cdef_structs_or_unions == []
+
+        real = SimpleNamespace(name="Point")
+        visitor.visit_CStructOrUnionDefNode(real)
+        assert visitor.cdef_structs_or_unions == [real]
+
+
+class TestIsDecoratorRebindingBranches:
+    """Direct tests for `_is_decorator_rebinding`'s three
+    "structurally similar but not actually a synthetic rebinding"
+    cases -- each confirmed for real via `TestClassAndFunctionScope`'s
+    `_convert`-based tests above (a hand-written rebinding of this
+    shape survives in the output), tested here against the disambiguation
+    function itself.
+    """
+
+    def test_call_with_two_arguments_is_not_a_rebinding(self):
+        node = _first_node("foo = trace(foo, extra)")
+        assert _is_decorator_rebinding(node, "foo", {}) is False
+
+    def test_call_with_a_differently_named_argument_is_not_a_rebinding(self):
+        node = _first_node("foo = trace(bar)")
+        assert _is_decorator_rebinding(node, "foo", {}) is False
+
+    def test_call_with_an_attribute_access_argument_is_checked_by_attribute_name(self):
+        """`trace(obj.foo)` -- the argument is an attribute access, not
+        a bare name; only its `.attribute` name is compared."""
+        node = _first_node("foo = trace(obj.foo)")
+        # Names match (`.foo`), but with no `def_positions` entry for
+        # "foo" at all, still correctly not a rebinding.
+        assert _is_decorator_rebinding(node, "foo", {}) is False
+
+
+def _first_node(source: str):
+    """Find the first `SingleAssignmentNode` in `source`'s raw (pre-pipeline) AST."""
+    from io import StringIO
+
+    from Cython.Compiler import Nodes, Parsing
+    from Cython.Compiler.Scanning import PyrexScanner, StringSourceDescriptor
+
+    from stubgen_pyx.parsing.context import StubgenContext
+    from stubgen_pyx.parsing.parser import _DEFAULT_MODULE_NAME, _resolve_scope
+
+    context = StubgenContext()
+    module_name = _DEFAULT_MODULE_NAME
+    source_desc = StringSourceDescriptor(module_name, source)
+    initial_pos = (source_desc, 1, 0)
+    scope = _resolve_scope(context, module_name, initial_pos, allow_pxd_merge=False)
+    scope.cpp = context.cpp
+    scanner = PyrexScanner(
+        StringIO(source),
+        source_desc,
+        source_encoding="UTF-8",
+        scope=scope,
+        context=context,
+        initial_pos=initial_pos,
+    )
+    tree = Parsing.p_module(
+        scanner, False, module_name, ctx=Parsing.Ctx(allow_struct_enum_decorator=True)
+    )
+
+    pending = [getattr(tree, "body", None)]
+    while pending:
+        node = pending.pop(0)
+        if node is None:
+            continue
+        if isinstance(node, Nodes.SingleAssignmentNode):
+            return node
+        for attr in getattr(node, "child_attrs", ()):
+            child = getattr(node, attr, None)
+            if isinstance(child, list):
+                pending.extend(child)
+            elif child is not None:
+                pending.append(child)
+    raise AssertionError("No SingleAssignmentNode found")
+
+
+class TestDeclaredNamePointerDeclarator:
+    def test_returns_none_for_a_doubly_wrapped_pointer_declarator(self):
+        """`_declared_name` only unwraps one `CPtrDeclaratorNode` layer
+        -- for `int* get_ptr()`, the pointer wraps a `CFuncDeclaratorNode`
+        (the function's own args/name), not a plain name directly, so
+        this is a known, accepted limitation: it returns `None` rather
+        than "get_ptr" here. `signature._to_argument` has the general,
+        fully-recursive unwrap (`_declarator_name`) for cases that
+        actually need the real name; this narrower one is only used for
+        `_def_positions` tracking, where a `None` here just means that
+        one function's decorator-rebinding disambiguation falls back to
+        shape alone for it -- not a correctness issue for anything else.
+        """
+        import sys
+
+        sys.path.insert(0, "tests")
+        from test_type_parsing import _first_node as _first_node_of_type
+
+        from stubgen_pyx.analysis.visitor import _declared_name
+        from Cython.Compiler import Nodes as visitor_Nodes
+
+        node = _first_node_of_type(
+            "cdef int* get_ptr():\n    pass\n", visitor_Nodes.CFuncDefNode
+        )
+        assert _declared_name(node) is None
