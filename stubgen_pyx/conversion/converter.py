@@ -32,7 +32,6 @@ from .ctypedef_aliases import (
     _text_uses_name,
     apply_ctypedef_aliases,
     ctypedef_alias_map,
-    pyi_module_uses_name,
 )
 from .declarations import (
     convert_assignment,
@@ -44,11 +43,9 @@ from .declarations import (
 )
 from .docstrings import docstring_to_string
 from .fused_types import (
-    _annotation_parts,
     _annotation_uses_name,
-    _restore_fused_memoryview_annotations,
     _resolve_fused_signature,
-    _type_name,
+    _restore_fused_memoryview_annotations,
     convert_fused_type,
     convert_fused_types,
 )
@@ -133,7 +130,7 @@ class Converter:
         inherited_fused_types: dict[str, PyiFusedType] | None = None,
         resolve_ctypedef_aliases: bool = False,
         defer_ctypedef_pruning: bool = False,
-        prunable_ctypedef_aliases: dict[str, "PyiAssignment"] | None = None,
+        prunable_ctypedef_aliases: dict[str, PyiAssignment] | None = None,
     ) -> PyiModule:
         """Convert a ModuleVisitor to a PyiModule.
 
@@ -207,7 +204,12 @@ class Converter:
         visitor: ScopeVisitor,
         handled_names: set[str],
         ctypedef_aliases: dict[str, str] | None = None,
-    ) -> tuple[list[PyiAssignment], list[PyiEnum | PyiAssignment], list[PyiClass], list[PyiFunction]]:
+    ) -> tuple[
+        list[PyiAssignment],
+        list[PyiEnum | PyiAssignment],
+        list[PyiClass],
+        list[PyiFunction],
+    ]:
         """Catch declarations with no surviving AST node in this scope.
 
         Once real declaration analysis runs, a declaration with no
@@ -238,7 +240,9 @@ class Converter:
         # node on sight, so the individually-typed attributes it was built
         # from are recovered here instead, from the pre-pipeline snapshot
         # `capture_static_types` stashed on the enclosing module/class node.
-        for name, type_str in getattr(visitor.node, "_stubgen_static_annotations", ()) or ():
+        for name, type_str in (
+            getattr(visitor.node, "_stubgen_static_annotations", ()) or ()
+        ):
             if name in handled_names:
                 continue
             type_str = _substitute_ctypedef_aliases(type_str, ctypedef_aliases or {})
@@ -310,7 +314,9 @@ class Converter:
                 # is a pure C global with no Python binding at all (not
                 # importable), so it's skipped here exactly as it always
                 # was when it still had a `CVarDefNode` to filter.
-                if not (visitor.in_class and entry.visibility in ("public", "readonly")):
+                if not (
+                    visitor.in_class and entry.visibility in ("public", "readonly")
+                ):
                     continue
                 type_name = render_pyrex_type(t)
                 resolved = with_debug_fallback(
@@ -318,8 +324,12 @@ class Converter:
                     "_typeshed.Incomplete",
                     lambda name_=name: f"Unable to determine type for {name_}",
                 )
-                resolved = _substitute_ctypedef_aliases(resolved, ctypedef_aliases or {})
-                extra_assignments.append(PyiAssignment(f"{name}: {resolved}", name=name))
+                resolved = _substitute_ctypedef_aliases(
+                    resolved, ctypedef_aliases or {}
+                )
+                extra_assignments.append(
+                    PyiAssignment(f"{name}: {resolved}", name=name)
+                )
 
         return extra_assignments, extra_enums, extra_structs, extra_functions
 
@@ -334,7 +344,7 @@ class Converter:
         resolve_ctypedef_aliases: bool = False,
         inherited_ctypedef_aliases: dict[str, str] | None = None,
         defer_ctypedef_pruning: bool = False,
-        prunable_ctypedef_aliases: dict[str, "PyiAssignment"] | None = None,
+        prunable_ctypedef_aliases: dict[str, PyiAssignment] | None = None,
     ) -> PyiScope:
         """Convert a ScopeVisitor to a PyiScope.
 
@@ -389,7 +399,10 @@ class Converter:
         local_ctypedef_aliases = (
             ctypedef_alias_map(visitor) if resolve_ctypedef_aliases else {}
         )
-        ctypedef_aliases = {**(inherited_ctypedef_aliases or {}), **local_ctypedef_aliases}
+        ctypedef_aliases = {
+            **(inherited_ctypedef_aliases or {}),
+            **local_ctypedef_aliases,
+        }
 
         cdef_assignments: list[PyiAssignment] = []
         cdef_handled_names: set[str] = set()
@@ -430,7 +443,9 @@ class Converter:
                 resolved_type = _substitute_ctypedef_aliases(
                     resolved_type, ctypedef_aliases
                 )
-                cdef_assignments.append(PyiAssignment(f"{name}: {resolved_type}", name=name))
+                cdef_assignments.append(
+                    PyiAssignment(f"{name}: {resolved_type}", name=name)
+                )
                 cdef_handled_names.add(name)
 
         # Preserve source order across cdef and def functions
@@ -476,8 +491,7 @@ class Converter:
         all_funcs_sorted = sorted(cdef_funcs + py_funcs, key=lambda t: t[0])
         functions = [f for _, f in all_funcs_sorted]
         structs_or_enums = [
-            convert_struct_or_union(node)
-            for node in visitor.cdef_structs_or_unions
+            convert_struct_or_union(node) for node in visitor.cdef_structs_or_unions
         ]
         classes = [
             self.convert_class(
@@ -511,7 +525,10 @@ class Converter:
         ]
 
         conv_assignments_with_source = [
-            (assignment, convert_assignment(assignment, source_code, in_class=visitor.in_class))
+            (
+                assignment,
+                convert_assignment(assignment, source_code, in_class=visitor.in_class),
+            )
             for assignment in visitor.assignments
         ]
 
@@ -520,11 +537,17 @@ class Converter:
         handled_names: set[str] = set(cdef_handled_names)
         handled_names.update(f.name for f in functions)
         handled_names.update(
-            (c.node.class_name if isinstance(c.node, Nodes.CClassDefNode) else c.node.name)
+            (
+                c.node.class_name
+                if isinstance(c.node, Nodes.CClassDefNode)
+                else c.node.name
+            )
             for c in visitor.classes
         )
         handled_names.update(
-            n for n in (getattr(s, "name", None) for s in visitor.cdef_structs_or_unions) if n
+            n
+            for n in (getattr(s, "name", None) for s in visitor.cdef_structs_or_unions)
+            if n
         )
         handled_names.update(
             n for n in (getattr(n, "name", None) for n in visitor.cpp_classes) if n
@@ -532,7 +555,8 @@ class Converter:
         handled_names.update(
             n
             for n in (
-                getattr(getattr(a, "lhs", None), "name", None) for a in visitor.assignments
+                getattr(getattr(a, "lhs", None), "name", None)
+                for a in visitor.assignments
             )
             if n
         )
@@ -544,7 +568,9 @@ class Converter:
             )
             if n
         )
-        handled_names.update(n for n in (getattr(e, "name", None) for e in visitor.enums) if n)
+        handled_names.update(
+            n for n in (getattr(e, "name", None) for e in visitor.enums) if n
+        )
 
         extra_assignments, extra_enums, extra_structs, extra_functions = (
             self._convert_declared_entries(visitor, handled_names, ctypedef_aliases)
@@ -567,13 +593,14 @@ class Converter:
         # counts as a use, conservatively keeping `MyFloat` around in that
         # case rather than risking a dangling reference).
         functions_and_classes = PyiScope(functions=functions, classes=classes)
-        other_statements = (
-            [a.statement for a in cdef_assignments]
-            + [a.statement for a in extra_assignments if isinstance(a, PyiAssignment)]
-        )
+        other_statements = [a.statement for a in cdef_assignments] + [
+            a.statement for a in extra_assignments if isinstance(a, PyiAssignment)
+        ]
 
         def _ctypedef_alias_name(raw_node) -> str | None:
-            if not (resolve_ctypedef_aliases and isinstance(raw_node, Nodes.CTypeDefNode)):
+            if not (
+                resolve_ctypedef_aliases and isinstance(raw_node, Nodes.CTypeDefNode)
+            ):
                 return None
             name, _ = extract_name_and_type(raw_node)
             return name if name in local_ctypedef_aliases else None
@@ -581,7 +608,8 @@ class Converter:
         def _is_used_elsewhere(name: str, own_statement: str | None, live) -> bool:
             for function in _scope_functions(functions_and_classes):
                 if any(
-                    _text_uses_name(arg.annotation, name) for arg in function.signature.args
+                    _text_uses_name(arg.annotation, name)
+                    for arg in function.signature.args
                 ) or _text_uses_name(function.signature.return_type, name):
                     return True
             for converted in live:
@@ -606,7 +634,7 @@ class Converter:
             for raw_node, converted in conv_assignments_with_source
             if converted is not None
         ]
-        locally_dead: list[tuple[str, "PyiAssignment"]] = []
+        locally_dead: list[tuple[str, PyiAssignment]] = []
         for _ in range(len(live_assignments)):
             pruned_this_pass = False
             still_live = []
@@ -660,7 +688,7 @@ class Converter:
         resolve_ctypedef_aliases: bool = False,
         inherited_ctypedef_aliases: dict[str, str] | None = None,
         defer_ctypedef_pruning: bool = False,
-        prunable_ctypedef_aliases: dict[str, "PyiAssignment"] | None = None,
+        prunable_ctypedef_aliases: dict[str, PyiAssignment] | None = None,
     ) -> PyiClass:
         """Convert a ClassVisitor to a PyiClass."""
         comments = comments if comments is not None else CommentIndex([])
@@ -711,7 +739,10 @@ class Converter:
             fused_types or {},
         )
         raw_fallback = apply_type_comments(
-            signature, cdef_func, cdef_func.declarator.args, comments  # type: ignore
+            signature,
+            cdef_func,
+            cdef_func.declarator.args,
+            comments,  # type: ignore
         )
         apply_ctypedef_aliases(signature, ctypedef_aliases)
         return PyiFunction(
@@ -743,7 +774,10 @@ class Converter:
             fused_types or {},
         )
         raw_fallback = apply_type_comments(
-            signature, node, node.args, comments  # type: ignore
+            signature,
+            node,
+            node.args,
+            comments,  # type: ignore
         )
         apply_ctypedef_aliases(signature, ctypedef_aliases)
         return PyiFunction(
@@ -762,4 +796,3 @@ def _is_cxx_cimport(raw: str) -> bool:
 
 def _is_cython_import(raw: str) -> bool:
     return bool(_CYTHON_FROM_IMPORT_RE.search(raw) or _CYTHON_IMPORT_RE.search(raw))
-

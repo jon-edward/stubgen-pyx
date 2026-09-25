@@ -72,7 +72,9 @@ class TestContinueOnErrorBatch:
         (temp_dir / "bad.pyx").write_text("def f(x: int -> int:\n    pass\n")
         return temp_dir
 
-    def test_continue_on_error_true_reports_the_failure_and_keeps_going(self, mixed_batch):
+    def test_continue_on_error_true_reports_the_failure_and_keeps_going(
+        self, mixed_batch
+    ):
         stubgen = StubgenPyx(StubgenPyxConfig(continue_on_error=True))
         results = stubgen.convert_glob(str(mixed_batch / "*.pyx"))
         by_name = {r.pyx_file.name: r for r in results}
@@ -104,7 +106,9 @@ class TestContinueOnErrorBatch:
         stubgen = StubgenPyx(
             StubgenPyxConfig(resolve_ctypedef_aliases=True, continue_on_error=True)
         )
-        with patch.object(StubgenPyx, "_finalize", side_effect=RuntimeError("render boom")):
+        with patch.object(
+            StubgenPyx, "_finalize", side_effect=RuntimeError("render boom")
+        ):
             results = stubgen.convert_glob(str(mixed_batch / "good.pyx"))
         assert results[0].success is False
         assert "render boom" in str(results[0].error)
@@ -151,15 +155,19 @@ class TestEncodingErrorWrapping:
     def test_main_file_decode_error_becomes_value_error(self, temp_dir):
         pyx_file = temp_dir / "mod.pyx"
         pyx_file.write_text("def f(x: int) -> int:\n    return x\n")
-        with patch.object(
-            StubgenPyx,
-            "_compile_file_with_converter",
-            side_effect=self._compile_error_wrapping_decode_error(),
+        with (
+            patch.object(
+                StubgenPyx,
+                "_compile_file_with_converter",
+                side_effect=self._compile_error_wrapping_decode_error(),
+            ),
+            pytest.raises(ValueError, match="File encoding error"),
         ):
-            with pytest.raises(ValueError, match="File encoding error"):
-                StubgenPyx().convert_single_file(pyx_file)
+            StubgenPyx().convert_single_file(pyx_file)
 
-    def test_pxd_decode_error_is_logged_and_conversion_continues(self, temp_dir, caplog):
+    def test_pxd_decode_error_is_logged_and_conversion_continues(
+        self, temp_dir, caplog
+    ):
         """Unlike the main file, a companion `.pxd` that can't be read
         doesn't fail the whole conversion -- it's logged and the `.pyx`
         is still converted on its own."""
@@ -184,7 +192,9 @@ class TestEncodingErrorWrapping:
 
 
 class TestLogDiagnostics:
-    def test_diagnostic_without_message_only_or_position_falls_back_to_str(self, caplog):
+    def test_diagnostic_without_message_only_or_position_falls_back_to_str(
+        self, caplog
+    ):
         """Not every diagnostic is a `CompileError` with `message_only`/
         `position` -- anything else falls back to plain `str()`."""
         _log_diagnostics([ValueError("a plain, unformatted diagnostic")], None)
@@ -213,7 +223,9 @@ class TestMergeClasses:
 
 
 class TestResolvePyiPath:
-    def test_falls_back_to_bare_filename_when_not_relative_to_common_root(self, temp_dir):
+    def test_falls_back_to_bare_filename_when_not_relative_to_common_root(
+        self, temp_dir
+    ):
         """`pyx_path` outside `common_root` can't be expressed as a
         relative path -- falls back to just the file's own name under
         `output_dir` rather than raising."""

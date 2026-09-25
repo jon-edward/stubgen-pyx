@@ -7,8 +7,8 @@ import tokenize
 
 from Cython.Compiler import ExprNodes, Nodes
 
-from .unparse import unparse_expr
 from ..parsing.utils import tokenize_py
+from .unparse import unparse_expr
 
 
 def get_source(source: str, node: Nodes.Node) -> str:
@@ -91,7 +91,9 @@ def get_decorators(
     rendered = []
     for decorator in decorators:
         expr = unparse_expr(decorator.decorator)
-        rendered.append(f"@{expr}" if expr is not None else get_source(source, decorator))
+        rendered.append(
+            f"@{expr}" if expr is not None else get_source(source, decorator)
+        )
     return rendered
 
 

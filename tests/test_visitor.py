@@ -956,7 +956,6 @@ cdef class Foo:
     assert result.count("def bar(") == 1
 
 
-
 class TestScopeVisitorMethodsDirectly:
     """`ScopeVisitor`'s individual `visit_*` methods, exercised
     directly against a real or minimal node -- several of these have
@@ -998,8 +997,9 @@ class TestScopeVisitorMethodsDirectly:
         into a single synthetic `__annotations__` dict by the time
         real declaration analysis finishes; see
         `Converter._convert_declared_entries`'s docstring)."""
-        from Cython.Compiler import ExprNodes
         from types import SimpleNamespace
+
+        from Cython.Compiler import ExprNodes
 
         visitor = self._empty_visitor()
         name_node = ExprNodes.NameNode(None, name="x")
@@ -1008,8 +1008,9 @@ class TestScopeVisitorMethodsDirectly:
         assert len(visitor.assignments) == 1
 
     def test_visit_exprstatnode_ignores_a_non_annotated_name(self):
-        from Cython.Compiler import ExprNodes
         from types import SimpleNamespace
+
+        from Cython.Compiler import ExprNodes
 
         visitor = self._empty_visitor()
         name_node = ExprNodes.NameNode(None, name="y")
@@ -1142,7 +1143,7 @@ def _first_node(source: str):
     """Find the first `SingleAssignmentNode` in `source`'s raw (pre-pipeline) AST."""
     from io import StringIO
 
-    from Cython.Compiler import Nodes, Parsing
+    from Cython.Compiler import Parsing
     from Cython.Compiler.Scanning import PyrexScanner, StringSourceDescriptor
 
     from stubgen_pyx.parsing.context import StubgenContext
@@ -1198,10 +1199,10 @@ class TestDeclaredNamePointerDeclarator:
         import sys
 
         sys.path.insert(0, "tests")
+        from Cython.Compiler import Nodes as visitor_Nodes
         from test_type_parsing import _first_node as _first_node_of_type
 
         from stubgen_pyx.analysis.visitor import _declared_name
-        from Cython.Compiler import Nodes as visitor_Nodes
 
         node = _first_node_of_type(
             "cdef int* get_ptr():\n    pass\n", visitor_Nodes.CFuncDefNode

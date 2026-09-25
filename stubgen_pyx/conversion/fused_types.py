@@ -57,11 +57,14 @@ def convert_fused_types(visitor: ScopeVisitor) -> dict[str, PyiFusedType]:
         }
         concrete_types = tuple(concrete_by_raw.keys())
         numpy_scalars = tuple(
-            _CYTHON_TO_NUMPY_SCALAR.get(raw_name) for raw_name in concrete_by_raw.values()
+            _CYTHON_TO_NUMPY_SCALAR.get(raw_name)
+            for raw_name in concrete_by_raw.values()
         )
         fused_types[name] = PyiFusedType(name, concrete_types, numpy_scalars)
 
-    static_fused_members = getattr(visitor.node, "_stubgen_static_fused_members", None) or {}
+    static_fused_members = (
+        getattr(visitor.node, "_stubgen_static_fused_members", None) or {}
+    )
     for name, member_names in static_fused_members.items():
         if name in fused_types:
             continue
@@ -72,7 +75,8 @@ def convert_fused_types(visitor: ScopeVisitor) -> dict[str, PyiFusedType]:
         concrete_types = tuple(concrete_by_raw.keys())
         if concrete_types:
             numpy_scalars = tuple(
-                _CYTHON_TO_NUMPY_SCALAR.get(raw_name) for raw_name in concrete_by_raw.values()
+                _CYTHON_TO_NUMPY_SCALAR.get(raw_name)
+                for raw_name in concrete_by_raw.values()
             )
             fused_types[name] = PyiFusedType(name, concrete_types, numpy_scalars)
 
@@ -145,7 +149,9 @@ def _restore_fused_memoryview_annotations(
     return signature
 
 
-def _fused_memoryview_name(node: Nodes.Node, fused_types: dict[str, PyiFusedType]) -> str | None:
+def _fused_memoryview_name(
+    node: Nodes.Node, fused_types: dict[str, PyiFusedType]
+) -> str | None:
     """Return the fused typedef name backing a memoryview node, or None if not fused."""
     base_type = getattr(node, "base_type", None)
     if not isinstance(base_type, Nodes.MemoryViewSliceTypeNode):
@@ -170,7 +176,9 @@ def _resolve_fused_signature(
     """
     usage: dict[str, tuple[int, bool]] = {}
     for name in fused_types:
-        param_count = sum(_annotation_uses_name(arg.annotation, name) for arg in signature.args)
+        param_count = sum(
+            _annotation_uses_name(arg.annotation, name) for arg in signature.args
+        )
         used_as_return = _annotation_uses_name(signature.return_type, name)
         if param_count or used_as_return:
             usage[name] = (param_count, used_as_return)
@@ -187,7 +195,9 @@ def _resolve_fused_signature(
             signature.return_type,
             usage,
             fused_types,
-            is_memoryview=getattr(signature, "_stubgen_fused_return_was_memoryview", False),
+            is_memoryview=getattr(
+                signature, "_stubgen_fused_return_was_memoryview", False
+            ),
         )
     return signature
 
@@ -239,7 +249,8 @@ def _resolved_fused_annotation(
             # `memoryview` instead of the misleading scalar `numeric`.
             replacement = "memoryview"
         resolved = " | ".join(
-            replacement if part == name else part for part in _annotation_parts(resolved)
+            replacement if part == name else part
+            for part in _annotation_parts(resolved)
         )
     return resolved
 

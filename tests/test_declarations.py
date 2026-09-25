@@ -31,7 +31,9 @@ def _fake_enum_node(*, create_wrapper: bool, name: str, member_names: list[str])
 
 def test_convert_enum_with_wrapper_returns_pyi_enum():
     """`cpdef enum`/`cpdef enum class` -- Python-visible -- becomes a real `PyiEnum`."""
-    node = _fake_enum_node(create_wrapper=True, name="Color", member_names=["RED", "GREEN"])
+    node = _fake_enum_node(
+        create_wrapper=True, name="Color", member_names=["RED", "GREEN"]
+    )
     result = convert_enum(node)
     assert result == PyiEnum(enum_name="Color", names=["RED", "GREEN"])
 

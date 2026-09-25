@@ -18,7 +18,7 @@ from stubgen_pyx.conversion.signature import (
 )
 
 sys.path.insert(0, "tests")
-from test_type_parsing import _first_node  # noqa: E402
+from test_type_parsing import _first_node
 
 
 def test_decode_or_pass_decodes_bytes():

@@ -121,7 +121,11 @@ def _align_signature_arg_types(arg_types: list[str], raw_args: list) -> dict[int
     n = len(raw_args)
     if len(arg_types) == n:
         return dict(enumerate(arg_types))
-    if len(arg_types) == n - 1 and raw_args and getattr(raw_args[0], "is_self_arg", False):
+    if (
+        len(arg_types) == n - 1
+        and raw_args
+        and getattr(raw_args[0], "is_self_arg", False)
+    ):
         return {i + 1: t for i, t in enumerate(arg_types)}
     return {}
 
@@ -201,7 +205,10 @@ def _find_signature_type_comment(
     if candidate is not None:
         expr = _type_comment_expr(candidate.text)
         is_type_comment = _TYPE_COMMENT_PATTERN.match(candidate.text) is not None
-        if expr is not None and _try_parse_signature_type_comment(candidate.text) is not None:
+        if (
+            expr is not None
+            and _try_parse_signature_type_comment(candidate.text) is not None
+        ):
             return ("signature", comments.trailing(node.pos[1]))
         if is_type_comment and expr is None:
             # Matched `# type: ...` but `_type_comment_expr` rejected it
@@ -228,7 +235,9 @@ def _find_signature_type_comment(
     return ("unknown", closest)
 
 
-def _find_per_argument_type_comments(raw_args: list, comments: CommentIndex) -> dict[int, str]:
+def _find_per_argument_type_comments(
+    raw_args: list, comments: CommentIndex
+) -> dict[int, str]:
     """Map raw-argument-index -> type string, from each argument's own
     trailing `# type: TYPE` comment.
 

@@ -85,6 +85,7 @@ def add(x: int, y: int) -> int:
 """
     result = parse_pyx(source, pxd=False)
     assert result.diagnostics == []
-    def_stats = [s for s in result.source_ast.body.stats if type(s).__name__ == "DefNode"]
+    def_stats = [
+        s for s in result.source_ast.body.stats if type(s).__name__ == "DefNode"
+    ]
     assert [s.name for s in def_stats] == ["add"]
-

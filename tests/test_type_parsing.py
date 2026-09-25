@@ -7,9 +7,9 @@ from io import StringIO
 from Cython.Compiler import Parsing
 from Cython.Compiler.Scanning import PyrexScanner, StringSourceDescriptor
 
+from stubgen_pyx.config import StubgenPyxConfig
 from stubgen_pyx.conversion import type_parsing
 from stubgen_pyx.conversion.type_parsing import Nodes as type_parsing_Nodes
-from stubgen_pyx.config import StubgenPyxConfig
 from stubgen_pyx.parsing.context import StubgenContext
 from stubgen_pyx.parsing.parser import _DEFAULT_MODULE_NAME, _resolve_scope
 from stubgen_pyx.parsing.parser import parse_str as parse_pyx
@@ -70,7 +70,6 @@ def _first_node(source: str, node_type: type):
             elif child is not None:
                 pending.append(child)
     raise AssertionError(f"No {node_type.__name__} found")
-
 
 
 def test_parameterize_builtin_generic_handles_none_and_unknown():
@@ -193,7 +192,6 @@ def test_genuinely_unresolvable_type_still_logs(caplog):
     assert any("Unknown base type" in r.message for r in caplog.records)
 
 
-
 class TestRenderPyrexTypeEdgeCases:
     """Direct tests for `render_pyrex_type` branches a full end-to-end
     conversion doesn't naturally reach: a `None` type, a ctuple, a
@@ -212,11 +210,15 @@ class TestRenderPyrexTypeEdgeCases:
             pxd=True,
         )
         entry = result.scope.entries["get_pair"]
-        assert type_parsing.render_pyrex_type(entry.type.return_type) == "tuple[int, float]"
+        assert (
+            type_parsing.render_pyrex_type(entry.type.return_type)
+            == "tuple[int, float]"
+        )
 
     def test_memoryview_with_no_numpy_scalar_falls_back_to_memoryview(self):
         result = parse_pyx(
-            'cdef extern from "foo.hpp" nogil:\n    cdef object[:] get_view()\n', pxd=True
+            'cdef extern from "foo.hpp" nogil:\n    cdef object[:] get_view()\n',
+            pxd=True,
         )
         entry = result.scope.entries["get_view"]
         assert type_parsing.render_pyrex_type(entry.type.return_type) == "memoryview"
@@ -226,7 +228,8 @@ class TestRenderPyrexTypeEdgeCases:
         `_extract_templated_type` tests above -- a templated C++ class
         type resolved directly, not from a raw AST node."""
         result = parse_pyx(
-            "from libcpp.vector cimport vector\n\nctypedef vector[int] int_vec\n", pxd=True
+            "from libcpp.vector cimport vector\n\nctypedef vector[int] int_vec\n",
+            pxd=True,
         )
         entry = result.scope.entries["int_vec"]
         rendered = type_parsing.render_pyrex_type(entry.type)
@@ -238,7 +241,9 @@ class TestRenderPyrexTypeEdgeCases:
             'cdef extern from "foo.hpp" nogil:\n    cdef int compute(int x)\n', pxd=True
         )
         entry = result.scope.entries["compute"]
-        assert type_parsing.render_pyrex_type(entry.type) == "typing.Callable[[int], int]"
+        assert (
+            type_parsing.render_pyrex_type(entry.type) == "typing.Callable[[int], int]"
+        )
 
 
 class TestGetCdefVariablesEdgeCases:
@@ -289,7 +294,8 @@ class TestFusedMemberName:
 
     def test_plain_member_name(self):
         node = _first_node(
-            "ctypedef fused numeric:\n    int\n    double\n", type_parsing_Nodes.FusedTypeNode
+            "ctypedef fused numeric:\n    int\n    double\n",
+            type_parsing_Nodes.FusedTypeNode,
         )
         assert type_parsing._fused_member_name(node.types[0]) == "int"
 

@@ -14,7 +14,10 @@ from .analysis.visitor import ModuleVisitor
 from .builders.builder import Builder
 from .config import StubgenPyxConfig
 from .conversion.converter import Converter
-from .conversion.ctypedef_aliases import pyi_module_uses_name, remove_assignment_from_module
+from .conversion.ctypedef_aliases import (
+    pyi_module_uses_name,
+    remove_assignment_from_module,
+)
 from .conversion.fused_types import convert_fused_types
 from .models.pyi_elements import PyiClass, PyiModule
 from .parsing.context import StubgenContext, context_for_paths
@@ -123,8 +126,6 @@ def _log_diagnostics(diagnostics: list[Exception], pyx_path: Path | None) -> Non
             # giving up on this one entirely) must never take the whole
             # conversion down with it.
             _logger.warning(f"Unresolved declaration{label} (unformattable diagnostic)")
-
-
 
 
 @dataclass
@@ -249,7 +250,7 @@ class StubgenPyx:
         pyx_path: Path,
         context: StubgenContext,
         defer_ctypedef_pruning: bool = False,
-        prunable_ctypedef_aliases: dict[str, "PyiAssignment"] | None = None,
+        prunable_ctypedef_aliases: dict[str, PyiAssignment] | None = None,
     ) -> tuple[PyiModule, list[Exception]]:
         """Compile a real .pyx file (and, optionally, its companion .pxd).
 
@@ -287,9 +288,7 @@ class StubgenPyx:
                     else:
                         raise
 
-        parse_result = parse_file(
-            pyx_path, context, pxd=False, module_name=module_name
-        )
+        parse_result = parse_file(pyx_path, context, pxd=False, module_name=module_name)
 
         return self._build_module(
             converter,
@@ -305,7 +304,7 @@ class StubgenPyx:
         parse_result: ParsedSource,
         pxd_parse_result: ParsedSource | None,
         defer_ctypedef_pruning: bool = False,
-        prunable_ctypedef_aliases: dict[str, "PyiAssignment"] | None = None,
+        prunable_ctypedef_aliases: dict[str, PyiAssignment] | None = None,
     ) -> tuple[PyiModule, list[Exception]]:
         """Shared tail of both compile paths: `ParsedSource(s)` -> `PyiModule`.
 
@@ -521,7 +520,9 @@ class StubgenPyx:
         results: list[ConversionResult] = []
         for pyx_path in pyx_paths:
             pyi_path = self._resolve_pyi_path(pyx_path, output_dir, common_root)
-            result = self.convert_single_file(pyx_path, pyi_path, dry_run, _context=context)
+            result = self.convert_single_file(
+                pyx_path, pyi_path, dry_run, _context=context
+            )
             results.append(result)
 
             if self.config.verbose or not result.success:
@@ -560,9 +561,11 @@ class StubgenPyx:
         prepared: list[tuple] = []
         for pyx_path in pyx_paths:
             pyi_path = self._resolve_pyi_path(pyx_path, output_dir, common_root)
-            prunable: dict[str, "PyiAssignment"] = {}
+            prunable: dict[str, PyiAssignment] = {}
             try:
-                _logger.debug(f"Converting '{pyx_path}' to '{pyi_path or pyx_path.with_suffix('.pyi')}'")
+                _logger.debug(
+                    f"Converting '{pyx_path}' to '{pyi_path or pyx_path.with_suffix('.pyi')}'"
+                )
                 early = self._convert_single_file_to_module(
                     pyx_path,
                     context,
@@ -574,7 +577,15 @@ class StubgenPyx:
                 else:
                     converter, module, diagnostics = early
                     prepared.append(
-                        (pyx_path, pyi_path, None, converter, module, diagnostics, prunable)
+                        (
+                            pyx_path,
+                            pyi_path,
+                            None,
+                            converter,
+                            module,
+                            diagnostics,
+                            prunable,
+                        )
                     )
             except Exception as e:
                 _logger.exception(f"Error during conversion: {type(e).__name__}")
@@ -586,7 +597,9 @@ class StubgenPyx:
                     pyi_file=pyi_path or pyx_path.with_suffix(".pyi"),
                     error=e,
                 )
-                prepared.append((pyx_path, pyi_path, early_result, None, None, None, None))
+                prepared.append(
+                    (pyx_path, pyi_path, early_result, None, None, None, None)
+                )
 
         successful_modules = [entry[4] for entry in prepared if entry[4] is not None]
         for _, _, early_result, _, module, _, prunable in prepared:
@@ -601,7 +614,15 @@ class StubgenPyx:
                     remove_assignment_from_module(module, assignment)
 
         results: list[ConversionResult] = []
-        for pyx_path, pyi_path, early_result, converter, module, diagnostics, _ in prepared:
+        for (
+            pyx_path,
+            pyi_path,
+            early_result,
+            converter,
+            module,
+            diagnostics,
+            _,
+        ) in prepared:
             if early_result is not None:
                 results.append(early_result)
                 if self.config.verbose or not early_result.success:
@@ -645,7 +666,7 @@ class StubgenPyx:
         pyx_file_path: Path,
         context: StubgenContext,
         defer_ctypedef_pruning: bool = False,
-        prunable_ctypedef_aliases: dict[str, "PyiAssignment"] | None = None,
+        prunable_ctypedef_aliases: dict[str, PyiAssignment] | None = None,
     ) -> tuple[PyiModule, list[Exception]]:
         """`_compile_file_with_converter`, with the decode-error unwrapping
         `convert_single_file` needs -- factored out so `convert_multiple_files`'s
@@ -694,7 +715,7 @@ class StubgenPyx:
         pyx_file_path: Path,
         _context: StubgenContext | None = None,
         defer_ctypedef_pruning: bool = False,
-        prunable_ctypedef_aliases: dict[str, "PyiAssignment"] | None = None,
+        prunable_ctypedef_aliases: dict[str, PyiAssignment] | None = None,
     ) -> ConversionResult | tuple[Converter, PyiModule, list[Exception]]:
         """The part of `convert_single_file` before rendering/writing: the
         existing-file and `__init__`-skip checks, then parse + convert to
@@ -800,7 +821,6 @@ class StubgenPyx:
                 pyi_file=pyi_file_path,
                 error=e,
             )
-
 
 
 def _merge_pxd_into_module(module: PyiModule, pxd_module: PyiModule) -> None:

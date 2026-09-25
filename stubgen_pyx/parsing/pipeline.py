@@ -110,14 +110,16 @@ class StubPipelineResult:
             caller as data, not treated as fatal.
     """
 
-    __slots__ = ("tree", "diagnostics")
+    __slots__ = ("diagnostics", "tree")
 
     def __init__(self, tree: object, diagnostics: list) -> None:
         self.tree = tree
         self.diagnostics = diagnostics
 
 
-def run_stub_pipeline(context: Context, mode: PipelineMode, tree: object) -> StubPipelineResult:
+def run_stub_pipeline(
+    context: Context, mode: PipelineMode, tree: object
+) -> StubPipelineResult:
     """Run ``stub_pipeline(context, mode)`` over an already-parsed tree.
 
     Errors Cython's own error-reporting records during the run (see
