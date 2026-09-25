@@ -54,6 +54,18 @@ class PyiStatement(PyiElement):
 class PyiAssignment(PyiStatement):
     """Represents an assignment statement that should be included in the pyi file as-is."""
 
+    # The assigned name, when cleanly known at construction time (every
+    # call site already has it as a plain local variable -- it's the name
+    # being assigned to). Optional/`None` only for the rare fallback path
+    # that recovers an assignment straight from raw source text
+    # (`Converter.convert_assignment`'s final `ast.parse` fallback) without
+    # separately tracking its target. Lets consumers (e.g.
+    # `Builder.build_assignment`'s privacy check) use the name directly
+    # instead of re-deriving it by string-partitioning `statement`, which
+    # breaks on a value/annotation containing its own `=`/`:` before the
+    # real separator (e.g. `_x: Annotated[int, Field(default=5)] = 5`).
+    name: str | None = None
+
 
 @dataclass
 class PyiImport(PyiStatement):
@@ -97,6 +109,12 @@ class PyiFusedType(PyiElement):
 
     name: str
     concrete_types: tuple[str, ...]
+    # Parallel to `concrete_types`: the numpy scalar-type suffix (e.g.
+    # "int32", "double") for each member, or None if it has no numpy
+    # equivalent (extension type, `object`, etc.). Used to render a
+    # memoryview of this fused type as `numpy.typing.NDArray[...]` per
+    # member instead of a bare scalar.
+    numpy_scalars: tuple[str | None, ...] = ()
 
 
 @dataclass

@@ -18,7 +18,6 @@ from stubgen_pyx.models.pyi_elements import (
     PyiScope,
     PyiSignature,
 )
-from stubgen_pyx.parsing.file_parsing import MaxIncludeDepthError
 
 
 class TestBuilderEdgeCases:
@@ -81,14 +80,18 @@ class TestBuilderEdgeCases:
             classes=[PyiClass("Class", scope=PyiScope())],
         )
         result = builder.build_scope(scope)
-        assert result is not None
+        assert "x: int" in result
+        assert "class Class:" in result
+        assert "def func():" in result
 
     def test_builder_module_empty_scope(self):
         """Test building module with empty scope."""
         builder = Builder()
         module = PyiModule(scope=PyiScope())
         result = builder.build_module(module)
-        assert isinstance(result, str)
+        # No doc, no imports, nothing in the scope -- must render as
+        # nothing at all, not e.g. a spurious blank class/function.
+        assert result == ""
 
     def test_builder_signature_complex(self):
         """Test complex signature with all features."""
@@ -267,7 +270,17 @@ cdef class MyClass:
 """)
             stubgen = StubgenPyx()
             result = stubgen.convert_str(pyx_file.read_text(), pyx_path=pyx_file)
-            assert "class MyClass" in result or len(result) > 0
+            assert "class MyClass" in result
+            assert "def __init__(self, v: int, n: str)" in result
+            assert "def get_value(self)" in result
+            assert "def set_value(self, v: int)" in result
+            # `cdef int value`/`cdef str name` are plain, non-public
+            # attributes and must not appear as their own declarations.
+            # ("value"/"name" as substrings legitimately appear in
+            # get_value/set_value, so check the attribute-line shape.)
+            assert "value: int" not in result
+            assert "name: str" not in result
+            assert "prop" in result
 
     def test_convert_with_type_annotations(self):
         """Test converting code with extensive type annotations."""
@@ -287,10 +300,14 @@ cdef class Processor:
 """)
             stubgen = StubgenPyx()
             result = stubgen.convert_str(pyx_file.read_text(), pyx_path=pyx_file)
-            assert len(result) > 0
+            assert "from typing import Dict, List, Optional" in result
+            assert "def process(data: Dict[str, List[int]]) -> Optional[str]" in result
+            assert "class Processor" in result
+            assert "def handle(self, x: Optional[Dict]) -> List[str]" in result
 
     def test_circular_include(self):
         """Test circular includes."""
+        from stubgen_pyx.parsing.parser import CircularIncludeError
         from stubgen_pyx.stubgen import StubgenPyx
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -306,5 +323,14 @@ include "pyx_file_1.pyx"
 
             stubgen = StubgenPyx()
 
-            with pytest.raises(MaxIncludeDepthError):
-                stubgen.convert_str(pyx_file_1.read_text(), pyx_path=pyx_file_1)
+            # Real files, on disk, so this goes through convert_single_file
+            # (the string API, convert_str, has no filesystem-relative
+            # `include` resolution to begin with). Cython's own
+            # `include` handling (`Parsing.p_include_statement`) has no
+            # cycle detection at all and recurses partly in compiled C
+            # code that doesn't respect `sys.getrecursionlimit()` -- an
+            # unguarded cycle segfaults the whole process.
+            # `CircularIncludeError` is raised by our own pre-scan
+            # specifically to prevent that.
+            with pytest.raises(CircularIncludeError):
+                stubgen.convert_single_file(pyx_file_1, dry_run=True)

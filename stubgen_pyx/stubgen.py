@@ -14,8 +14,14 @@ from .analysis.visitor import ModuleVisitor
 from .builders.builder import Builder
 from .config import StubgenPyxConfig
 from .conversion.converter import Converter
-from .models.pyi_elements import PyiClass, PyiModule
-from .parsing.parser import parse_pyx, path_to_module_name
+from .conversion.ctypedef_aliases import (
+    pyi_module_uses_name,
+    remove_assignment_from_module,
+)
+from .conversion.fused_types import convert_fused_types
+from .models.pyi_elements import PyiAssignment, PyiClass, PyiModule
+from .parsing.context import StubgenContext, context_for_paths
+from .parsing.parser import ParsedSource, parse_file, parse_str, path_to_module_name
 from .postprocessing.pipeline import postprocessing_pipeline
 
 _logger = logging.getLogger(__name__)
@@ -30,22 +36,96 @@ class ConversionResult:
         pyx_file: Path to the source .pyx file.
         pyi_file: Path to the generated .pyi file.
         error: Exception if conversion failed, otherwise None.
+        diagnostics: `Cython.Compiler.Errors.CompileError`s recorded
+            while parsing/analysing this file (and its companion .pxd,
+            if any) but not fatal -- most commonly an unresolved
+            `cimport` (e.g. a dependency that isn't installed in this
+            environment). Declarations touched by a diagnostic are
+            dropped from the generated stub rather than guessed at (see
+            `parsing/pipeline.py::run_stub_pipeline`), so a non-empty
+            list here means the .pyi may be missing something the
+            source declared, even though `success` is `True`. Empty
+            when nothing was recorded, including for a failed
+            conversion (`success=False`) where the failure came from
+            something other than this mechanism (see `error` instead).
     """
 
     success: bool
     pyx_file: Path
     pyi_file: Path
     error: Exception | None = None
+    diagnostics: list[Exception] = field(default_factory=list)
 
     @property
     def status_message(self) -> str:
         """Human-readable status summary."""
         if self.success:
             if self.pyx_file != self.pyi_file:
-                return f"Converted {self.pyx_file} to {self.pyi_file}"
+                message = f"Converted {self.pyx_file} to {self.pyi_file}"
             else:
-                return f"Skipped {self.pyx_file}"
+                message = f"Skipped {self.pyx_file}"
+            if self.diagnostics:
+                message += (
+                    f" ({len(self.diagnostics)} declaration"
+                    f"{'s' if len(self.diagnostics) != 1 else ''} skipped -- "
+                    "see .diagnostics)"
+                )
+            return message
         return f"Failed to convert {self.pyx_file}: {self.error}"
+
+
+def _log_diagnostics(diagnostics: list[Exception], pyx_path: Path | None) -> None:
+    """Log each parse/analysis diagnostic as a warning.
+
+    These are recorded (see `ParsedSource.diagnostics`,
+    `parsing/pipeline.py::run_stub_pipeline`) rather than raised, by
+    design -- a stub generator can't assume every dependency the source
+    references is importable in this environment (the common case: an
+    unresolved `cimport` for a package that isn't installed here, e.g.
+    in a CI job without a full dev environment). Recording them isn't
+    the same as surfacing them, though: without this, a diagnostic
+    (and whatever declaration it caused to be silently dropped from the
+    stub) was previously visible only by reading `ParsedSource.
+    diagnostics`/`ConversionResult.diagnostics` directly -- nothing
+    logged it, at any level, anywhere. A CI run watching only its
+    console output (the common case) would see a clean, successful
+    conversion with no indication anything was skipped.
+
+    Formatted as one line per diagnostic (file:line:col: message)
+    rather than `str(diagnostic)`, which for a `CompileError` is a
+    multi-line block quoting several lines of source around the
+    error -- appropriate for a human reading a single failure
+    interactively, but noisy repeated once per diagnostic in a CI log
+    that may have several. `message_only`/`position` (both `CompileError`
+    -specific) give the same information in one line; anything else
+    (a diagnostic type that doesn't have them) falls back to `str()`.
+    """
+    label = f" in {pyx_path}" if pyx_path is not None else ""
+    for diagnostic in diagnostics:
+        message = getattr(diagnostic, "message_only", None)
+        position = getattr(diagnostic, "position", None)
+        try:
+            if message is not None and position is not None:
+                source_desc, line, column = position
+                # `str(source_desc)` (a `FileSourceDescriptor`) can
+                # itself raise (an internal assertion, confirmed
+                # empirically for a diagnostic recorded against a
+                # target file that doesn't actually exist on disk -- an
+                # unresolved `cimport`'s own position, say) --
+                # `.filename` is what it's built from and doesn't have
+                # that problem.
+                filename = getattr(source_desc, "filename", None) or "<unknown>"
+                _logger.warning(
+                    f"Unresolved declaration{label}: {filename}:{line}:{column}: {message}"
+                )
+            else:
+                _logger.warning(f"Unresolved declaration{label}: {diagnostic}")
+        except Exception:  # noqa: BLE001
+            # Formatting a diagnostic nicely is a courtesy, never a
+            # requirement -- falling back to the raw exception (or
+            # giving up on this one entirely) must never take the whole
+            # conversion down with it.
+            _logger.warning(f"Unresolved declaration{label} (unformattable diagnostic)")
 
 
 @dataclass
@@ -65,7 +145,10 @@ class StubgenPyx:
         return Converter()
 
     def _make_builder(self) -> Builder:
-        return Builder(include_private=self.config.include_private)
+        return Builder(
+            include_private=self.config.include_private,
+            replace_defaults_with_ellipsis=self.config.replace_defaults_with_ellipsis,
+        )
 
     def convert_str(
         self, pyx_str: str, pxd_str: str | None = None, pyx_path: Path | None = None
@@ -84,7 +167,16 @@ class StubgenPyx:
             Various exceptions from parsing, conversion, or building.
         """
         converter = self._make_converter()
-        module = self._compile_with_converter(converter, pyx_str, pxd_str, pyx_path)
+        module, diagnostics = self._compile_with_converter(
+            converter, pyx_str, pxd_str, pyx_path
+        )
+        _log_diagnostics(diagnostics, pyx_path)
+        return self._finalize(converter, module, pyx_path)
+
+    def _finalize(
+        self, converter: Converter, module: PyiModule, pyx_path: Path | None
+    ) -> str:
+        """`PyiModule` -> final .pyi text: build, then postprocess."""
         builder = self._make_builder()
         content = builder.build_module(module)
         return (
@@ -113,9 +205,11 @@ class StubgenPyx:
         Raises:
             Various exceptions from parsing, conversion, or building.
         """
-        return self._compile_with_converter(
+        module, diagnostics = self._compile_with_converter(
             self._make_converter(), pyx_str, pxd_str, pyx_path
         )
+        _log_diagnostics(diagnostics, pyx_path)
+        return module
 
     def _compile_with_converter(
         self,
@@ -123,49 +217,162 @@ class StubgenPyx:
         pyx_str: str,
         pxd_str: str | None = None,
         pyx_path: Path | None = None,
-    ) -> PyiModule:
+    ) -> tuple[PyiModule, list[Exception]]:
+        """Compile from in-memory strings (no real files required).
+
+        Uses a fresh, single-call `StubgenContext`: each call here is
+        isolated on purpose, matching this method's existing semantics
+        (the public string API is meant for synthetic/programmatic
+        content, not necessarily anything on disk). `cimport`/`include`
+        targets won't resolve to anything outside `pyx_str`/`pxd_str`
+        themselves -- see `parsing/parser.py::parse_str`. For real files,
+        use `_compile_file_with_converter`, which gets real cross-file
+        `cimport` resolution via a real `StubgenContext`.
+        """
         module_name = path_to_module_name(pyx_path) if pyx_path else None
-        # Full fused type support including cross-file inheritance would require
-        # Cython's own scope/env for symbol resolution, which is not currently available
-        # in this generator. Making that available would require a significant refactor,
-        # so in lieu of that we restrict the code to only handle the companion .pxd file
-        # (same stem) by parsing it as a separate pre-pass and merging its fused
-        # typedefs into the .pyx conversion. This is a pragmatic compromise that covers
-        # the majority of real-world use cases. Fused typedefs made visible via
-        # `cimport` from an unrelated module are not resolved through this path.
+        context = StubgenContext()
+
         pxd_parse_result = None
-        pxd_visitor = None
-        pxd_fused_types = None
         if pxd_str and self.config.pxd_to_stubs:
-            pxd_parse_result = parse_pyx(
-                pxd_str, module_name=module_name, pyx_path=pyx_path, pxd=True
-            )
-            pxd_visitor = ModuleVisitor(node=pxd_parse_result.source_ast)
-            pxd_fused_types = converter.convert_fused_types(
-                pxd_visitor.scope.fused_types
+            pxd_parse_result = parse_str(
+                pxd_str, module_name=module_name, pxd=True, context=context
             )
 
-        parse_result = parse_pyx(pyx_str, module_name=module_name, pyx_path=pyx_path)
+        parse_result = parse_str(
+            pyx_str, module_name=module_name, pxd=False, context=context
+        )
+
+        return self._build_module(converter, parse_result, pxd_parse_result)
+
+    def _compile_file_with_converter(
+        self,
+        converter: Converter,
+        pyx_path: Path,
+        context: StubgenContext,
+        defer_ctypedef_pruning: bool = False,
+        prunable_ctypedef_aliases: dict[str, PyiAssignment] | None = None,
+    ) -> tuple[PyiModule, list[Exception]]:
+        """Compile a real .pyx file (and, optionally, its companion .pxd).
+
+        `context` is expected to be shared across every file in a
+        conversion run (see `convert_multiple_files`) so that `cimport`s
+        between them resolve to the same, already-parsed module scopes.
+
+        `defer_ctypedef_pruning`/`prunable_ctypedef_aliases`: see
+        `_build_module`, which this passes them straight through to.
+        """
+        module_name = path_to_module_name(pyx_path)
+
+        pxd_parse_result = None
+        if self.config.pxd_to_stubs:
+            pxd_path = pyx_path.with_suffix(".pxd")
+            if pxd_path.exists() and pxd_path != pyx_path:
+                try:
+                    pxd_parse_result = parse_file(
+                        pxd_path, context, pxd=True, module_name=module_name
+                    )
+                except UnicodeDecodeError:
+                    _logger.warning(f"Could not read .pxd file {pxd_path}")
+                except Exception as e:
+                    # See `convert_single_file`'s matching handler for
+                    # why a decode error surfaces as a
+                    # `Cython.Compiler.Errors.CompileError` here now,
+                    # not a plain `UnicodeDecodeError`.
+                    from Cython.Compiler import Errors as _CythonErrors
+
+                    cause = e.__cause__ or e.__context__
+                    if isinstance(e, _CythonErrors.CompileError) and isinstance(
+                        cause, UnicodeDecodeError
+                    ):
+                        _logger.warning(f"Could not read .pxd file {pxd_path}")
+                    else:
+                        raise
+
+        parse_result = parse_file(pyx_path, context, pxd=False, module_name=module_name)
+
+        return self._build_module(
+            converter,
+            parse_result,
+            pxd_parse_result,
+            defer_ctypedef_pruning=defer_ctypedef_pruning,
+            prunable_ctypedef_aliases=prunable_ctypedef_aliases,
+        )
+
+    def _build_module(
+        self,
+        converter: Converter,
+        parse_result: ParsedSource,
+        pxd_parse_result: ParsedSource | None,
+        defer_ctypedef_pruning: bool = False,
+        prunable_ctypedef_aliases: dict[str, PyiAssignment] | None = None,
+    ) -> tuple[PyiModule, list[Exception]]:
+        """Shared tail of both compile paths: `ParsedSource(s)` -> `PyiModule`.
+
+        Full fused type support including cross-file inheritance would
+        require Cython's own scope/env for symbol resolution, which
+        wasn't available when this was originally written; this pre-pass
+        parses the companion `.pxd` file (same stem) separately and
+        merges its fused typedefs into the `.pyx` conversion, covering
+        the majority of real-world use cases. Fused typedefs made visible
+        via `cimport` from an unrelated module still aren't resolved this
+        way.
+
+        That restriction is now narrower than what `parse_file`'s shared
+        `StubgenContext` can actually resolve -- a real cross-file
+        `cimport` does get a real, shared `Entry`/scope (see
+        `parsing/parser.py`). `analysis/`/`conversion/converter.py`
+        haven't been rewritten to consume that yet, though -- they still
+        walk the raw, un-merged AST structurally, so this pre-pass-and-
+        merge step is still load-bearing for now. See the design doc's
+        "delete analysis/, single-pass converter" / "Entry-driven
+        conversion" sections for the follow-up that retires it.
+
+        Returns the diagnostics `parse_result`/`pxd_parse_result`
+        recorded (see `ParsedSource.diagnostics`) alongside the module,
+        combined into one list -- callers decide how to surface them
+        (`convert_str`/`compile_str_to_module` just log; `convert_single_file`
+        also attaches them to its `ConversionResult`).
+
+        `defer_ctypedef_pruning`/`prunable_ctypedef_aliases`: passed straight
+        through to both `convert_module` calls (main file and companion
+        `.pxd`, when present) -- see `Converter.convert_scope`'s docstring.
+        Only `convert_multiple_files` sets these, for its whole-batch
+        cross-file check.
+        """
+        pxd_visitor = None
+        pxd_fused_types = None
+        if pxd_parse_result is not None:
+            pxd_visitor = ModuleVisitor(node=pxd_parse_result.source_ast)
+            pxd_fused_types = convert_fused_types(pxd_visitor.scope)
 
         module_visitor = ModuleVisitor(node=parse_result.source_ast)
         module = converter.convert_module(
             module_visitor,
             parse_result.source,
-            parse_result.type_comments,
+            parse_result.comments,
             include_docstrings=self.config.include_docstrings,
             inherited_fused_types=pxd_fused_types,
+            resolve_ctypedef_aliases=self.config.resolve_ctypedef_aliases,
+            defer_ctypedef_pruning=defer_ctypedef_pruning,
+            prunable_ctypedef_aliases=prunable_ctypedef_aliases,
         )
 
         if pxd_parse_result is not None and pxd_visitor is not None:
             pxd_module = converter.convert_module(
                 pxd_visitor,
                 pxd_parse_result.source,
-                pxd_parse_result.type_comments,
+                pxd_parse_result.comments,
                 include_docstrings=self.config.include_docstrings,
+                resolve_ctypedef_aliases=self.config.resolve_ctypedef_aliases,
+                defer_ctypedef_pruning=defer_ctypedef_pruning,
+                prunable_ctypedef_aliases=prunable_ctypedef_aliases,
             )
             _merge_pxd_into_module(module, pxd_module)
 
-        return module
+        diagnostics = list(parse_result.diagnostics)
+        if pxd_parse_result is not None:
+            diagnostics.extend(pxd_parse_result.diagnostics)
+        return module, diagnostics
 
     def resolve_glob(
         self, pyx_file_pattern: str, exclude_patterns: list[str] | str | None = None
@@ -242,6 +449,28 @@ class StubgenPyx:
             pyx_files, output_dir=output_dir, dry_run=dry_run
         )
 
+    def _resolve_pyi_path(
+        self, pyx_path: Path, output_dir: Path | None, common_root: Path | None
+    ) -> Path | None:
+        """Where a given `pyx_path`'s .pyi output goes -- `None` means
+        "generate in place" (`convert_single_file`'s own default).
+        Factored out of `convert_multiple_files`'s loop so its
+        deferred-pruning batch path (`_convert_multiple_files_with_ctypedef_pruning`)
+        can compute the same thing without duplicating the logic.
+        """
+        if not output_dir:
+            return None
+        pyi_name = pyx_path.with_suffix(".pyi")
+        if common_root is not None:
+            try:
+                pyi_path = output_dir / pyi_name.relative_to(common_root)
+            except ValueError:
+                pyi_path = output_dir / pyi_name.name
+        else:
+            pyi_path = output_dir / pyi_name.name
+        pyi_path.parent.mkdir(parents=True, exist_ok=True)
+        return pyi_path
+
     def convert_multiple_files(
         self,
         pyx_file_paths: Iterable[Path],
@@ -259,29 +488,41 @@ class StubgenPyx:
         Returns:
             ConversionResult with success status and any error details.
         """
-        results: list[ConversionResult] = []
-
         pyx_paths = list(pyx_file_paths)
         common_root = None
         if output_dir and pyx_paths:
             common_root = Path(os.path.commonpath([str(p.parent) for p in pyx_paths]))
 
+        # One StubgenContext shared across every file in this batch, so a
+        # `cimport` in one file resolves to the same, already-parsed
+        # module scope as the file it's importing from -- see the design
+        # doc, "One shared Context per conversion run". Includes each
+        # companion .pxd path too (context_for_paths only needs the .pyx
+        # paths in practice, since a .pxd's root package dir is the same
+        # as its .pyx sibling's, but passing both is cheap and correct
+        # even when they diverge).
+        context = context_for_paths(
+            [*pyx_paths, *(p.with_suffix(".pxd") for p in pyx_paths)],
+            extra_include_dirs=self.config.include_dirs,
+        )
+
+        if self.config.resolve_ctypedef_aliases:
+            # A ctypedef alias's declaration can only safely be pruned as
+            # dead once every *other* file in this same batch has been
+            # checked too, not just the one file that declares it -- see
+            # `Converter.convert_scope`'s docstring, and
+            # `StubgenPyxConfig.resolve_ctypedef_aliases`'s for why this
+            # matters in practice (confirmed against a real package).
+            return self._convert_multiple_files_with_ctypedef_pruning(
+                pyx_paths, context, output_dir, common_root, dry_run
+            )
+
+        results: list[ConversionResult] = []
         for pyx_path in pyx_paths:
-            if output_dir:
-                # place pyi files in the same dir structure as the source pyx files
-                # relative to the common root of the pyx files
-                pyi_name = pyx_path.with_suffix(".pyi")
-                if common_root is not None:
-                    try:
-                        pyi_path = output_dir / pyi_name.relative_to(common_root)
-                    except ValueError:
-                        pyi_path = output_dir / pyi_name.name
-                else:
-                    pyi_path = output_dir / pyi_name.name
-                pyi_path.parent.mkdir(parents=True, exist_ok=True)
-            else:
-                pyi_path = None  # generate in-place
-            result = self.convert_single_file(pyx_path, pyi_path, dry_run)
+            pyi_path = self._resolve_pyi_path(pyx_path, output_dir, common_root)
+            result = self.convert_single_file(
+                pyx_path, pyi_path, dry_run, _context=context
+            )
             results.append(result)
 
             if self.config.verbose or not result.success:
@@ -289,11 +530,255 @@ class StubgenPyx:
 
         return results
 
+    def _prepare_multiple_file_conversions(
+        self,
+        pyx_paths: list[Path],
+        context: StubgenContext,
+        output_dir: Path | None,
+        common_root: Path | None,
+    ) -> list[tuple]:
+        prepared: list[tuple] = []
+        for pyx_path in pyx_paths:
+            pyi_path = self._resolve_pyi_path(pyx_path, output_dir, common_root)
+            prunable: dict[str, PyiAssignment] = {}
+            try:
+                _logger.debug(
+                    f"Converting '{pyx_path}' to '{pyi_path or pyx_path.with_suffix('.pyi')}'"
+                )
+                early = self._convert_single_file_to_module(
+                    pyx_path,
+                    context,
+                    defer_ctypedef_pruning=True,
+                    prunable_ctypedef_aliases=prunable,
+                )
+                if isinstance(early, ConversionResult):
+                    prepared.append((pyx_path, pyi_path, early, None, None, None, None))
+                else:
+                    converter, module, diagnostics = early
+                    prepared.append(
+                        (
+                            pyx_path,
+                            pyi_path,
+                            None,
+                            converter,
+                            module,
+                            diagnostics,
+                            prunable,
+                        )
+                    )
+            except Exception as e:
+                _logger.exception(f"Error during conversion: {type(e).__name__}")
+                if not self.config.continue_on_error:
+                    raise
+                early_result = ConversionResult(
+                    success=False,
+                    pyx_file=pyx_path,
+                    pyi_file=pyi_path or pyx_path.with_suffix(".pyi"),
+                    error=e,
+                )
+                prepared.append(
+                    (pyx_path, pyi_path, early_result, None, None, None, None)
+                )
+        return prepared
+
+    @staticmethod
+    def _prune_prepared_ctypedef_aliases(prepared: list[tuple]) -> None:
+        successful_modules = [entry[4] for entry in prepared if entry[4] is not None]
+        for _, _, early_result, _, module, _, prunable in prepared:
+            if early_result is not None or not prunable:
+                continue
+            for alias_name, assignment in prunable.items():
+                used_elsewhere = any(
+                    other is not module and pyi_module_uses_name(other, alias_name)
+                    for other in successful_modules
+                )
+                if not used_elsewhere:
+                    remove_assignment_from_module(module, assignment)
+
+    def _finalize_prepared_conversions(
+        self, prepared: list[tuple], dry_run: bool
+    ) -> list[ConversionResult]:
+        results: list[ConversionResult] = []
+        for (
+            pyx_path,
+            pyi_path,
+            early_result,
+            converter,
+            module,
+            diagnostics,
+            _,
+        ) in prepared:
+            if early_result is not None:
+                results.append(early_result)
+                if self.config.verbose or not early_result.success:
+                    _logger.info(early_result.status_message)
+                continue
+
+            final_pyi_path = pyi_path or pyx_path.with_suffix(".pyi")
+            try:
+                _log_diagnostics(diagnostics, pyx_path)
+                pyi_content = self._finalize(converter, module, pyx_path)
+                if not dry_run:
+                    try:
+                        final_pyi_path.write_text(pyi_content, encoding="utf-8")
+                        _logger.debug(f"Wrote pyi file: {final_pyi_path}")
+                    except OSError as e:
+                        raise OSError(f"Failed to write {final_pyi_path}: {e}") from e
+                else:
+                    _logger.info(f"Would create output file: {final_pyi_path}")
+                result = ConversionResult(
+                    success=True,
+                    pyx_file=pyx_path,
+                    pyi_file=final_pyi_path,
+                    diagnostics=diagnostics,
+                )
+            except Exception as e:
+                _logger.exception(f"Error during conversion: {type(e).__name__}")
+                if not self.config.continue_on_error:
+                    raise
+                result = ConversionResult(
+                    success=False, pyx_file=pyx_path, pyi_file=final_pyi_path, error=e
+                )
+            results.append(result)
+            if self.config.verbose or not result.success:
+                _logger.info(result.status_message)
+        return results
+
+    def _convert_multiple_files_with_ctypedef_pruning(
+        self,
+        pyx_paths: list[Path],
+        context: StubgenContext,
+        output_dir: Path | None,
+        common_root: Path | None,
+        dry_run: bool,
+    ) -> list[ConversionResult]:
+        """`convert_multiple_files`'s batch-aware path for
+        `resolve_ctypedef_aliases`, in three phases:
+
+        1. Convert every file to a `PyiModule` (deferring any ctypedef
+           -alias-pruning decision -- see `Converter.convert_scope`'s
+           docstring) without rendering or writing any of them yet.
+        2. For each file's provisionally-dead alias, check every *other*
+           successfully-converted file's module in this batch
+           (`pyi_module_uses_name`) -- only actually remove it from its
+           origin file's assignments once nothing else in the batch
+           needs it either.
+        3. Render (`_finalize`) and write each file, same as
+           `convert_single_file` does for one.
+
+        `continue_on_error`/exception behavior matches
+        `convert_single_file` exactly at each file, just spread across
+        these phases instead of one contiguous try/except.
+        """
+        prepared = self._prepare_multiple_file_conversions(
+            pyx_paths, context, output_dir, common_root
+        )
+        self._prune_prepared_ctypedef_aliases(prepared)
+        return self._finalize_prepared_conversions(prepared, dry_run)
+
+    def _compile_file_with_error_handling(
+        self,
+        converter: Converter,
+        pyx_file_path: Path,
+        context: StubgenContext,
+        defer_ctypedef_pruning: bool = False,
+        prunable_ctypedef_aliases: dict[str, PyiAssignment] | None = None,
+    ) -> tuple[PyiModule, list[Exception]]:
+        """`_compile_file_with_converter`, with the decode-error unwrapping
+        `convert_single_file` needs -- factored out so `convert_multiple_files`'s
+        deferred-pruning batch path (see `Converter.convert_scope`'s
+        docstring) can call it directly too, without going through
+        `convert_single_file`'s own immediate render-and-write.
+        """
+        try:
+            return self._compile_file_with_converter(
+                converter,
+                pyx_file_path,
+                context,
+                defer_ctypedef_pruning=defer_ctypedef_pruning,
+                prunable_ctypedef_aliases=prunable_ctypedef_aliases,
+            )
+        except UnicodeDecodeError as e:
+            raise ValueError(f"File encoding error in {pyx_file_path}: {e}") from e
+        except Exception as e:
+            # Cython's own `context.parse` (used by `parse_file`,
+            # replacing the previous manual file reading -- see
+            # `parsing/parser.py`) catches a raw `UnicodeDecodeError`
+            # itself and re-raises it wrapped as a
+            # `Cython.Compiler.Errors.CompileError`
+            # (`Context._report_decode_error`), so it no longer
+            # surfaces here as a plain `UnicodeDecodeError` for the
+            # clause above to catch. Only unwrap and convert that
+            # specific, still-identifiable case (the original
+            # `UnicodeDecodeError` survives as `__context__`/
+            # `__cause__`); any other `CompileError` (a real syntax
+            # error, say) is a different, legitimate failure and
+            # re-raised as-is rather than mislabeled as an encoding
+            # problem.
+            from Cython.Compiler import Errors as _CythonErrors
+
+            cause = e.__cause__ or e.__context__
+            if isinstance(e, _CythonErrors.CompileError) and isinstance(
+                cause, UnicodeDecodeError
+            ):
+                raise ValueError(  # noqa: TRY004
+                    f"File encoding error in {pyx_file_path}: {cause}"
+                ) from e
+            raise
+
+    def _convert_single_file_to_module(
+        self,
+        pyx_file_path: Path,
+        _context: StubgenContext | None = None,
+        defer_ctypedef_pruning: bool = False,
+        prunable_ctypedef_aliases: dict[str, PyiAssignment] | None = None,
+    ) -> ConversionResult | tuple[Converter, PyiModule, list[Exception]]:
+        """The part of `convert_single_file` before rendering/writing: the
+        existing-file and `__init__`-skip checks, then parse + convert to
+        a `PyiModule`. Factored out so `convert_multiple_files`'s
+        deferred-pruning batch path (see `Converter.convert_scope`'s
+        docstring) can convert every file in a batch before any of them
+        are rendered or written, without duplicating this logic.
+
+        Returns a `ConversionResult` directly for the `__init__`-skip
+        case (nothing to convert); otherwise `(converter, module,
+        diagnostics)` for the caller to finalize and write itself. Raises
+        on a real failure, same as `_compile_file_with_error_handling` --
+        the caller's own try/except (`continue_on_error` handling) is
+        unchanged either way.
+        """
+        if not pyx_file_path.exists():
+            raise ValueError(f"File not found: {pyx_file_path}")
+
+        if (
+            pyx_file_path.with_suffix(".py").exists()
+            and pyx_file_path.with_suffix(".py").name == "__init__.py"
+        ):
+            # Skip __init__.pxd/.pyx files with an existing __init__.py
+            return ConversionResult(
+                success=True, pyx_file=pyx_file_path, pyi_file=pyx_file_path
+            )
+
+        context = _context or context_for_paths(
+            [pyx_file_path], extra_include_dirs=self.config.include_dirs
+        )
+
+        converter = self._make_converter()
+        module, diagnostics = self._compile_file_with_error_handling(
+            converter,
+            pyx_file_path,
+            context,
+            defer_ctypedef_pruning=defer_ctypedef_pruning,
+            prunable_ctypedef_aliases=prunable_ctypedef_aliases,
+        )
+        return converter, module, diagnostics
+
     def convert_single_file(
         self,
         pyx_file_path: Path,
         pyi_file_path: Path | None = None,
         dry_run: bool = False,
+        _context: StubgenContext | None = None,
     ) -> ConversionResult:
         """Convert a single .pyx file, optionally merging a companion .pxd file.
 
@@ -302,6 +787,12 @@ class StubgenPyx:
             pyi_file_path: Path to write the output .pyi file. If None,
                 defaults to the same location as the .pyx file with .pyi extension.
             dry_run: If True, no files are actually created.
+            _context: Internal. A `StubgenContext` shared with other files
+                in the same batch (see `convert_multiple_files`). Callers
+                using this method standalone don't need to pass one -- a
+                fresh, single-file context is created automatically, which
+                is sufficient for `cimport`s that don't need cross-file
+                resolution within this same batch.
 
         Returns:
             ConversionResult with success status and any error details.
@@ -310,37 +801,13 @@ class StubgenPyx:
         try:
             _logger.debug(f"Converting '{pyx_file_path}' to '{pyi_file_path}'")
 
-            try:
-                pyx_str = pyx_file_path.read_text(encoding="utf-8")
-            except UnicodeDecodeError as e:
-                raise ValueError(f"File encoding error in {pyx_file_path}: {e}") from e
-            except FileNotFoundError as e:
-                raise ValueError(f"File not found: {pyx_file_path}") from e
+            early = self._convert_single_file_to_module(pyx_file_path, _context)
+            if isinstance(early, ConversionResult):
+                return early
+            converter, module, diagnostics = early
 
-            if (
-                pyx_file_path.with_suffix(".py").exists()
-                and pyx_file_path.with_suffix(".py").name == "__init__.py"
-            ):
-                # Skip __init__.pxd/.pyx files with an existing __init__.py
-                return ConversionResult(
-                    success=True, pyx_file=pyx_file_path, pyi_file=pyx_file_path
-                )
-
-            pxd_str = None
-            if self.config.pxd_to_stubs:
-                pxd_file_path = pyx_file_path.with_suffix(".pxd")
-                if pxd_file_path.exists() and pxd_file_path != pyx_file_path:
-                    _logger.debug(f"Found pxd file: {pxd_file_path}")
-                    try:
-                        pxd_str = pxd_file_path.read_text(encoding="utf-8")
-                    except UnicodeDecodeError:
-                        _logger.warning(f"Could not read .pxd file {pxd_file_path}")
-
-            pyi_content = self.convert_str(
-                pyx_str=pyx_str,
-                pxd_str=pxd_str,
-                pyx_path=pyx_file_path,
-            )
+            _log_diagnostics(diagnostics, pyx_file_path)
+            pyi_content = self._finalize(converter, module, pyx_file_path)
 
             if not dry_run:
                 try:
@@ -355,6 +822,7 @@ class StubgenPyx:
                 success=True,
                 pyx_file=pyx_file_path,
                 pyi_file=pyi_file_path,
+                diagnostics=diagnostics,
             )
 
         except Exception as e:
@@ -378,10 +846,30 @@ def _merge_pxd_into_module(module: PyiModule, pxd_module: PyiModule) -> None:
     the data models stay as pure containers without merge semantics baked in.
     """
     module.scope.enums += pxd_module.scope.enums
+    _deduplicate_enums(module.scope)
     module.scope.assignments += pxd_module.scope.assignments
     _deduplicate_assignments(module.scope)
     _merge_classes(module.scope, pxd_module.scope.classes)
     module.imports += pxd_module.imports
+
+
+def _deduplicate_enums(scope) -> None:
+    """Remove duplicate enums from a scope while preserving order.
+
+    A pxd-declared enum is now already visible in the `.pyx`'s own
+    conversion (`Converter._convert_declared_entries` walks the merged
+    scope's entries directly, since `Context.find_module`'s companion-
+    `.pxd` auto-merge puts pxd declarations in the *same* `Symtab.Scope`
+    object), so the separate pxd-module conversion this merges in
+    would otherwise add it a second time.
+    """
+    seen: set[str] = set()
+    unique: list = []
+    for enum in scope.enums:
+        if enum.enum_name not in seen:
+            seen.add(enum.enum_name)
+            unique.append(enum)
+    scope.enums = unique
 
 
 def _deduplicate_assignments(scope) -> None:
@@ -421,3 +909,4 @@ def _merge_two_classes(target: PyiClass, other: PyiClass) -> None:
     target.scope.functions += other.scope.functions
     _merge_classes(target.scope, other.scope.classes)
     target.scope.enums += other.scope.enums
+    _deduplicate_enums(target.scope)

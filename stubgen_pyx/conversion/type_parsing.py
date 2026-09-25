@@ -5,11 +5,27 @@ from __future__ import annotations
 import logging
 
 from Cython.Compiler import ExprNodes, Nodes
+from Cython.Compiler import PyrexTypes as _PyrexTypes
+from Cython.Compiler.ModuleNode import ModuleNode as _ModuleNode
 
 from ..logging_utils import with_debug_fallback
 from .unparse import unparse_expr
 
 _logger = logging.getLogger(__name__)
+
+# Cython 3.3 renamed the const/volatile declarator and base-type node
+# classes (`CConstDeclaratorNode` -> `CQualifierDeclaratorNode`,
+# `CConstOrVolatileTypeNode` -> `CQualifierTypeNode`, the latter now
+# also covering `restrict`), keeping the same attribute shape
+# (`.base`/`.base_type`, `.is_const`, `.is_volatile`). Resolved once
+# here so the rest of this module can use one name regardless of which
+# Cython version (>=3.0) is installed.
+_ConstDeclaratorNode = (
+    getattr(Nodes, "CQualifierDeclaratorNode", None) or Nodes.CConstDeclaratorNode
+)
+_ConstOrVolatileTypeNode = (
+    getattr(Nodes, "CQualifierTypeNode", None) or Nodes.CConstOrVolatileTypeNode
+)
 
 _CYTHON_TO_NUMPY_SCALAR: dict[str, str] = {
     "bint": "bool_",
@@ -64,17 +80,230 @@ def parameterize_builtin_generic(name: str | None) -> str | None:
     return _CYTHON_BUILTIN_GENERIC_MAPPING.get(name, name)
 
 
+def render_pyrex_type(
+    t: _PyrexTypes.PyrexType | None, *, _depth: int = 0
+) -> str | None:
+    """Render a resolved ``PyrexTypes.Type`` as a Python annotation string."""
+    if t is None:
+        return None
+    if getattr(t, "is_cv_qualified", False):
+        return render_pyrex_type(t.cv_base_type, _depth=_depth)
+    return _render_unqualified_pyrex_type(t, _depth=_depth)
+
+
+def _render_unqualified_pyrex_type(
+    t: _PyrexTypes.PyrexType, *, _depth: int
+) -> str | None:
+    if t.is_void:
+        return "None"
+    renderers = (
+        _render_pointer_type,
+        _render_array_type,
+        _render_ctuple_type,
+        _render_memoryview_type,
+        _render_cpp_template_type,
+        _render_named_type,
+        _render_cfunction_type,
+        _render_builtin_type,
+    )
+    for renderer in renderers:
+        rendered = renderer(t, _depth=_depth)
+        if rendered is not None:
+            return rendered
+    return None
+
+
+def _render_pointer_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str | None:
+    if not t.is_ptr:
+        return None
+    base = t.base_type
+    if base is _PyrexTypes.c_char_type:
+        return "bytes"
+    if base.is_void:
+        return "typing.Any"
+    if getattr(base, "is_cfunction", False):
+        return _render_cfunction_type(base, _depth=_depth)
+    return render_pyrex_type(base, _depth=_depth + 1)
+
+
+def _render_array_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str | None:
+    if not t.is_array:
+        return None
+    if t.base_type is _PyrexTypes.c_char_type:
+        return "bytes"
+    inner = render_pyrex_type(t.base_type, _depth=_depth + 1)
+    return f"list[{inner}]" if inner is not None else None
+
+
+def _render_ctuple_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str | None:
+    if not getattr(t, "is_ctuple", False):
+        return None
+    parts = [
+        with_debug_fallback(
+            render_pyrex_type(component, _depth=_depth + 1),
+            "object",
+            lambda component_idx=component_idx: (
+                f"Replaced tuple component at index {component_idx} with 'object'"
+            ),
+        )
+        for component_idx, component in enumerate(t.components)
+    ]
+    return f"tuple[{', '.join(parts)}]"
+
+
+def _render_memoryview_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str | None:
+    if not getattr(t, "is_memoryviewslice", False):
+        return None
+    dtype_name = str(t.dtype) if t.dtype is not None else None
+    scalar = None if dtype_name is None else _CYTHON_TO_NUMPY_SCALAR.get(dtype_name)
+    return f"numpy.typing.NDArray[numpy.{scalar}]" if scalar else "memoryview"
+
+
+def _render_cpp_template_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str | None:
+    if not getattr(t, "is_cpp_class", False) or not getattr(t, "templates", None):
+        return None
+    base = t.name
+    parts = [
+        with_debug_fallback(
+            render_pyrex_type(argument, _depth=_depth + 1),
+            "_typeshed.Incomplete",
+            lambda argument_idx=argument_idx: (
+                f"Replaced template argument of {base} at index {argument_idx} with '_typeshed.Incomplete'"
+            ),
+        )
+        for argument_idx, argument in enumerate(t.templates)
+    ]
+    return f"{base}[{', '.join(parts)}]"
+
+
+def _extract_resolved_type(node) -> str | None:
+    resolved_type = getattr(node, "type", None) or getattr(
+        getattr(node, "entry", None), "type", None
+    )
+    expected = resolved_type is None or (
+        resolved_type is _PyrexTypes.py_object_type
+        or isinstance(node, (Nodes.CFuncDefNode, Nodes.DefNode))
+    )
+    if expected:
+        if resolved_type is None:
+            _logger.debug("Unknown base type: %s", type(node).__name__)
+        return None
+    rendered = render_pyrex_type(resolved_type)
+    if rendered is not None:
+        return rendered
+    _logger.debug("Unknown base type: %s", type(node).__name__)
+    return None
+
+
+def _extract_structural_type(node, base_type, is_ptr: bool) -> str | None:
+    if not is_ptr:
+        is_ptr = isinstance(getattr(node, "declarator", None), Nodes.CPtrDeclaratorNode)
+
+    if isinstance(base_type, Nodes.CTupleBaseTypeNode):
+        return _extract_tuple_type(base_type)
+    if isinstance(base_type, Nodes.TemplatedTypeNode):
+        return _extract_templated_type(base_type)
+    if isinstance(base_type, Nodes.MemoryViewSliceTypeNode):
+        return _extract_memoryview_type(base_type)
+
+    name = _type_from_base_type_name(base_type)
+    if isinstance(node, Nodes.CVarDefNode) and name is None:
+        return "typing.Any"
+    if is_ptr and name == "char":
+        return "bytes"
+    if is_ptr and name == "void":
+        return "typing.Any"
+    return parameterize_builtin_generic(name)
+
+
+def extract_type_from_base_type(node, is_ptr: bool = False) -> str | None:
+    """Extract a type annotation string from a base_type node.
+
+    Handles plain named types, pointer types (``char *`` -> ``bytes``),
+    tuple types, C++ templated types, fixed-size C arrays, and typed
+    memoryviews.
+
+    Checks for a value stashed by `capture_static_types` first: some
+    Python-generic-parameterized types (``list[int]``) lose their
+    parameters once resolved to a real `PyrexTypes.Type` (there's no
+    equivalent to `CppClassType.templates` for them), so a pre-pipeline
+    snapshot of the structural extraction can be strictly more precise
+    than either a live walk of the (possibly since-cleared) node or the
+    `Entry`/`Type` fallback below. Only trusted when it's a real result;
+    a captured `None` falls through to the logic below instead, since
+    `Entry`/`Type` info didn't exist yet at capture time and might still
+    resolve something now.
+    """
+    static_type = getattr(node, "_stubgen_static_type", None)
+    if static_type is not None:
+        return static_type
+
+    try:
+        base_type = node.base_type
+        if isinstance(base_type, _ConstOrVolatileTypeNode):
+            base_type = base_type.base_type
+    except AttributeError:
+        if isinstance(node, ExprNodes.ExprNode):
+            return unparse_expr(node)
+        base_type = None
+
+    if base_type is None:
+        return _extract_resolved_type(node)
+    return _extract_structural_type(node, base_type, is_ptr)
+
+
+def _render_named_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str | None:
+    name = getattr(t, "name", None)
+    if name is None:
+        return None
+    type_flags = (
+        "is_struct_or_union",
+        "is_enum",
+        "is_cpp_enum",
+        "is_extension_type",
+        "is_cpp_class",
+        "is_fused",
+    )
+    return name if any(getattr(t, flag, False) for flag in type_flags) else None
+
+
+def _render_builtin_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str | None:
+    if not (t.is_pyobject or t.is_numeric or t.is_string):
+        return None
+    return parameterize_builtin_generic(t.py_type_name())
+
+
+def _render_cfunction_type(t: _PyrexTypes.CFuncType, *, _depth: int) -> str | None:
+    """Render a resolved ``CFuncType`` (a function pointer's pointee, typically) as ``Callable[[...], ...]``."""
+    if not getattr(t, "is_cfunction", False):
+        return None
+    args = [
+        with_debug_fallback(
+            render_pyrex_type(arg.type, _depth=_depth + 1),
+            "_typeshed.Incomplete",
+            lambda arg_idx_=arg_idx: (
+                f"Replaced argument {arg_idx_} type with '_typeshed.Incomplete'"
+            ),
+        )
+        for arg_idx, arg in enumerate(t.args)
+    ]
+    return_type = with_debug_fallback(
+        render_pyrex_type(t.return_type, _depth=_depth + 1),
+        "_typeshed.Incomplete",
+        lambda: "Replaced return type with '_typeshed.Incomplete'",
+    )
+    return f"typing.Callable[[{', '.join(args)}], {return_type}]"
+
+
 def _declarator_name(
-    decl: Nodes.CNameDeclaratorNode
-    | Nodes.CPtrDeclaratorNode
-    | Nodes.CConstDeclaratorNode,
+    decl: Nodes.CNameDeclaratorNode | Nodes.CPtrDeclaratorNode | _ConstDeclaratorNode,
 ) -> str | None:
     """Recursively unwrap pointer/const/func declarators to reach the name."""
     if isinstance(
         decl,
         (
             Nodes.CPtrDeclaratorNode,
-            Nodes.CConstDeclaratorNode,
+            _ConstDeclaratorNode,
             Nodes.CFuncDeclaratorNode,
             Nodes.CArrayDeclaratorNode,
         ),
@@ -139,18 +368,61 @@ def extract_name_and_type(node) -> tuple[str | None, str | None]:
     return name, typ
 
 
-def get_cdef_variables(node: Nodes.CVarDefNode) -> list[tuple[str, str | None]]:
+def get_cdef_variables(
+    node: Nodes.CVarDefNode | Nodes.PropertyNode,
+) -> list[tuple[str, str | None]]:
     """Return ``(name, type)`` pairs for every declarator in a cdef statement.
 
     A single ``cdef public int x, y, z`` node can contain multiple declarators.
     Fixed-size array types (``char[N]``, ``int[N][M]``) are resolved via the
     base_type's ``TemplatedTypeNode``; pointer declarators on ``char`` emit
     ``"bytes"``; function-pointer declarators emit ``"Callable"``.
+
+    Also accepts a ``PropertyNode`` -- what ``cdef public``/``cdef readonly``
+    attributes on an extension type become once real declaration analysis
+    has run (``AnalyseDeclarationsTransform`` synthesizes a property with
+    ``__get__``/``__set__`` in place of the original ``CVarDefNode``), and
+    the exact same shape a real, source-level ``@property``-decorated
+    ``def`` method takes too. Always exactly one name; the type comes from
+    the property's own ``__get__`` return annotation when the source wrote
+    one, or from the property's ``Entry`` otherwise (see below).
     """
+    if isinstance(node, Nodes.PropertyNode):
+        # A `@property`-decorated `def` method becomes this exact same
+        # `PropertyNode` shape once real declaration analysis runs --
+        # not just a `cdef public`/`cdef readonly` C attribute -- but
+        # its `entry.type` is always the generic `PyObjectType`
+        # ("object"): Cython has no reason to track anything more
+        # specific for a plain Python property at the Entry/Type level.
+        # The real declared type, when the source wrote one (`-> int`),
+        # survives instead on the synthesized `__get__` method's own
+        # `return_type_annotation` -- checked first and preferred over
+        # `entry.type` whenever present.
+        entry = node.entry
+        type_name = render_pyrex_type(entry.type) if entry else None
+        getter = next(
+            (
+                s
+                for s in getattr(node.body, "stats", ())
+                if getattr(s, "name", None) == "__get__"
+            ),
+            None,
+        )
+        annotation_node = getattr(getter, "return_type_annotation", None)
+        if annotation_node is not None:
+            from .signature import (
+                _decode_or_pass,  # local: avoids a circular import with signature.py
+            )
+
+            type_name = parameterize_builtin_generic(
+                _decode_or_pass(annotation_node.string.value)
+            )
+        return [(node.name, type_name)]
+
     accepted = (
         Nodes.CNameDeclaratorNode,
         Nodes.CPtrDeclaratorNode,
-        Nodes.CConstDeclaratorNode,
+        _ConstDeclaratorNode,
         Nodes.CFuncDeclaratorNode,
         Nodes.CArrayDeclaratorNode,
     )
@@ -192,48 +464,199 @@ def _type_from_base_type_name(base_type) -> str | None:
     return name
 
 
-def extract_type_from_base_type(node, is_ptr: bool = False) -> str | None:
-    """Extract a type annotation string from a base_type node.
+def _fused_member_name(node: Nodes.Node) -> str | None:
+    """Return a dotted type name for a simple or templated fused-type
+    member node, or None.
 
-    Handles plain named types, pointer types (``char *`` -> ``bytes``),
-    tuple types, C++ templated types, fixed-size C arrays, and typed
-    memoryviews.
+    Used only for ``ctypedef fused`` member type nodes (``node.types`` on
+    a ``FusedTypeNode``), which are always a simple or (rarely) templated
+    base-type node -- never anything `extract_type_from_base_type`'s
+    fuller machinery is needed for. Kept name-only (no full type
+    extraction) deliberately: this runs pre-pipeline, in
+    `capture_static_types`, specifically so it works from raw syntax
+    alone -- no `Entry`/`Type` resolution required -- see that function's
+    docstring for why a fused type's own members can't always wait for
+    resolution (a member naming an extension type declared only in the
+    companion `.pyx`, not the `.pxd` doing the fused declaration, never
+    resolves during the `.pxd`'s own, separate pipeline run).
     """
-    try:
-        base_type = node.base_type
-        if isinstance(base_type, Nodes.CConstOrVolatileTypeNode):
-            base_type = base_type.base_type
-    except AttributeError:
-        if isinstance(node, ExprNodes.ExprNode):
-            return unparse_expr(node)
-        _logger.debug("Unknown base type: %s", type(node).__name__)
-        return None
+    while isinstance(node, Nodes.TemplatedTypeNode):
+        node = node.base_type_node
+    if isinstance(node, Nodes.CSimpleBaseTypeNode):
+        return ".".join(node.module_path + [node.name])
+    return None
 
-    # CArgDeclNode carries a single .declarator; check it for pointer-ness.
-    if not is_ptr:
-        is_ptr = isinstance(getattr(node, "declarator", None), Nodes.CPtrDeclaratorNode)
 
-    if isinstance(base_type, Nodes.CTupleBaseTypeNode):
-        return _extract_tuple_type(base_type)
-    if isinstance(base_type, Nodes.TemplatedTypeNode):
-        return _extract_templated_type(base_type)
-    if isinstance(base_type, Nodes.MemoryViewSliceTypeNode):
-        return _extract_memoryview_type(base_type)
+def _cvardef_declarator_name(declarator) -> str | None:
+    """The name a `CVarDefNode`'s declarator declares, unwrapping a
+    pointer/const wrapper -- same shape as `signature._to_argument`'s
+    equivalent unwrapping for an argument declarator, used here for
+    `capture_static_types`'s property-type-by-name capture.
+    """
+    while isinstance(declarator, (Nodes.CPtrDeclaratorNode, _ConstDeclaratorNode)):
+        declarator = declarator.base
+    return getattr(declarator, "name", None) or None
 
-    name = _type_from_base_type_name(base_type)
 
-    if isinstance(node, Nodes.CVarDefNode) and name is None:
-        # CVarDefNode may not have a named type, e.g. ``cdef public x``.
-        # In this case, use ``typing.Any`` without debug message.
-        return "typing.Any"
+def capture_static_types(tree) -> None:
+    """Snapshot pre-pipeline structural info the pipeline would otherwise destroy.
 
-    if is_ptr and name == "char":
-        return "bytes"
+    Some declarations keep their AST node through the whole pipeline
+    (`AnalyseDeclarationsTransform` mutates them in place rather than
+    replacing them -- same object, before and after, for `CFuncDefNode`/
+    `CArgDeclNode`), but have attributes the (still node-based) converter
+    needs cleared as part of normal analysis:
 
-    if is_ptr and name == "void":
-        return "typing.Any"
+    - ``.base_type``: cleared once a real ``PyrexTypes.Type`` is
+      resolved for the declaration. For most cases the resolved `Type`
+      is a perfectly good replacement (see `render_pyrex_type`); it
+      isn't always -- Cython doesn't retain a Python-generic's type
+      parameters at the `Type` level at all (`list[int]` used directly
+      as a Cython type resolves to a `BuiltinTypeConstructorObjectType`
+      with no trace of the `int`). Entries genuinely don't get you 100%
+      of the way there for these.
+    - ``.decorators``: a real Python-level decorator (`@functools.
+      singledispatch`, say) is rewritten by `AnalyseDeclarationsTransform`
+      into a bare, decorator-less `DefNode` plus a separate
+      `f = the_decorator(f)` assignment. That's the right shape for
+      code generation; for stub generation it means losing every
+      decorator in the output, since `get_decorators` renders
+      `node.decorators` directly as `@...` lines.
+    - Bare annotated attributes with no value (`x: int`, no `= ...`) in a
+      module or plain (non-``cdef``) class body: each one parses as its
+      own `ExprStatNode(NameNode(annotation=...))`, but
+      `AnalyseDeclarationsTransform` folds *all* of them together into a
+      single synthetic `__annotations__ = {...}` dict assignment.
+      Individually-typed attributes are exactly what a stub needs; a
+      single dict-valued assignment named `__annotations__` is both
+      useless as a `.pyi` member and, for a `TypedDict` subclass
+      specifically, invalid syntax there.
 
-    return parameterize_builtin_generic(name)
+    - A ``ctypedef fused`` declaration's member types (``node.types`` on
+      the ``FusedTypeNode``): captured as plain name strings, not
+      resolved ``Type``s. A fused type declared in a companion ``.pxd``
+      whose members name an extension type declared only in the
+      matching ``.pyx`` (the common case for a forward-declared
+      ``cpdef``) never resolves during the ``.pxd``'s own, separate
+      pipeline run: those member lookups fail and the ``Entry``'s
+      ``.type.types`` ends up holding ``PyrexTypes.ErrorType``
+      placeholders instead. The raw syntax never has this problem -- a
+      member's name is just its name -- so it's captured here instead
+      of relying on resolution to ever succeed.
+
+    The original AST has all of these, right up until the pipeline
+    clears/folds them. Called once, right after parsing and before
+    running the pipeline (see `parsing/parser.py`), on the still-intact
+    raw tree. Walks every node reachable via ``child_attrs`` and stashes
+    what it finds as private ``_stubgen_static_type``/
+    ``_stubgen_static_decorators``/``_stubgen_static_annotations``/
+    ``_stubgen_static_fused_members`` attributes directly on the node.
+    `extract_type_from_base_type`, `source_extraction.get_decorators`,
+    and `Converter._convert_declared_entries`/`convert_fused_types`
+    check for these first.
+
+    Entry/Type resolution stays the *only* option for declarations that
+    are removed from the tree entirely (uninitialized variables, enums,
+    structs/unions) -- there's no node left to capture anything from,
+    but those are always plain C types with no decorators to lose, so
+    `render_pyrex_type` alone is sufficient for them.
+    """
+    seen: set[int] = set()
+    _capture_static_types_recursive(tree, None, seen)
+
+
+def _capture_static_type(node) -> None:
+    if hasattr(node, "base_type"):
+        try:
+            node._stubgen_static_type = extract_type_from_base_type(node)
+        except AttributeError:
+            pass
+
+
+def _capture_property_type(node, enclosing) -> None:
+    if isinstance(node, Nodes.CVarDefNode) and enclosing is not None:
+        type_str = getattr(node, "_stubgen_static_type", None)
+        if type_str is None:
+            return
+        for declarator in getattr(node, "declarators", None) or ():
+            decl_name = _cvardef_declarator_name(declarator)
+            if decl_name is None:
+                continue
+            property_types = getattr(enclosing, "_stubgen_static_property_types", None)
+            if property_types is None:
+                property_types = enclosing._stubgen_static_property_types = {}
+            property_types[decl_name] = type_str
+
+
+def _capture_bare_identifier_arg(node) -> None:
+    if isinstance(node, Nodes.CArgDeclNode):
+        declarator = getattr(node, "declarator", None)
+        declared_name = _declarator_name(declarator)
+        if not declared_name:
+            node._stubgen_bare_identifier_arg = True
+
+
+def _capture_decorators(node) -> None:
+    decorators = getattr(node, "decorators", None)
+    if decorators:
+        node._stubgen_static_decorators = list(decorators)
+
+
+def _capture_annotation(node, enclosing) -> None:
+    if (
+        isinstance(node, Nodes.ExprStatNode)
+        and isinstance(node.expr, ExprNodes.NameNode)
+        and node.expr.annotation is not None
+        and enclosing is not None
+    ):
+        annotations = getattr(enclosing, "_stubgen_static_annotations", None)
+        if annotations is None:
+            annotations = enclosing._stubgen_static_annotations = []
+        annotations.append((node.expr.name, unparse_expr(node.expr.annotation.expr)))
+
+
+def _capture_fused_members(node, enclosing) -> None:
+    if isinstance(node, Nodes.FusedTypeNode) and enclosing is not None:
+        member_names = tuple(
+            name
+            for name in (_fused_member_name(t) for t in node.types)
+            if name is not None
+        )
+        if member_names:
+            fused_members = getattr(enclosing, "_stubgen_static_fused_members", None)
+            if fused_members is None:
+                fused_members = enclosing._stubgen_static_fused_members = {}
+            fused_members[node.name] = member_names
+
+
+def _capture_children(node, enclosing, seen: set[int]) -> None:
+    next_enclosing = (
+        node
+        if isinstance(node, (_ModuleNode, Nodes.PyClassDefNode, Nodes.CClassDefNode))
+        else enclosing
+    )
+    for attr_name in getattr(node, "child_attrs", None) or ():
+        child = getattr(node, attr_name, None)
+        if isinstance(child, list):
+            for item in child:
+                _capture_static_types_recursive(item, next_enclosing, seen)
+        else:
+            _capture_static_types_recursive(child, next_enclosing, seen)
+
+
+def _capture_static_types_recursive(node, enclosing, seen: set[int]) -> None:
+    if node is None or id(node) in seen:
+        return
+    seen.add(id(node))
+
+    _capture_static_type(node)
+    _capture_property_type(node, enclosing)
+    _capture_bare_identifier_arg(node)
+    _capture_decorators(node)
+    _capture_annotation(node, enclosing)
+    _capture_fused_members(node, enclosing)
+
+    _capture_children(node, enclosing, seen)
 
 
 def _extract_tuple_type(node: Nodes.CTupleBaseTypeNode) -> str:

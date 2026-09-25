@@ -4,10 +4,8 @@ Converts Cython AST nodes to PyiElements.
 
 from __future__ import annotations
 
-import ast
 import logging
 import re
-from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 from Cython.Compiler import Nodes
@@ -15,6 +13,7 @@ from Cython.Compiler import Nodes
 from ..analysis.visitor import ClassVisitor, ImportVisitor, ModuleVisitor, ScopeVisitor
 from ..logging_utils import with_debug_fallback
 from ..models.pyi_elements import (
+    PyiArgument,
     PyiAssignment,
     PyiClass,
     PyiEnum,
@@ -25,14 +24,40 @@ from ..models.pyi_elements import (
     PyiScope,
     PyiSignature,
 )
+from ..parsing.comments import CommentIndex
 from ..postprocessing.normalize_names import _CYTHON_TRANSLATIONS
+from .ctypedef_aliases import (
+    _scope_functions,
+    _substitute_ctypedef_aliases,
+    _text_uses_name,
+    apply_ctypedef_aliases,
+    ctypedef_alias_map,
+)
+from .declarations import (
+    convert_assignment,
+    convert_cpp_class,
+    convert_enum,
+    convert_import,
+    convert_struct_or_union,
+    convert_struct_or_union_type,
+)
 from .docstrings import docstring_to_string
+from .fused_types import (
+    _annotation_uses_name,
+    _resolve_fused_signature,
+    _restore_fused_memoryview_annotations,
+    convert_fused_type,
+    convert_fused_types,
+)
 from .signature import get_signature
 from .source_extraction import get_bases, get_decorators, get_metaclass, get_source
-from .type_parsing import extract_name_and_type, get_cdef_variables, get_enum_names
-from .unparse import unparse_expr
+from .type_comments import apply_type_comments
+from .type_parsing import (
+    extract_name_and_type,
+    get_cdef_variables,
+    render_pyrex_type,
+)
 
-_CIMPORT_RE = re.compile(r"\bcimport\b")
 _CXX_FROM_CIMPORT_RE = re.compile(
     r"^\s*from\s+(?:libcpp|libc)(?:\.[^\s]+)?\s+cimport\b"
 )
@@ -51,8 +76,39 @@ class ConversionError(Exception):
     """An error occurred during the conversion process."""
 
 
-class InvalidAssignment(Exception):
-    """An invalid assignment was encountered."""
+def _convert_declared_function(name: str, t) -> PyiFunction:
+    """Convert a function-shaped Entry's `CFuncType` -- no surviving
+    `CFuncDefNode`/`DefNode` (e.g. a `cpdef` declared directly inside
+    `cdef extern from ...:`, with no body of its own) -- to a
+    `PyiFunction`.
+
+    No default values: `CFuncTypeArg` carries no default-value
+    information at all (defaults live on the original AST node, which
+    doesn't survive), so an argument with a real default renders without
+    one here. A narrower result than the structural path gives, but
+    still a real, usable signature rather than nothing.
+    """
+    args = [
+        PyiArgument(
+            name=arg.name or f"arg{i}",
+            annotation=with_debug_fallback(
+                render_pyrex_type(arg.type),
+                "_typeshed.Incomplete",
+                lambda name_=arg.name: f"Unable to determine type for {name_}",
+            ),
+        )
+        for i, arg in enumerate(t.args)
+    ]
+    return_type = with_debug_fallback(
+        render_pyrex_type(t.return_type),
+        "_typeshed.Incomplete",
+        lambda: f"Unable to determine return type for {name}",
+    )
+    return PyiFunction(
+        name=name,
+        is_async=False,
+        signature=PyiSignature(args=args, return_type=return_type),
+    )
 
 
 @dataclass
@@ -65,38 +121,50 @@ class Converter:
 
     cimport_alias_map: dict[str, str] = field(default_factory=dict)
 
-    def _type_comment_for(
-        self, node: Nodes.Node, type_comments: dict[int, str]
-    ) -> str | None:
-        return type_comments.get(node.pos[1])
-
     def convert_module(
         self,
         visitor: ModuleVisitor,
         source_code: str,
-        type_comments: dict[int, str] | None = None,
+        comments: CommentIndex | None = None,
         include_docstrings: bool = True,
         inherited_fused_types: dict[str, PyiFusedType] | None = None,
+        resolve_ctypedef_aliases: bool = False,
+        defer_ctypedef_pruning: bool = False,
+        prunable_ctypedef_aliases: dict[str, PyiAssignment] | None = None,
     ) -> PyiModule:
         """Convert a ModuleVisitor to a PyiModule.
 
         Args:
             visitor: Module visitor containing AST information.
             source_code: The original source code text.
-            type_comments: Map of line number to type comment strings.
+            comments: This file's comments (see `parsing/comments.py`),
+                used to recover `# type: ...` comments a function's
+                signature and/or individual arguments didn't otherwise
+                get from a real annotation or Cython declaration.
+            resolve_ctypedef_aliases: See `StubgenPyxConfig`.
+            defer_ctypedef_pruning: See `convert_scope`'s docstring --
+                used only by `stubgen.py`'s `convert_multiple_files`, for
+                its whole-batch cross-file check.
+            prunable_ctypedef_aliases: Populated (when `defer_ctypedef_pruning`
+                is set) with every alias this module's own scope tree
+                couldn't confirm as truly unused on its own -- see
+                `convert_scope`.
 
         Returns:
             PyiModule representation with imports and scope.
         """
-        tc = type_comments or {}
+        comments = comments if comments is not None else CommentIndex([])
         doc = docstring_to_string(visitor.node.doc) if visitor.node.doc else None
         scope = self.convert_scope(
             visitor.scope,
             source_code,
-            tc,
+            comments,
             include_docstrings,
             inherited_fused_types,
             emit_inherited_fused_typevars=True,
+            resolve_ctypedef_aliases=resolve_ctypedef_aliases,
+            defer_ctypedef_pruning=defer_ctypedef_pruning,
+            prunable_ctypedef_aliases=prunable_ctypedef_aliases,
         )
 
         return PyiModule(
@@ -119,7 +187,7 @@ class Converter:
             if _is_cython_import(raw):
                 _logger.debug("Ignoring Cython import: %r", raw)
                 continue
-            imports.append(self.convert_import(node, source_code, raw))
+            imports.append(convert_import(node, source_code, raw))
         return imports
 
     def _collect_cimport_aliases(self, node: Nodes.Node) -> None:
@@ -131,52 +199,395 @@ class Converter:
                 if python_type:
                     self.cimport_alias_map[alias] = python_type
 
-    def convert_import(
-        self, node: Nodes.Node, source_code: str, raw: str | None = None
-    ) -> PyiImport:
-        """Convert a single import node to PyiImport, rewriting cimport -> import."""
-        raw = raw if raw is not None else get_source(source_code, node)
-        return PyiImport(_CIMPORT_RE.sub("import", raw))
+    @staticmethod
+    def _recover_static_annotations(
+        visitor: ScopeVisitor,
+        handled_names: set[str],
+        ctypedef_aliases: dict[str, str] | None,
+    ) -> list[PyiAssignment]:
+        assignments = []
+        for name, type_str in (
+            getattr(visitor.node, "_stubgen_static_annotations", ()) or ()
+        ):
+            if name in handled_names:
+                continue
+            type_str = _substitute_ctypedef_aliases(type_str, ctypedef_aliases or {})
+            assignments.append(PyiAssignment(f"{name}: {type_str}", name=name))
+            handled_names.add(name)
+        return assignments
 
-    def convert_struct_or_union(self, node: Nodes.CStructOrUnionDefNode) -> PyiClass:
-        """Convert a C struct or union definition node to PyiClass."""
-        node_name = node.name
-
-        def debug_attribute(attr_name: str) -> str:
-            return f"Unable to determine type for {attr_name} in {node_name}"
-
-        attributes = []
-        for attribute in node.attributes or []:
-            if isinstance(attribute, Nodes.CVarDefNode):
-                attributes.extend(
-                    [
-                        PyiAssignment(
-                            f"{name}: {with_debug_fallback(type_name, '_typeshed.Incomplete', lambda name_=name: debug_attribute(name_))}"
-                        )
-                        for name, type_name in get_cdef_variables(attribute)
-                    ]
+    @staticmethod
+    def _convert_declared_entry(
+        visitor: ScopeVisitor,
+        name: str,
+        entry,
+        ctypedef_aliases: dict[str, str] | None,
+    ) -> tuple[
+        PyiAssignment | None,
+        PyiEnum | None,
+        PyiClass | None,
+        PyiFunction | None,
+    ]:
+        t = entry.type
+        if entry.is_type:
+            if getattr(t, "is_enum", False) or getattr(t, "is_cpp_enum", False):
+                if entry.create_wrapper:
+                    return (
+                        None,
+                        PyiEnum(enum_name=name, names=list(t.values)),
+                        None,
+                        None,
+                    )
+                return (
+                    PyiAssignment(
+                        f"{name}: typing_extensions.TypeAlias = int", name=name
+                    ),
+                    None,
+                    None,
+                    None,
                 )
-            else:
-                _logger.debug(
-                    f"Unexpected attribute type {type(attribute)} in {node_name}"
-                )
-        is_union = node.kind == "union"
-        keywords = {"total": "False"} if is_union else {}
-        return PyiClass(
-            name=node.name,
-            bases=["typing.TypedDict"],
-            keywords=keywords,
-            scope=PyiScope(assignments=attributes),
+            if getattr(t, "is_struct_or_union", False):
+                return None, None, convert_struct_or_union_type(t), None
+            return None, None, None, None
+
+        if entry.is_cfunction:
+            function = (
+                _convert_declared_function(name, t) if entry.create_wrapper else None
+            )
+            return None, None, None, function
+
+        if not entry.is_variable or not (
+            visitor.in_class and entry.visibility in ("public", "readonly")
+        ):
+            return None, None, None, None
+        type_name = render_pyrex_type(t)
+        resolved = with_debug_fallback(
+            type_name,
+            "_typeshed.Incomplete",
+            lambda name_=name: f"Unable to determine type for {name_}",
         )
+        resolved = _substitute_ctypedef_aliases(resolved, ctypedef_aliases or {})
+        return PyiAssignment(f"{name}: {resolved}", name=name), None, None, None
+
+    def _convert_declared_entries(
+        self,
+        visitor: ScopeVisitor,
+        handled_names: set[str],
+        ctypedef_aliases: dict[str, str] | None = None,
+    ) -> tuple[
+        list[PyiAssignment],
+        list[PyiEnum | PyiAssignment],
+        list[PyiClass],
+        list[PyiFunction],
+    ]:
+        """Catch declarations with no surviving AST node in this scope.
+
+        Once real declaration analysis runs, a declaration with no
+        runtime/executable component (an uninitialized variable, a
+        ``cdef enum``, a ``cdef struct``/``union``, a ``cdef fused`` type
+        with no methods) is removed from the tree entirely and exists
+        only as a ``Symtab.Entry``. `visitor`'s structural walk
+        (``visit_CVarDefNode``, etc.) can only find what's still a node;
+        this fills in the rest by walking `visitor.node.scope.entries`
+        directly and skipping anything already captured structurally
+        (`handled_names`) or not actually declared in this scope
+        (`entry.scope is not scope` -- an imported/foreign name, already
+        handled separately by `ImportVisitor`).
+        """
+        scope = getattr(visitor.node, "scope", None)
+        if scope is None:
+            return [], [], [], []
+
+        extra_assignments: list[PyiAssignment] = []
+        extra_enums: list[PyiEnum | PyiAssignment] = []
+        extra_structs: list[PyiClass] = []
+        extra_functions: list[PyiFunction] = []
+
+        extra_assignments.extend(
+            self._recover_static_annotations(visitor, handled_names, ctypedef_aliases)
+        )
+
+        for name, entry in scope.entries.items():
+            if name in handled_names or (name.startswith("__") and name.endswith("__")):
+                continue
+            if name.startswith("__pyx_"):
+                continue
+            if entry.scope is not scope:
+                continue
+
+            assignment, enum, struct, function = self._convert_declared_entry(
+                visitor, name, entry, ctypedef_aliases
+            )
+            if assignment is not None:
+                extra_assignments.append(assignment)
+            if enum is not None:
+                extra_enums.append(enum)
+            if struct is not None:
+                extra_structs.append(struct)
+            if function is not None:
+                extra_functions.append(function)
+
+        return extra_assignments, extra_enums, extra_structs, extra_functions
+
+    def _convert_cdef_assignments(
+        self,
+        visitor: ScopeVisitor,
+        ctypedef_aliases: dict[str, str],
+    ) -> tuple[list[PyiAssignment], set[str]]:
+        assignments: list[PyiAssignment] = []
+        handled_names: set[str] = set()
+        static_property_types = (
+            getattr(visitor.node, "_stubgen_static_property_types", None) or {}
+        )
+        for cdef_variable in visitor.cdef_variables:
+            for name, base_type in get_cdef_variables(cdef_variable):
+                static_type = static_property_types.get(name)
+                if (
+                    static_type is not None
+                    and base_type is not None
+                    and static_type.endswith(f".{base_type}")
+                ):
+                    base_type = static_type
+
+                resolved_type = with_debug_fallback(
+                    base_type,
+                    "_typeshed.Incomplete",
+                    f"Unable to determine type for {name}",
+                )
+                resolved_type = _substitute_ctypedef_aliases(
+                    resolved_type, ctypedef_aliases
+                )
+                assignments.append(PyiAssignment(f"{name}: {resolved_type}", name=name))
+                handled_names.add(name)
+        return assignments, handled_names
+
+    def _convert_scope_members(
+        self,
+        visitor: ScopeVisitor,
+        source_code: str,
+        comments: CommentIndex,
+        include_docstrings: bool,
+        fused_types: dict[str, PyiFusedType],
+        ctypedef_aliases: dict[str, str],
+        resolve_ctypedef_aliases: bool,
+        defer_ctypedef_pruning: bool,
+        prunable_ctypedef_aliases: dict[str, PyiAssignment] | None,
+    ) -> tuple[list[PyiFunction], list[PyiClass], list[PyiClass]]:
+        cdef_funcs = [
+            (
+                node.pos[1],
+                self.convert_cdef_func(
+                    node,
+                    source_code,
+                    comments,
+                    include_docstrings,
+                    fused_types,
+                    ctypedef_aliases=ctypedef_aliases,
+                ),
+            )
+            for node in visitor.cdef_functions
+        ]
+        py_funcs = [
+            (
+                node.pos[1],
+                self.convert_py_func(
+                    node,
+                    source_code,
+                    comments,
+                    include_docstrings,
+                    fused_types,
+                    ctypedef_aliases=ctypedef_aliases,
+                ),
+            )
+            for node in visitor.py_functions
+        ]
+
+        contains_init = any(py_func.name == "__init__" for _, py_func in py_funcs)
+        for idx, (_, py_func) in enumerate(py_funcs):
+            if py_func.name == "__cinit__" and not contains_init:
+                py_func.name = "__init__"
+            elif py_func.name == "__cinit__" and contains_init:
+                del py_funcs[idx]
+                break
+
+        functions = [
+            function
+            for _, function in sorted(cdef_funcs + py_funcs, key=lambda item: item[0])
+        ]
+        structs_or_enums = [
+            convert_struct_or_union(node) for node in visitor.cdef_structs_or_unions
+        ]
+        classes = [
+            self.convert_class(
+                class_visitor,
+                source_code,
+                comments,
+                include_docstrings,
+                fused_types,
+                resolve_ctypedef_aliases=resolve_ctypedef_aliases,
+                inherited_ctypedef_aliases=ctypedef_aliases,
+                defer_ctypedef_pruning=defer_ctypedef_pruning,
+                prunable_ctypedef_aliases=prunable_ctypedef_aliases,
+            )
+            for class_visitor in visitor.classes
+        ]
+        return functions, classes, structs_or_enums
+
+    @staticmethod
+    def _collect_scope_handled_names(
+        visitor: ScopeVisitor,
+        functions: list[PyiFunction],
+        cdef_handled_names: set[str],
+    ) -> set[str]:
+        handled_names = set(cdef_handled_names)
+        handled_names.update(function.name for function in functions)
+        handled_names.update(
+            (
+                class_visitor.node.class_name
+                if isinstance(class_visitor.node, Nodes.CClassDefNode)
+                else class_visitor.node.name
+            )
+            for class_visitor in visitor.classes
+        )
+        handled_names.update(
+            name
+            for name in (
+                getattr(node, "name", None) for node in visitor.cdef_structs_or_unions
+            )
+            if name
+        )
+        handled_names.update(
+            name
+            for name in (getattr(node, "name", None) for node in visitor.cpp_classes)
+            if name
+        )
+        handled_names.update(
+            name
+            for name in (
+                getattr(getattr(assignment, "lhs", None), "name", None)
+                for assignment in visitor.assignments
+            )
+            if name
+        )
+        handled_names.update(
+            name
+            for name in (
+                getattr(getattr(assignment, "declarator", None), "name", None)
+                for assignment in visitor.assignments
+            )
+            if name
+        )
+        handled_names.update(
+            name
+            for name in (getattr(enum, "name", None) for enum in visitor.enums)
+            if name
+        )
+        return handled_names
+
+    @staticmethod
+    def _find_fused_typevar_names(
+        typevar_candidates: dict[str, PyiFusedType],
+        functions: list[PyiFunction],
+        classes: list[PyiClass],
+    ) -> list[str]:
+        scope = PyiScope(functions=functions, classes=classes)
+        return [
+            name
+            for name in typevar_candidates
+            if any(
+                any(
+                    _annotation_uses_name(argument.annotation, name)
+                    for argument in function.signature.args
+                )
+                or _annotation_uses_name(function.signature.return_type, name)
+                for function in _scope_functions(scope)
+            )
+        ]
+
+    def _prune_scope_assignments(
+        self,
+        conv_assignments_with_source: list[tuple[object, PyiAssignment | None]],
+        functions: list[PyiFunction],
+        classes: list[PyiClass],
+        cdef_assignments: list[PyiAssignment],
+        extra_assignments: list[PyiAssignment],
+        local_ctypedef_aliases: dict[str, str],
+        resolve_ctypedef_aliases: bool,
+        defer_ctypedef_pruning: bool,
+    ) -> tuple[list[PyiAssignment], list[tuple[str, PyiAssignment]]]:
+        functions_and_classes = PyiScope(functions=functions, classes=classes)
+        other_statements = [assignment.statement for assignment in cdef_assignments] + [
+            assignment.statement
+            for assignment in extra_assignments
+            if isinstance(assignment, PyiAssignment)
+        ]
+
+        def _ctypedef_alias_name(raw_node) -> str | None:
+            if not (
+                resolve_ctypedef_aliases and isinstance(raw_node, Nodes.CTypeDefNode)
+            ):
+                return None
+            name, _ = extract_name_and_type(raw_node)
+            return name if name in local_ctypedef_aliases else None
+
+        def _is_used_elsewhere(
+            name: str, own_statement: str | None, live: list[PyiAssignment]
+        ) -> bool:
+            for function in _scope_functions(functions_and_classes):
+                if any(
+                    _text_uses_name(argument.annotation, name)
+                    for argument in function.signature.args
+                ) or _text_uses_name(function.signature.return_type, name):
+                    return True
+            for converted in live:
+                if converted.statement != own_statement and _text_uses_name(
+                    converted.statement, name
+                ):
+                    return True
+            return any(
+                _text_uses_name(statement, name) for statement in other_statements
+            )
+
+        live_assignments = [
+            (raw_node, converted)
+            for raw_node, converted in conv_assignments_with_source
+            if converted is not None
+        ]
+        locally_dead: list[tuple[str, PyiAssignment]] = []
+        for _ in range(len(live_assignments)):
+            pruned_this_pass = False
+            still_live = []
+            live_converted = [converted for _, converted in live_assignments]
+            for raw_node, converted in live_assignments:
+                alias_name = _ctypedef_alias_name(raw_node)
+                if alias_name is not None and not _is_used_elsewhere(
+                    alias_name, converted.statement, live_converted
+                ):
+                    pruned_this_pass = True
+                    locally_dead.append((alias_name, converted))
+                    continue
+                still_live.append((raw_node, converted))
+            live_assignments = still_live
+            if not pruned_this_pass:
+                break
+
+        converted_assignments = [converted for _, converted in live_assignments]
+        if defer_ctypedef_pruning:
+            converted_assignments += [converted for _, converted in locally_dead]
+        return converted_assignments, locally_dead
 
     def convert_scope(
         self,
         visitor: ScopeVisitor,
         source_code: str,
-        type_comments: dict[int, str] | None = None,
+        comments: CommentIndex | None = None,
         include_docstrings: bool = True,
         inherited_fused_types: dict[str, PyiFusedType] | None = None,
         emit_inherited_fused_typevars: bool = False,
+        resolve_ctypedef_aliases: bool = False,
+        inherited_ctypedef_aliases: dict[str, str] | None = None,
+        defer_ctypedef_pruning: bool = False,
+        prunable_ctypedef_aliases: dict[str, PyiAssignment] | None = None,
     ) -> PyiScope:
         """Convert a ScopeVisitor to a PyiScope.
 
@@ -192,110 +603,134 @@ class Converter:
         duplicate, incorrect ``TypeVar`` declarations. Only the outermost scope
         (``convert_module``) should emit them. This solution is not the most elegant,
         but it is a sufficient encoding for differentiating modules and classes today.
+
+        ``ctypedef`` aliases don't have this same one-owner problem --
+        unlike a fused type, resolving one to its underlying type doesn't
+        emit anything of its own, so every scope in the nesting chain
+        (module, then each nested class) merges ``inherited_ctypedef_
+        aliases`` with whatever it finds locally and just uses the result
+        directly wherever `resolve_ctypedef_aliases` applies it, the same
+        way `fused_types` (as opposed to ``local_fused_types``) is merged
+        and used for signature resolution just below.
+
+        ``defer_ctypedef_pruning``/``prunable_ctypedef_aliases`` exist for
+        exactly one caller: `stubgen.py`'s `convert_multiple_files`, doing
+        the whole-batch cross-file check described in
+        `_prune_ctypedef_aliases_across_batch`'s docstring. A single
+        file's own local usage -- functions, attributes, a still-live
+        sibling alias's declaration -- is *never* enough on its own to
+        know an alias is truly dead: another file in the same batch may
+        `cimport` it and be the only thing that still needs it, and this
+        scope has no way to see that on its own (see the design note on
+        `StubgenPyxConfig.resolve_ctypedef_aliases`). When
+        `defer_ctypedef_pruning` is set, a locally-dead alias's
+        `(scope.assignments, PyiAssignment)` pair is recorded into
+        `prunable_ctypedef_aliases` (keyed by name) instead of being
+        dropped here -- left in the output, provisionally, for the
+        caller to actually remove (by mutating `scope.assignments` in
+        place, since a plain list is passed) once it has cross-checked
+        every other file in the batch too. Single-file conversion
+        (`convert_str`/`compile_str_to_module`, or `convert_single_file`
+        called outside a batch) leaves this off, keeping today's
+        immediate, local-only pruning -- the best available without a
+        batch to cross-check against, and safe for exactly the reason a
+        single, self-contained snippet has no other files to break.
         """
-        tc = type_comments or {}
-        local_fused_types = self.convert_fused_types(visitor.fused_types)
+        comments = comments if comments is not None else CommentIndex([])
+        local_fused_types = convert_fused_types(visitor)
         fused_types = {**(inherited_fused_types or {}), **local_fused_types}
+        local_ctypedef_aliases = (
+            ctypedef_alias_map(visitor) if resolve_ctypedef_aliases else {}
+        )
+        ctypedef_aliases = {
+            **(inherited_ctypedef_aliases or {}),
+            **local_ctypedef_aliases,
+        }
 
-        cdef_assignments: list[PyiAssignment] = []
-        for cdef_variable in visitor.cdef_variables:
-            for name, base_type in get_cdef_variables(cdef_variable):
-                resolved_type = with_debug_fallback(
-                    base_type,
-                    "_typeshed.Incomplete",
-                    f"Unable to determine type for {name}",
-                )
-                cdef_assignments.append(PyiAssignment(f"{name}: {resolved_type}"))
-
-        # Preserve source order across cdef and def functions
-        cdef_funcs = [
-            (
-                node.pos[1],
-                self.convert_cdef_func(
-                    node, source_code, tc, include_docstrings, fused_types
-                ),
-            )
-            for node in visitor.cdef_functions
-        ]
-        py_funcs = [
-            (
-                node.pos[1],
-                self.convert_py_func(
-                    node, source_code, tc, include_docstrings, fused_types
-                ),
-            )
-            for node in visitor.py_functions
-        ]
-
-        # Replace __cinit__ with __init__ if no __init__ is present, otherwise remove
-        contains_init = any(py_func.name == "__init__" for _, py_func in py_funcs)
-
-        for idx, (_, py_func) in enumerate(py_funcs):
-            if py_func.name == "__cinit__" and not contains_init:
-                py_func.name = "__init__"
-            elif py_func.name == "__cinit__" and contains_init:
-                del py_funcs[idx]
-                break
-
-        all_funcs_sorted = sorted(cdef_funcs + py_funcs, key=lambda t: t[0])
-        functions = [f for _, f in all_funcs_sorted]
-        structs_or_enums = [
-            self.convert_struct_or_union(node)
-            for node in visitor.cdef_structs_or_unions
-        ]
-        classes = [
-            self.convert_class(
-                class_visitor, source_code, tc, include_docstrings, fused_types
-            )
-            for class_visitor in visitor.classes
-        ]
+        cdef_assignments, cdef_handled_names = self._convert_cdef_assignments(
+            visitor, ctypedef_aliases
+        )
+        functions, classes, structs_or_enums = self._convert_scope_members(
+            visitor,
+            source_code,
+            comments,
+            include_docstrings,
+            fused_types,
+            ctypedef_aliases,
+            resolve_ctypedef_aliases,
+            defer_ctypedef_pruning,
+            prunable_ctypedef_aliases,
+        )
         typevar_candidates = (
             fused_types if emit_inherited_fused_typevars else local_fused_types
         )
-        typevar_scan_scope = PyiScope(functions=functions, classes=classes)
-        fused_typevar_names = [
-            name
-            for name in typevar_candidates
-            if any(
-                any(
-                    _annotation_uses_name(arg.annotation, name)
-                    for arg in function.signature.args
-                )
-                or _annotation_uses_name(function.signature.return_type, name)
-                for function in _scope_functions(typevar_scan_scope)
+        fused_typevar_names = self._find_fused_typevar_names(
+            typevar_candidates, functions, classes
+        )
+
+        conv_assignments_with_source = [
+            (
+                assignment,
+                convert_assignment(assignment, source_code, in_class=visitor.in_class),
             )
+            for assignment in visitor.assignments
         ]
 
-        conv_assignments = (
-            self.convert_assignment(assignment, source_code, in_class=visitor.in_class)
-            for assignment in visitor.assignments
+        cpp_classes = (convert_cpp_class(node) for node in visitor.cpp_classes)
+
+        handled_names = self._collect_scope_handled_names(
+            visitor, functions, cdef_handled_names
         )
 
-        cpp_classes = (self.convert_cpp_class(node) for node in visitor.cpp_classes)
+        extra_assignments, extra_enums, extra_structs, extra_functions = (
+            self._convert_declared_entries(visitor, handled_names, ctypedef_aliases)
+        )
+        functions = functions + extra_functions
 
-        return PyiScope(
+        conv_assignments, locally_dead = self._prune_scope_assignments(
+            conv_assignments_with_source,
+            functions,
+            classes,
+            cdef_assignments,
+            extra_assignments,
+            local_ctypedef_aliases,
+            resolve_ctypedef_aliases,
+            defer_ctypedef_pruning,
+        )
+
+        scope = PyiScope(
             assignments=[
-                self.convert_fused_type(fused_types[name])
-                for name in fused_typevar_names
+                convert_fused_type(fused_types[name]) for name in fused_typevar_names
             ]
-            + [a for a in conv_assignments if a]
+            + conv_assignments
             + [c for c in cpp_classes if c]
-            + cdef_assignments,
+            + cdef_assignments
+            + [a for a in extra_assignments if isinstance(a, PyiAssignment)]
+            + [a for a in extra_enums if isinstance(a, PyiAssignment)],
             functions=functions,
-            classes=structs_or_enums + classes,
-            enums=[self.convert_enum(enum) for enum in visitor.enums],
+            classes=structs_or_enums + classes + extra_structs,
+            enums=[convert_enum(enum) for enum in visitor.enums]
+            + [e for e in extra_enums if isinstance(e, PyiEnum)],
         )
+        if defer_ctypedef_pruning and prunable_ctypedef_aliases is not None:
+            for alias_name, converted in locally_dead:
+                prunable_ctypedef_aliases[alias_name] = converted
+        return scope
 
     def convert_class(
         self,
         class_visitor: ClassVisitor,
         source_code: str,
-        type_comments: dict[int, str] | None = None,
+        comments: CommentIndex | None = None,
         include_docstrings: bool = True,
         inherited_fused_types: dict[str, PyiFusedType] | None = None,
+        resolve_ctypedef_aliases: bool = False,
+        inherited_ctypedef_aliases: dict[str, str] | None = None,
+        defer_ctypedef_pruning: bool = False,
+        prunable_ctypedef_aliases: dict[str, PyiAssignment] | None = None,
     ) -> PyiClass:
         """Convert a ClassVisitor to a PyiClass."""
-        tc = type_comments or {}
+        comments = comments if comments is not None else CommentIndex([])
         if isinstance(class_visitor.node, Nodes.CClassDefNode):
             name: str = class_visitor.node.class_name  # type: ignore
         else:
@@ -313,170 +748,85 @@ class Converter:
             scope=self.convert_scope(
                 class_visitor.scope,
                 source_code,
-                tc,
+                comments,
                 include_docstrings,
                 inherited_fused_types,
+                resolve_ctypedef_aliases=resolve_ctypedef_aliases,
+                inherited_ctypedef_aliases=inherited_ctypedef_aliases,
+                defer_ctypedef_pruning=defer_ctypedef_pruning,
+                prunable_ctypedef_aliases=prunable_ctypedef_aliases,
             ),
-        )
-
-    def convert_cpp_class(self, cpp_class: Nodes.CppClassNode) -> PyiAssignment | None:
-        """Convert a C++ class definition node to PyiAssignment. Currently unsupported, returns the name as an Incomplete type alias."""
-
-        name = getattr(cpp_class, "name", None)
-        _logger.debug(
-            "Unsupported C++ class %s, falling back to _typeshed.Incomplete", name
-        )
-
-        return (
-            PyiAssignment(f"{name}: typing_extensions.TypeAlias = _typeshed.Incomplete")
-            if name
-            else None
         )
 
     def convert_cdef_func(
         self,
         cdef_func: Nodes.CFuncDefNode,
         source_code: str,
-        type_comments: dict[int, str] | None = None,
+        comments: CommentIndex | None = None,
         include_docstrings: bool = True,
         fused_types: dict[str, PyiFusedType] | None = None,
+        ctypedef_aliases: dict[str, str] | None = None,
     ) -> PyiFunction:
         """Convert a C function definition node to PyiFunction."""
-        tc = type_comments or {}
+        comments = comments if comments is not None else CommentIndex([])
         name: str = cdef_func.declarator.base.name  # type: ignore
         doc = docstring_to_string(cdef_func.doc) if cdef_func.doc else None  # type: ignore
+        signature = _resolve_fused_signature(
+            _restore_fused_memoryview_annotations(
+                get_signature(cdef_func), cdef_func, fused_types or {}
+            ),
+            fused_types or {},
+        )
+        raw_fallback = apply_type_comments(
+            signature,
+            cdef_func,
+            cdef_func.declarator.args,
+            comments,  # type: ignore
+        )
+        apply_ctypedef_aliases(signature, ctypedef_aliases)
         return PyiFunction(
             name,
             is_async=False,
             doc=doc if include_docstrings else None,
             decorators=get_decorators(source_code, cdef_func),
-            signature=_resolve_fused_signature(
-                _restore_fused_memoryview_annotations(
-                    get_signature(cdef_func), cdef_func, fused_types or {}
-                ),
-                fused_types or {},
-            ),
-            type_comment=self._type_comment_for(cdef_func, tc),
-        )
-
-    def convert_fused_types(
-        self, fused_type_nodes: list[Nodes.FusedTypeNode]
-    ) -> dict[str, PyiFusedType]:
-        fused_types: dict[str, PyiFusedType] = {}
-        for node in fused_type_nodes:
-            name = node.name
-            type_nodes = node.types
-            concrete_types = tuple(
-                dict.fromkeys(
-                    _CYTHON_TRANSLATIONS.get(type_name, type_name)
-                    for type_name in (_type_name(type_node) for type_node in type_nodes)
-                    if type_name is not None
-                )
-            )
-            fused_types[name] = PyiFusedType(name, concrete_types)
-        return fused_types
-
-    def convert_fused_type(self, fused_type: PyiFusedType) -> PyiAssignment:
-        concrete_types = ", ".join(fused_type.concrete_types)
-        return PyiAssignment(
-            f'{fused_type.name} = typing.TypeVar("{fused_type.name}", {concrete_types})'
+            signature=signature,
+            type_comment=raw_fallback,
         )
 
     def convert_py_func(
         self,
         node: Nodes.DefNode,
         source_code: str,
-        type_comments: dict[int, str] | None = None,
+        comments: CommentIndex | None = None,
         include_docstrings: bool = True,
         fused_types: dict[str, PyiFusedType] | None = None,
+        ctypedef_aliases: dict[str, str] | None = None,
     ) -> PyiFunction:
         """Convert a Python function definition node to PyiFunction."""
-        tc = type_comments or {}
+        comments = comments if comments is not None else CommentIndex([])
         name = node.name  # type: ignore
         doc = docstring_to_string(node.doc) if node.doc else None
+        signature = _resolve_fused_signature(
+            _restore_fused_memoryview_annotations(
+                get_signature(node), node, fused_types or {}
+            ),
+            fused_types or {},
+        )
+        raw_fallback = apply_type_comments(
+            signature,
+            node,
+            node.args,
+            comments,  # type: ignore
+        )
+        apply_ctypedef_aliases(signature, ctypedef_aliases)
         return PyiFunction(
             name,
             is_async=node.is_async_def,
             doc=doc if include_docstrings else None,
             decorators=get_decorators(source_code, node),
-            signature=_resolve_fused_signature(
-                _restore_fused_memoryview_annotations(
-                    get_signature(node), node, fused_types or {}
-                ),
-                fused_types or {},
-            ),
-            type_comment=self._type_comment_for(node, tc),
+            signature=signature,
+            type_comment=raw_fallback,
         )
-
-    def convert_assignment(
-        self,
-        assignment: Nodes.AssignmentNode | Nodes.ExprStatNode,
-        source_code: str,
-        *,
-        in_class: bool = False,
-    ) -> PyiAssignment | None:
-        """Convert an assignment node to PyiAssignment, extracting type annotations."""
-        out_assignment_str: str | None = None
-
-        if isinstance(assignment, Nodes.SingleAssignmentNode):
-            name = assignment.lhs.name
-            expr = unparse_expr(assignment.rhs)
-
-            if expr is not None:
-                annotation = (
-                    assignment.lhs.annotation.string.value
-                    if assignment.lhs.annotation is not None
-                    else None
-                )
-
-                assign: str = name
-                if annotation:
-                    assign = f"{assign}: {annotation}"
-                out_assignment_str = f"{assign} = {expr}"
-
-        if isinstance(assignment, Nodes.CTypeDefNode):
-            name, typ = extract_name_and_type(assignment)
-            if typ and name:
-                out_assignment_str = f"{name}: typing_extensions.TypeAlias = {typ}"
-            elif name:
-                _logger.debug(
-                    "Could not extract ctypedef type: %r",
-                    get_source(source_code, assignment),
-                )
-                out_assignment_str = f"{name} = ..."
-            else:
-                _logger.debug(
-                    "Could not extract ctypedef name or type: %r",
-                    get_source(source_code, assignment),
-                )
-                return None
-
-        if not out_assignment_str:
-            # Fallback to attempting to parse the source
-            out_assignment_str = get_source(source_code, assignment)
-
-        try:
-            node = ast.parse(out_assignment_str)
-            if not len(node.body) == 1 or not isinstance(
-                node.body[0], (ast.Assign, ast.AnnAssign)
-            ):
-                raise InvalidAssignment
-        except (SyntaxError, InvalidAssignment):
-            _logger.debug("Could not parse assignment source: %r", out_assignment_str)
-            return None
-
-        if in_class and _is_unhashable_hash_assignment(node.body[0]):
-            out_assignment_str = "__hash__ = None  # type: ignore[assignment]"
-
-        return PyiAssignment(out_assignment_str)
-
-    def convert_enum(self, node: Nodes.CEnumDefNode) -> PyiEnum | PyiAssignment:
-        """Convert a Cython enum definition to PyiEnum."""
-        if node.create_wrapper:  # type: ignore
-            name: str | None = node.name  # type: ignore
-            return PyiEnum(enum_name=name, names=get_enum_names(node))
-        # Make it usable as an alias for int
-        return PyiAssignment(f"{node.name}: typing_extensions.TypeAlias = int")  # type: ignore
 
 
 def _is_cxx_cimport(raw: str) -> bool:
@@ -485,152 +835,3 @@ def _is_cxx_cimport(raw: str) -> bool:
 
 def _is_cython_import(raw: str) -> bool:
     return bool(_CYTHON_FROM_IMPORT_RE.search(raw) or _CYTHON_IMPORT_RE.search(raw))
-
-
-def _is_unhashable_hash_assignment(node: ast.stmt) -> bool:
-    return (
-        isinstance(node, ast.Assign)
-        and len(node.targets) == 1
-        and isinstance(node.targets[0], ast.Name)
-        and node.targets[0].id == "__hash__"
-        and isinstance(node.value, ast.Constant)
-        and node.value.value is None
-    )
-
-
-def _restore_fused_memoryview_annotations(
-    signature: PyiSignature,
-    node: Nodes.CFuncDefNode | Nodes.DefNode,
-    fused_types: dict[str, PyiFusedType],
-) -> PyiSignature:
-    """Restore fused typedef names on memoryview annotations lost during signature extraction.
-
-    This post-processing pass is a workaround for the fact that fused types are not
-    natively supported throughout the rest of stubgen-pyx's type-parsing and
-    signature-extraction machinery. If fused types were threaded into
-    _extract_memoryview_type we could preserve the fused typedef name there, but that
-    would require treating fused types as the first-class type concept throughout
-    the type-parsing layer, which is a much larger refactor. Instead, this pass
-    walks the original AST alongside the extracted signature and repairs any memoryview
-    annotations that were flattened to the string "memoryview" back to their fused
-    typedef name, so that the downstream fused-type resolver can handle them correctly.
-    """
-    if not fused_types:
-        return signature
-
-    if isinstance(node, Nodes.CFuncDefNode):
-        arg_nodes = getattr(getattr(node, "declarator", None), "args", [])
-    else:
-        arg_nodes = getattr(node, "args", [])
-    for arg, arg_node in zip(signature.args, arg_nodes):
-        fused_name = _fused_memoryview_name(arg_node, fused_types)
-        if arg.annotation == "memoryview" and fused_name is not None:
-            arg.annotation = fused_name
-
-    fused_name = _fused_memoryview_name(node, fused_types)
-    if signature.return_type == "memoryview" and fused_name is not None:
-        signature.return_type = fused_name
-
-    return signature
-
-
-def _fused_memoryview_name(
-    node: Nodes.Node, fused_types: dict[str, PyiFusedType]
-) -> str | None:
-    """Return the fused typedef name backing a memoryview node, or None if not fused."""
-    base_type = getattr(node, "base_type", None)
-    if not isinstance(base_type, Nodes.MemoryViewSliceTypeNode):
-        return None
-
-    scalar = getattr(base_type, "base_type_node", None)
-    name = getattr(scalar, "name", None)
-    return name if name in fused_types else None
-
-
-def _resolve_fused_signature(
-    signature: PyiSignature, fused_types: dict[str, PyiFusedType]
-) -> PyiSignature:
-    """Rewrite a signature's fused-type annotations to their resolved Python form.
-
-    Having the AST layer natively handle fused resolution would require the
-    ``PyiSignature`` model to carry structured fused references rather than
-    strings, and every downstream consumer (import emission,
-    ``trim_not_defined``, source rendering) would need to handle those gracefully.
-    Doing so is a much larger refactor. To avoid that, this function is a localized
-    post-processing pass that rewrites the signature's argument and return annotations
-    after the AST traversal has completed by introspecting the already-generated
-    annotation strings and the fused-type definitions. A fused typedef like ``numeric``
-    resolves to a ``TypeVar`` when it appears in both a parameter and the return, to a
-    ``|``-union when it appears in one parameter only, or to ``object`` when its member
-    set includes ``object``. That decision is a *whole-signature* property, so it cannot
-    be made while an individual argument's annotation is being generated.
-    """
-    usage: dict[str, tuple[int, bool]] = {}
-    for name in fused_types:
-        param_count = sum(
-            _annotation_uses_name(arg.annotation, name) for arg in signature.args
-        )
-        used_as_return = _annotation_uses_name(signature.return_type, name)
-        if param_count or used_as_return:
-            usage[name] = (param_count, used_as_return)
-    for arg in signature.args:
-        if arg.annotation is not None:
-            arg.annotation = _resolved_fused_annotation(
-                arg.annotation, usage, fused_types
-            )
-    if signature.return_type is not None:
-        signature.return_type = _resolved_fused_annotation(
-            signature.return_type, usage, fused_types
-        )
-    return signature
-
-
-def _resolved_fused_annotation(
-    annotation: str,
-    usage: dict[str, tuple[int, bool]],
-    fused_types: dict[str, PyiFusedType],
-) -> str:
-    """Resolve a single annotation string using per-name fused usage and definitions."""
-    resolved = annotation
-    for name, value in fused_types.items():
-        if not _annotation_uses_name(resolved, name):
-            continue
-        param_count, used_as_return = usage[name]
-        replacement = name
-        if "object" in value.concrete_types:
-            replacement = "object"
-        elif (not used_as_return and param_count <= 1) or param_count == 0:
-            replacement = " | ".join(value.concrete_types)
-        resolved = " | ".join(
-            replacement if part == name else part
-            for part in _annotation_parts(resolved)
-        )
-    return resolved
-
-
-def _scope_functions(scope: PyiScope) -> Iterator[PyiFunction]:
-    """Yield all functions in the scope, recursively descending into nested classes."""
-    yield from scope.functions
-    for class_ in scope.classes:
-        yield from _scope_functions(class_.scope)
-
-
-def _annotation_uses_name(annotation: str | None, name: str) -> bool:
-    """Return True if the given name appears as a part of the (union) annotation."""
-    if annotation is None:
-        return False
-    return name in _annotation_parts(annotation)
-
-
-def _annotation_parts(annotation: str) -> list[str]:
-    """Split a union annotation string into its stripped alternative parts."""
-    return [part.strip() for part in annotation.split("|")]
-
-
-def _type_name(node: Nodes.Node) -> str | None:
-    """Return a dotted type name for a simple or templated base-type node, or None."""
-    while isinstance(node, Nodes.TemplatedTypeNode):
-        node = node.base_type_node
-    if isinstance(node, Nodes.CSimpleBaseTypeNode):
-        return ".".join(node.module_path + [node.name])
-    return None

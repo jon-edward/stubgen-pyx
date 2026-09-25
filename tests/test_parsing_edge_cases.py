@@ -3,26 +3,33 @@
 from __future__ import annotations
 
 import tempfile
-import tokenize
 from pathlib import Path
 
 import pytest
+from Cython.Compiler.Errors import CompileError
 
-from stubgen_pyx.parsing.parser import parse_pyx
-from stubgen_pyx.parsing.preprocess import LineColConverter
+from stubgen_pyx.parsing.context import StubgenContext
+from stubgen_pyx.parsing.parser import parse_file
 
 
 class TestParsingEdgeCases:
     """Test edge cases in parsing."""
 
     def test_parse_file_with_syntax_error(self):
-        """Test parsing a file with syntax errors."""
+        """Test parsing a file with syntax errors.
+
+        A real syntax error (as opposed to a declaration-level issue like
+        an unresolved `cimport`) surfaces as `Context.parse`'s own
+        error-count check raising -- not collected into
+        `ParsedSource.diagnostics` the way `AnalyseDeclarationsTransform`
+        issues are. See `parsing/pipeline.py::run_stub_pipeline`.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             pyx_file = Path(tmpdir) / "bad_syntax.pyx"
             pyx_file.write_text("def broken( pass")
 
-            with pytest.raises(tokenize.TokenError):
-                parse_pyx(pyx_file.read_text(), pyx_path=pyx_file)
+            with pytest.raises(CompileError):
+                parse_file(pyx_file, StubgenContext())
 
     def test_parse_file_with_complex_code(self):
         """Test parsing complex Cython code."""
@@ -41,40 +48,9 @@ cdef class MyClass:
     def get_value(self):
         return self.value
 """)
-            result = parse_pyx(pyx_file.read_text(), pyx_path=pyx_file)
+            result = parse_file(pyx_file, StubgenContext())
             assert result is not None
-
-    def test_line_col_converter_basic(self):
-        """Test LineColConverter with basic code."""
-        code = "line1\nline2\nline3"
-        converter = LineColConverter(code)
-        offset = converter.line_col_to_offset((1, 0))
-        assert offset == 0
-
-    def test_line_col_converter_multiline(self):
-        """Test LineColConverter with multiple lines."""
-        code = "line1\nline2\nline3"
-        converter = LineColConverter(code)
-        # Line 2, Column 0 should be after first line and newline
-        offset = converter.line_col_to_offset((2, 0))
-        assert offset > 0
-        assert offset == 6  # "line1\n" is 6 chars
-
-    def test_line_col_converter_end_of_file(self):
-        """Test LineColConverter at end of file."""
-        code = "line1\nline2"
-        converter = LineColConverter(code)
-        offset = converter.line_col_to_offset((2, 5))
-        assert offset == 11
-
-    def test_line_col_converter_offset_to_line_col(self):
-        """Test converting offset back to line/col."""
-        code = "line1\nline2\nline3"
-        converter = LineColConverter(code)
-        # Get offset for line 2, col 2
-        offset = converter.line_col_to_offset((2, 2))
-        # Should be able to get this offset
-        assert offset >= 0
+            assert result.diagnostics == []
 
     def test_parse_file_with_docstring(self):
         """Test parsing file with docstring."""
@@ -87,7 +63,7 @@ def hello():
     """Function docstring."""
     pass
 ''')
-            result = parse_pyx(pyx_file.read_text(), pyx_path=pyx_file)
+            result = parse_file(pyx_file, StubgenContext())
             assert result is not None
 
     def test_parse_file_with_imports(self):
@@ -100,8 +76,13 @@ from typing import Dict, List
 cimport cython
 from cpython.mem cimport PyMem_Malloc
 """)
-            result = parse_pyx(pyx_file.read_text(), pyx_path=pyx_file)
+            result = parse_file(pyx_file, StubgenContext())
             assert result is not None
+            # `numpy` isn't a real cimport here (it's a plain Python
+            # `import`), and the rest resolve natively (`cython` is a
+            # pseudo-module, `cpython.mem` is under Cython's own
+            # standard include path) -- no diagnostics expected.
+            assert result.diagnostics == []
 
     def test_parse_file_with_cdef_types(self):
         """Test parsing file with cdef type declarations."""
@@ -115,7 +96,7 @@ cdef str name = "hello"
 cdef class MyClass:
     cdef int attr
 """)
-            result = parse_pyx(pyx_file.read_text(), pyx_path=pyx_file)
+            result = parse_file(pyx_file, StubgenContext())
             assert result is not None
 
     def test_parse_file_with_properties(self):
@@ -134,7 +115,7 @@ cdef class MyClass:
     def value(self, int v):
         self._value = v
 """)
-            result = parse_pyx(pyx_file.read_text(), pyx_path=pyx_file)
+            result = parse_file(pyx_file, StubgenContext())
             assert result is not None
 
     def test_parse_file_with_decorators(self):
@@ -142,67 +123,73 @@ cdef class MyClass:
         with tempfile.TemporaryDirectory() as tmpdir:
             pyx_file = Path(tmpdir) / "decorated.pyx"
             pyx_file.write_text("""
-@staticmethod
-def static_method():
-    pass
+class Plain:
+    @staticmethod
+    def static_method():
+        pass
 
-@classmethod
-def class_method(cls):
-    pass
+    @classmethod
+    def class_method(cls):
+        pass
 
-@property
-def my_prop(self):
-    return 42
+    @property
+    def my_prop(self):
+        return 42
 """)
-            result = parse_pyx(pyx_file.read_text(), pyx_path=pyx_file)
+            result = parse_file(pyx_file, StubgenContext())
             assert result is not None
 
     def test_parse_file_with_builtin_types(self):
-        """Test parsing file with builtin type annotations."""
+        """Test parsing file with builtin type annotations.
+
+        Named `builtin_types.pyx`, not `builtins.pyx`: the latter collides
+        with Cython's own reserved `builtins` module scope during
+        qualified-name resolution (`Context.find_module` resolves it to a
+        `BuiltinScope`, not an ordinary `ModuleScope`) -- an inherent
+        property of using Cython's real module-name machinery, not
+        something specific to this project. A real Cython project with a
+        top-level file literally named `builtins.pyx` would hit the same
+        collision with the real compiler.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
-            pyx_file = Path(tmpdir) / "builtins.pyx"
+            pyx_file = Path(tmpdir) / "builtin_types.pyx"
             pyx_file.write_text("""
 def func(x: int, y: str, z: bool) -> list:
     pass
 """)
-            result = parse_pyx(pyx_file.read_text(), pyx_path=pyx_file)
+            result = parse_file(pyx_file, StubgenContext())
             assert result is not None
 
 
-class TestPreprocessingEdgeCases:
-    """Test edge cases in preprocessing."""
+class TestRealFileFormatting:
+    """Parsing real files with varied whitespace/line-ending styles.
 
-    def test_preprocess_with_windows_line_endings(self):
-        """Test preprocessing with Windows line endings."""
+    There's no preprocessing step to normalize these -- these exercise
+    Cython's own scanner handling the raw file directly, and
+    `ParsedSource.source` is exactly the file's own text, unmodified.
+    """
+
+    def test_parse_file_with_windows_line_endings(self):
+        """Test parsing a file with Windows line endings."""
         with tempfile.TemporaryDirectory() as tmpdir:
             pyx_file = Path(tmpdir) / "windows.pyx"
-            # Write with Windows line endings
             pyx_file.write_bytes(b"def hello():\r\n    pass\r\n")
-            result = parse_pyx(pyx_file.read_text(), pyx_path=pyx_file)
+            result = parse_file(pyx_file, StubgenContext())
             assert result is not None
 
-    def test_preprocess_with_tabs(self):
-        """Test preprocessing with tab indentation."""
+    def test_parse_file_with_tabs(self):
+        """Test parsing a file with tab indentation."""
         with tempfile.TemporaryDirectory() as tmpdir:
             pyx_file = Path(tmpdir) / "tabs.pyx"
             pyx_file.write_text("""
 def hello():
 \tpass
 """)
-            result = parse_pyx(pyx_file.read_text(), pyx_path=pyx_file)
+            result = parse_file(pyx_file, StubgenContext())
             assert result is not None
 
-    def test_preprocess_with_mixed_indentation(self):
-        """Test preprocessing with mixed spaces and tabs."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            pyx_file = Path(tmpdir) / "mixed.pyx"
-            # Mix spaces and tabs
-            pyx_file.write_text("def hello():\n    pass\n")
-            result = parse_pyx(pyx_file.read_text(), pyx_path=pyx_file)
-            assert result is not None
-
-    def test_preprocess_strip_expand_semicolons_at_newline(self):
-        """Test preprocessing with semicolon at end of line."""
+    def test_parse_file_source_is_unmodified(self):
+        """`ParsedSource.source` is exactly the file's own text -- no preprocessing."""
         with tempfile.TemporaryDirectory() as tmpdir:
             pyx_file = Path(tmpdir) / "semicolon.pyx"
             code = """
@@ -214,13 +201,5 @@ class Test:
 """
             pyx_file.write_text(code)
 
-            result = parse_pyx(pyx_file.read_text(), pyx_path=pyx_file).source
-            lines_in = [line.rstrip("; ") for line in code.splitlines() if line.strip()]
-            lines_out = [
-                line.rstrip(" ") for line in result.splitlines() if line.strip()
-            ]
-
-            for line_in, line_out in zip(lines_in, lines_out):
-                assert line_in == line_out
-
-            assert result is not None
+            result = parse_file(pyx_file, StubgenContext())
+            assert result.source == code

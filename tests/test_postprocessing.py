@@ -173,7 +173,12 @@ x: Dict[str, List[int]] = {}
 """
         tree = ast.parse(code)
         names = collect_names.collect_names(tree)
-        assert "Dict" in names or "typing" in names
+        # Both `Dict` and `List` are referenced in the annotation and must
+        # be collected; `Optional` is imported but never used in the code
+        # itself, so it must NOT show up as a used name.
+        assert "Dict" in names
+        assert "List" in names
+        assert "Optional" not in names
 
     def test_collect_names_builtin_types(self):
         """Test collecting builtin type names."""
@@ -525,6 +530,36 @@ class TestTrimNotDefined:
         result = trim_not_defined.trim_not_defined(tree)
         result_str = ast.unparse(result)
         assert "List" in result_str
+
+    def test_plain_assign_value_replacement_adds_annotation(self):
+        """A plain (unannotated) assignment whose value references an
+        undefined name gets an explicit `_typeshed.Incomplete`
+        annotation when its value is replaced with `...`, rather than
+        being left as a bare `name = ...`: a type checker infers a bare
+        `name = ...`'s type from the literal Ellipsis value itself
+        (EllipsisType) rather than leaving it unresolved, which then
+        breaks any real usage of that name elsewhere (e.g.
+        `IDS.items()` failing because IDS was inferred as EllipsisType,
+        not a dict).
+        """
+        code = 'IDS = {"a": UndefinedConst}'
+        tree = ast.parse(code)
+        result = trim_not_defined.trim_not_defined(tree)
+        result_str = ast.unparse(result)
+        assert "UndefinedConst" not in result_str
+        assert "IDS: _typeshed.Incomplete = ..." in result_str
+        assert "IDS = ..." not in result_str
+
+    def test_multi_target_assign_value_replacement_unaffected(self):
+        """A multi-target assignment (`a = b = ...`) can't become an
+        `ast.AnnAssign` (Python doesn't support that), so it keeps the
+        older, unannotated-value behavior rather than crashing."""
+        code = 'a = b = {"x": UndefinedConst}'
+        tree = ast.parse(code)
+        result = trim_not_defined.trim_not_defined(tree)
+        result_str = ast.unparse(result)
+        assert "UndefinedConst" not in result_str
+        assert "a = b = ..." in result_str
 
     def test_keeps_type_alias_if_star_imported(self):
         """Test that type aliases are kept if star-imported."""
