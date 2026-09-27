@@ -1575,6 +1575,15 @@ class TestPropertyReturnTypeAnnotation:
     anything more specific for a plain Python property). The real
     declared type, when the source wrote one, must be read from the
     property's own `__get__` method's return annotation instead.
+
+    A get-only property (no setter) is a real, read-only Python
+    property, not a plain attribute -- rendering it as `name: type`
+    would misrepresent it as writable and drop its docstring, so it's
+    kept as an actual `@property` method instead (see
+    `ScopeVisitor.visit_PropertyNode`); the return type still needs to
+    come from the same place. Only a get+set pair (indistinguishable
+    from a plain attribute at the Python level -- and the shape `cdef
+    public` synthesizes) still flattens to `name: type`.
     """
 
     def test_property_with_return_annotation_keeps_its_type(self, temp_dir):
@@ -1589,11 +1598,11 @@ cdef class Foo:
         return self.nbytes
 """)
         result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
-        assert "size: int" in result
+        assert "def size(self) -> int" in result
         assert "Incomplete" not in result
 
     def test_untyped_property_still_falls_back_to_object(self, temp_dir):
-        """No annotation in the source -- correctly stays `object`,
+        """No annotation in the source -- correctly stays untyped,
         not a regression, just the honest answer when nothing more
         specific was written."""
         pyx_file = temp_dir / "test.pyx"
@@ -1604,7 +1613,7 @@ cdef class Foo:
         return 5
 """)
         result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
-        assert "size: object" in result
+        assert "def size(self):" in result
 
     def test_property_with_generic_return_type(self, temp_dir):
         pyx_file = temp_dir / "test.pyx"
@@ -1617,7 +1626,25 @@ cdef class Foo:
         return {}
 """)
         result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
-        assert "info: Mapping[str, Any]" in result
+        assert "def info(self) -> Mapping[str, Any]" in result
+
+    def test_getter_only_property_keeps_docstring(self, temp_dir):
+        """The regression this whole class now guards against: a
+        get-only property's docstring must survive conversion, not be
+        silently dropped along with the `@property` decorator."""
+        pyx_file = temp_dir / "test.pyx"
+        pyx_file.write_text('''
+cdef class Foo:
+    @property
+    def size(self) -> int:
+        """The size, in bytes."""
+        return 5
+''')
+        result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+        assert "@property" in result
+        assert "def size(self) -> int:" in result
+        assert '"""The size, in bytes."""' in result
+        assert "size: int" not in result
 
     def test_property_with_setter_uses_getter_return_type(self, temp_dir):
         pyx_file = temp_dir / "test.pyx"
@@ -1647,3 +1674,145 @@ cdef class Foo:
         result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
         assert "x: int" in result
         assert "y: float" in result
+
+
+class TestIncludeStatementInCompanionPxd:
+    """A companion `.pxd`'s own `include "other.pxd"` statement must not
+    leak into the generated stub as literal, unparseable source text.
+
+    Regression test for a bug found converting NVIDIA/cuda-python's
+    `cuda_bindings` package: Cython's parser (`p_include_statement`)
+    splices an `include`d file's own parsed statements directly into
+    the including file's tree, but each spliced-in node keeps *its
+    own* file's position (`node.pos[0]`), not the including file's.
+    `Converter.convert_imports` (`conversion/converter.py`) calls
+    `get_source(source_code, node)` for every collected import node --
+    where `source_code` is unconditionally the text of the file
+    currently being converted. For a node reached through an
+    `include`, that slices the *including* file's text at the
+    *included* file's line number -- which, by coincidence, is exactly
+    where the including file's own `include "..."` statement sits (its
+    own line number happens to match the included node's line number
+    in the included file). The result: the literal text
+    `include "other.pxd"` gets emitted as a "converted import"
+    statement in the .pyi output, which isn't valid Python and crashes
+    `ast.parse` in `postprocessing/pipeline.py`.
+
+    Fixed in `conversion/source_extraction.py::get_source`: read from
+    the node's own file (via `node.pos[0]`, a `FileSourceDescriptor`)
+    whenever it differs from what `source_code` was assumed to cover,
+    rather than always slicing the passed-in `source_code`.
+    """
+
+    def test_include_in_pxd_does_not_leak_into_output(self, temp_dir):
+        # The included file's own `cimport` sits on the *same line
+        # number* (4) as the including file's `include` statement --
+        # not incidental: that's exactly the coincidence that let the
+        # bug hide (see class docstring). `get_source` slicing the
+        # *including* file's text at the *included* node's line lands
+        # squarely on the `include "shared.pxd"` line itself.
+        (temp_dir / "shared.pxd").write_text("""\n\n\ncimport cython\n""")
+        (temp_dir / "mod.pxd").write_text(
+            """\n\n\ninclude "shared.pxd"\n\ncdef class Foo:\n    cdef int x\n"""
+        )
+        (temp_dir / "mod.pyx").write_text("""
+cdef class Foo:
+    def __init__(self, x: int):
+        self.x = x
+""")
+
+        stubgen = StubgenPyx()
+        results = stubgen.convert_glob(str(temp_dir / "mod.pyx"))
+        assert all(r.success for r in results), [
+            r.error for r in results if not r.success
+        ]
+
+        result = (temp_dir / "mod.pyi").read_text()
+        assert "include " not in result
+        assert "class Foo" in result
+
+
+class TestFusedCtupleDoesNotCrash:
+    """A ``ctypedef fused`` type used as one of a C tuple's component
+    types must not crash conversion, even when the tuple is never
+    specialized to a concrete type.
+
+    Regression test found converting scikit-learn's
+    ``sklearn/linear_model/_cd_fast.pyx`` (``from cython cimport
+    floating`` -- Cython's built-in float/double fused type -- used as
+    a ctuple component). `PyrexTypes.PyrexType.is_fused` is true for
+    *any* type with a fused subtype, not just the fused type
+    definition itself -- `CTupleType` inherits it generically but has
+    no `.types` attribute (`.components` instead), so
+    `conversion/fused_types.py::convert_fused_types` crashed with
+    `AttributeError: 'CTupleType' object has no attribute 'types'`
+    when it found such a ctuple entry in scope and assumed, from
+    `is_fused` alone, that it was a real `ctypedef fused` definition.
+
+    Once that no longer crashes, a second bug surfaces: Cython leaves
+    an internal, never-meant-to-be-seen placeholder cname (literally
+    `"<dummy fused ctuple ...>"`, per `PyrexTypes.c_tuple_type`'s own
+    comment) on the unspecialized ctuple's auto-generated return
+    struct, which `_convert_declared_entry`'s scope walk was emitting
+    verbatim as a class name -- invalid Python syntax.
+    """
+
+    def test_unspecialized_fused_ctuple_does_not_crash(self, temp_dir):
+        pyx_file = temp_dir / "test.pyx"
+        pyx_file.write_text("""
+from cython cimport floating
+
+cpdef (floating, floating) minmax(floating[:] arr):
+    cdef floating lo = arr[0]
+    cdef floating hi = arr[0]
+    cdef Py_ssize_t i
+    for i in range(arr.shape[0]):
+        if arr[i] < lo:
+            lo = arr[i]
+        if arr[i] > hi:
+            hi = arr[i]
+    return lo, hi
+""")
+        result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+        assert "<dummy fused ctuple" not in result
+        assert "def minmax" in result
+
+
+class TestOrphanPxdParsedAsDeclarationFile:
+    """A standalone ``.pxd`` file with no companion ``.pyx`` -- picked up
+    as its own top-level conversion target -- must be parsed in
+    declaration-file (``pxd=True``) mode, not ``.pyx`` mode.
+
+    Regression test found converting pyzmq's
+    ``zmq/backend/cython/_zmq.pxd`` (a pxd-only forward-declaration
+    file, no matching ``.pyx``) and lxml's
+    ``src/lxml/html/_difflib.pxd`` (same shape): both use a
+    ``cpdef``/``cdef`` forward declaration's ``arg=*`` compile-time
+    -only default marker, which is only valid Cython syntax inside a
+    declaration file. `Stubgen._compile_file_with_converter` hardcoded
+    ``pxd=False`` on its `parse_file` call regardless of the actual
+    file's suffix -- correct for its usual caller (a real `.pyx`), but
+    wrong for the orphan-`.pxd`-as-top-level-target case
+    `Stubgen.resolve_glob` documents and creates: parsing pxd-only
+    syntax in `.pyx` mode rejected `=*` as a real syntax error.
+    """
+
+    def test_orphan_pxd_with_star_default_converts(self, temp_dir):
+        (temp_dir / "mod.pxd").write_text("""
+cdef class Widget:
+    cdef public int width
+    cpdef object resize(self, int width=*, int height=*)
+""")
+
+        stubgen = StubgenPyx()
+        results = stubgen.convert_glob(str(temp_dir / "*.pyx"))
+        # Before the fix, this crashed with a CompileError ("Expected
+        # an identifier or literal") parsing `arg=*` in .pyx mode --
+        # the point of this test is that it no longer does.
+        assert all(r.success for r in results), [
+            r.error for r in results if not r.success
+        ]
+
+        result = (temp_dir / "mod.pyi").read_text()
+        assert "class Widget" in result
+        assert "width: int" in result
