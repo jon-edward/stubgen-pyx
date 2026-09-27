@@ -161,6 +161,21 @@ def _to_argument(arg: Nodes.CArgDeclNode) -> PyiArgument:
     annotation = parameterize_builtin_generic(annotation)
 
     default = unparse_expr(arg.default)  # type: ignore
+    if default is None and arg.default is not None:  # type: ignore
+        # A default value node exists but couldn't be unparsed back to
+        # real syntax -- e.g. the sentinel
+        # `dataclasses._HAS_DEFAULT_FACTORY` attribute access Cython's
+        # compiler-synthesized dataclass `__init__` uses for a
+        # `field(default_factory=...)` parameter (a `PythonCapiCallNode`-
+        # based expression with no source-level equivalent). Rendering no
+        # default at all here would be actively wrong, not just
+        # imprecise: it silently drops the parameter's default-ness,
+        # which can leave a later parameter that does have a real,
+        # unparseable default sitting after one that now looks
+        # default-less -- invalid syntax the same way an actually
+        # missing default would be. `...` is the same placeholder
+        # `--replace-defaults-with-ellipsis` uses for a known value.
+        default = "..."
     if (
         default == "None"
         and annotation
