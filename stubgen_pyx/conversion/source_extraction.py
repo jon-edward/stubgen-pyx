@@ -2,13 +2,31 @@
 
 from __future__ import annotations
 
+import os
 import textwrap
 import tokenize
+from functools import cache
 
 from Cython.Compiler import ExprNodes, Nodes
+from Cython.Compiler.Scanning import FileSourceDescriptor
 
 from ..parsing.utils import tokenize_py
 from .unparse import unparse_expr
+
+
+@cache
+def _read_source_lines(filename: str, _mtime: float) -> tuple[str, ...]:
+    """Read and cache a source file's lines (with line endings kept).
+
+    Backs the ``include``-aware fallback in `get_source`: reading once
+    per distinct file, rather than once per node, keeps repeatedly
+    re-reading an included file (e.g. one `.pxd` `include`d by many
+    others) cheap. Keyed on ``_mtime`` too (not just ``filename``) so a
+    path reused for different content (e.g. across test cases writing
+    to the same temp file) doesn't silently serve stale text.
+    """
+    with open(filename, encoding="utf-8") as f:
+        return tuple(f.readlines())
 
 
 def get_source(source: str, node: Nodes.Node) -> str:
@@ -23,8 +41,31 @@ def get_source(source: str, node: Nodes.Node) -> str:
     line-by-line while parentheses/brackets/braces are unbalanced, which
     covers it (and anything else with the same shape of inaccuracy)
     generically.
+
+    ``source`` is assumed to be the text of the file *currently being
+    converted* -- but a node reached through an `include` statement
+    (Cython's parser splices an `include`d file's own parsed statements
+    directly into the including file's tree, see
+    `Cython.Compiler.Parsing.p_include_statement`) keeps its *own*
+    file's position (`node.pos[0]`), not the including file's. Slicing
+    `source` by that position would silently grab the wrong file's text
+    -- by line-number coincidence, not even necessarily an error, which
+    is what made this so easy to miss (see the `include "<path>"`
+    statement, in the including file, landing on the very line number a
+    genuinely `include`d node reports for itself). Whenever the node's
+    own descriptor names a real file different from what `source` came
+    from, that file's own text is read instead.
     """
-    lines = source.splitlines(keepends=True)
+    pos_source = node.pos[0]
+    lines = None
+    if isinstance(pos_source, FileSourceDescriptor) and pos_source.filename is not None:
+        try:
+            mtime = os.path.getmtime(pos_source.filename)
+            lines = list(_read_source_lines(pos_source.filename, mtime))
+        except OSError:
+            lines = None
+    if lines is None:
+        lines = source.splitlines(keepends=True)
     end_pos = node.end_pos() or node.pos
     end_line = end_pos[1]
     while end_line < len(lines) and _unbalanced_brackets(
