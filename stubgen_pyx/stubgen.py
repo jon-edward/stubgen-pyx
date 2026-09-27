@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from pathlib import Path
 
+from Cython.Compiler import Errors
+
 from .analysis.visitor import ModuleVisitor
 from .builders.builder import Builder
 from .config import StubgenPyxConfig
@@ -288,7 +290,18 @@ class StubgenPyx:
                     else:
                         raise
 
-        parse_result = parse_file(pyx_path, context, pxd=False, module_name=module_name)
+        # `pxd=None` lets `parse_file` infer parse mode from the
+        # extension (`path.suffix == ".pxd"`) rather than hardcoding
+        # `pxd=False`: despite the parameter name, `pyx_path` isn't
+        # always a `.pyx` -- an orphan `.pxd` with no companion `.pyx`
+        # (a pxd-only package, or a `.pxd` whose `.pyx` just wasn't
+        # matched by the glob) is also resolved as a top-level
+        # conversion target (see `resolve_glob`'s docstring) and lands
+        # here the same way. Parsing pxd-only syntax -- e.g. a `cpdef`
+        # forward declaration's `arg=*` compile-time-only default
+        # marker -- in `pxd=False` mode rejects it as a real syntax
+        # error, since `=*` isn't valid outside a declaration file.
+        parse_result = parse_file(pyx_path, context, pxd=None, module_name=module_name)
 
         return self._build_module(
             converter,
@@ -715,10 +728,9 @@ class StubgenPyx:
             # error, say) is a different, legitimate failure and
             # re-raised as-is rather than mislabeled as an encoding
             # problem.
-            from Cython.Compiler import Errors as _CythonErrors
 
             cause = e.__cause__ or e.__context__
-            if isinstance(e, _CythonErrors.CompileError) and isinstance(
+            if isinstance(e, Errors.CompileError) and isinstance(
                 cause, UnicodeDecodeError
             ):
                 raise ValueError(  # noqa: TRY004
