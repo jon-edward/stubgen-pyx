@@ -275,7 +275,11 @@ def test_cython_numeric_primitives_deduplicated():
             pass
     """)
     )
-    assert "integral_t = TypeVar('integral_t', int)" in result
+    # A single dedup'd member can't be expressed as a `TypeVar` -- Python's
+    # `TypeVar` requires 0 or >= 2 constraints, and `TypeVar('x', int)`
+    # raises `TypeError` at runtime. It's aliased directly instead.
+    assert "integral_t = int" in result
+    assert "TypeVar" not in result
     assert "def f(x: integral_t, y: integral_t) -> integral_t" in result
     assert "int, int" not in result
 
@@ -313,7 +317,10 @@ def test_fused_unicode_and_str_deduplicated():
             pass
     """)
     )
-    assert "string_t = TypeVar('string_t', str)" in result
+    # Single dedup'd member -> plain alias, not an invalid single-constraint
+    # `TypeVar` (see the `integral_t` case above).
+    assert "string_t = str" in result
+    assert "TypeVar" not in result
     assert "def f(x: string_t) -> string_t" in result
     assert "str, str" not in result
 
@@ -358,6 +365,56 @@ def test_fused_typed_memoryview_single_usage_renders_ndarray_union():
     assert "x: NDArray[numpy.intc] | NDArray[numpy.double]" in result
     assert "def f(x: int" not in result
     assert "def f(x: double" not in result
+
+
+def test_fused_typed_memoryview_keeps_both_widths_despite_scalar_collapse():
+    """``float``/``double`` collapse to one Python scalar but must keep both numpy dtypes.
+
+    Regression test: Python can't distinguish C ``float`` from ``double``
+    (both render as the scalar ``float``), matching built-in
+    ``cython.floating``. A memoryview typed with such a fused type must
+    still distinguish ``NDArray[numpy.single]`` from ``NDArray[numpy.double]``
+    -- losing one because its *scalar* rendering collapsed with the other's
+    would silently narrow the type of half the acceptable inputs.
+    """
+    result = _stubgen().convert_str(
+        _cy("""
+        ctypedef fused floaty:
+            float
+            double
+
+        def f(floaty[:] x):
+            pass
+    """)
+    )
+    assert "x: NDArray[numpy.single] | NDArray[numpy.double]" in result
+
+
+def test_builtin_cython_floating_produces_valid_alias():
+    """``cython.floating`` (built-in, cimported rather than locally declared) hits the
+
+    same ``float``/``double`` scalar-collapse as a user-declared fused type,
+    but through the ``scope.entries`` fallback path (it's injected directly
+    into Cython's builtin scope, not parsed from a ``ctypedef fused``
+    statement) -- this is the exact real-world pattern used throughout
+    e.g. scikit-learn's Cython extensions.
+    """
+    result = _stubgen().convert_str(
+        _cy("""
+        from cython cimport floating
+
+        cpdef floating fmax(floating x, floating y):
+            if x > y:
+                return x
+            return y
+    """)
+    )
+    assert "floating = float" in result
+    assert "TypeVar" not in result
+    assert "def fmax(x: floating, y: floating) -> floating" in result
+    # Must be valid, executable Python -- a single-constraint `TypeVar`
+    # would raise `TypeError` here.
+    exec(compile(result, "<test>", "exec"), {})  # noqa: S102
 
 
 def test_fused_typed_memoryview_does_not_affect_sibling_scalar_usage():
