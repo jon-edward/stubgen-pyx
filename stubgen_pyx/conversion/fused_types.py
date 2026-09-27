@@ -7,6 +7,7 @@ a signature to their final Python form (a ``TypeVar``, a ``|``-union, or
 from __future__ import annotations
 
 from Cython.Compiler import Nodes
+from Cython.Compiler.PyrexTypes import FusedType
 
 from ..analysis.visitor import ScopeVisitor
 from ..models.pyi_elements import PyiAssignment, PyiFusedType, PyiSignature
@@ -50,17 +51,17 @@ def convert_fused_types(visitor: ScopeVisitor) -> dict[str, PyiFusedType]:
         name = node.name
         type_nodes = node.types
         raw_names = [_type_name(type_node) for type_node in type_nodes]
-        concrete_by_raw = {
-            _CYTHON_TRANSLATIONS.get(raw_name, raw_name): raw_name
+        members = [
+            (
+                _CYTHON_TRANSLATIONS.get(raw_name, raw_name),
+                _CYTHON_TO_NUMPY_SCALAR.get(raw_name),
+            )
             for raw_name in raw_names
             if raw_name is not None
-        }
-        concrete_types = tuple(concrete_by_raw.keys())
-        numpy_scalars = tuple(
-            _CYTHON_TO_NUMPY_SCALAR.get(raw_name)
-            for raw_name in concrete_by_raw.values()
-        )
-        fused_types[name] = PyiFusedType(name, concrete_types, numpy_scalars)
+        ]
+        fused_type = _build_fused_type(name, members)
+        if fused_type is not None:
+            fused_types[name] = fused_type
 
     static_fused_members = (
         getattr(visitor.node, "_stubgen_static_fused_members", None) or {}
@@ -68,45 +69,96 @@ def convert_fused_types(visitor: ScopeVisitor) -> dict[str, PyiFusedType]:
     for name, member_names in static_fused_members.items():
         if name in fused_types:
             continue
-        concrete_by_raw = {
-            _CYTHON_TRANSLATIONS.get(member_name, member_name): member_name
-            for member_name in member_names
-        }
-        concrete_types = tuple(concrete_by_raw.keys())
-        if concrete_types:
-            numpy_scalars = tuple(
-                _CYTHON_TO_NUMPY_SCALAR.get(raw_name)
-                for raw_name in concrete_by_raw.values()
+        members = [
+            (
+                _CYTHON_TRANSLATIONS.get(member_name, member_name),
+                _CYTHON_TO_NUMPY_SCALAR.get(member_name),
             )
-            fused_types[name] = PyiFusedType(name, concrete_types, numpy_scalars)
+            for member_name in member_names
+        ]
+        fused_type = _build_fused_type(name, members)
+        if fused_type is not None:
+            fused_types[name] = fused_type
 
     scope = getattr(visitor.node, "scope", None)
     if scope is not None:
         for name, entry in scope.entries.items():
             if name in fused_types:
                 continue
-            if not (entry.is_type and getattr(entry.type, "is_fused", False)):
+            # `entry.type.is_fused` is true for the fused *type
+            # definition* itself (`FusedType`, with a `.types` member
+            # list -- what this loop wants), but also, generically, for
+            # any *other* type that merely contains a fused type as a
+            # subtype (e.g. `CTupleType`, via `PyrexType.is_fused`'s
+            # base-class implementation, which checks subtypes
+            # recursively) -- those don't have `.types` at all
+            # (`CTupleType` has `.components` instead) and would crash
+            # the loop below. Only a real `FusedType` is a `ctypedef
+            # fused` definition to collect here.
+            if not (entry.is_type and isinstance(entry.type, FusedType)):
                 continue
-            concrete_by_member = {}
+            members = []
             for member in entry.type.types:
                 rendered = render_pyrex_type(member)
-                if rendered is not None and rendered not in concrete_by_member:
-                    concrete_by_member[rendered] = member
-            concrete_types = tuple(concrete_by_member.keys())
-            if concrete_types:
-                numpy_scalars = tuple(
-                    _CYTHON_TO_NUMPY_SCALAR.get(getattr(member, "name", None))
-                    for member in concrete_by_member.values()
+                if rendered is None:
+                    continue
+                members.append(
+                    (
+                        rendered,
+                        _CYTHON_TO_NUMPY_SCALAR.get(getattr(member, "name", None)),
+                    )
                 )
-                fused_types[name] = PyiFusedType(name, concrete_types, numpy_scalars)
+            fused_type = _build_fused_type(name, members)
+            if fused_type is not None:
+                fused_types[name] = fused_type
 
     return fused_types
 
 
+def _build_fused_type(
+    name: str, members: list[tuple[str, str | None]]
+) -> PyiFusedType | None:
+    """Build a ``PyiFusedType`` from a fused type's ``(python type, numpy scalar)`` members.
+
+    Distinct C member types commonly render to the *same* Python
+    annotation -- Python has no way to distinguish `float` from `double`,
+    or `short`/`int`/`long` from one another, so e.g. built-in
+    ``cython.floating`` (``float``, ``double``) or a user's own
+    ``ctypedef fused numeric: short; int; long`` both collapse to a
+    single rendered name. ``concrete_types`` is still deduplicated by
+    that rendered name (so the eventual `TypeVar`/union doesn't repeat
+    "float | float"), and `convert_fused_type` special-cases the
+    resulting single-member case, since a `TypeVar` requires 0 or >= 2
+    constraints. `numpy_scalars`, in contrast, is kept one-per-source-
+    member (NOT deduplicated the same way): a fused-typed memoryview
+    (e.g. `floating[:]`) needs to distinguish `NDArray[float32]` from
+    `NDArray[float64]` even though the *scalar* Python annotation for
+    both is just `float`.
+    """
+    if not members:
+        return None
+    concrete_types = tuple(dict.fromkeys(rendered for rendered, _ in members))
+    numpy_scalars = tuple(scalar for _, scalar in members)
+    return PyiFusedType(name, concrete_types, numpy_scalars)
+
+
 def convert_fused_type(fused_type: PyiFusedType) -> PyiAssignment:
-    concrete_types = ", ".join(fused_type.concrete_types)
+    concrete_types = fused_type.concrete_types
+    if len(concrete_types) == 1:
+        # A `TypeVar` requires 0 or >= 2 constraints -- `TypeVar("x", float)`
+        # raises `TypeError` at runtime. That's exactly what's left once a
+        # fused type's distinct C members (e.g. `cython.floating`'s `float`
+        # and `double`) all render to the same Python annotation (see
+        # `_build_fused_type`). There's nothing left to genuinely vary over
+        # at the Python level in that case, so alias the name directly to
+        # the one type instead of emitting an invalid single-constraint
+        # `TypeVar`.
+        return PyiAssignment(
+            f"{fused_type.name} = {concrete_types[0]}", name=fused_type.name
+        )
+    joined = ", ".join(concrete_types)
     return PyiAssignment(
-        f'{fused_type.name} = typing.TypeVar("{fused_type.name}", {concrete_types})',
+        f'{fused_type.name} = typing.TypeVar("{fused_type.name}", {joined})',
         name=fused_type.name,
     )
 
