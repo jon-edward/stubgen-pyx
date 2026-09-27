@@ -34,6 +34,7 @@ from __future__ import annotations
 
 from typing import Callable, Literal
 
+from Cython.Compiler import Errors
 from Cython.Compiler.Main import Context
 from Cython.Compiler.ParseTreeTransforms import (
     AnalyseDeclarationsTransform,
@@ -45,6 +46,9 @@ from Cython.Compiler.ParseTreeTransforms import (
     PxdPostParse,
     WithTransform,
 )
+from Cython.Compiler.Pipeline import run_pipeline
+
+from .context import _ensure_errors_thread_initialized
 
 PipelineMode = Literal["pyx", "pxd"]
 
@@ -135,10 +139,6 @@ def run_stub_pipeline(
     error-accumulation couldn't route around, as opposed to an ordinary
     recorded ``CompileError``.
     """
-    from Cython.Compiler import Errors
-    from Cython.Compiler.Pipeline import run_pipeline
-
-    from .context import _ensure_errors_thread_initialized
 
     _ensure_errors_thread_initialized()
     held = Errors.hold_errors()
