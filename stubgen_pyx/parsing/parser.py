@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from io import StringIO
 from pathlib import Path
 
-from Cython.Compiler import Options, Parsing
+from Cython.Compiler import Errors, Options, Parsing
 from Cython.Compiler.ModuleNode import ModuleNode
 from Cython.Compiler.Scanning import (
     FileSourceDescriptor,
@@ -32,6 +32,7 @@ from Cython.Compiler.Scanning import (
     StringSourceDescriptor,
 )
 
+from ..conversion.type_parsing import capture_static_types
 from .comments import CommentIndex, extract_comments
 from .context import StubgenContext, find_root_package_dir
 from .pipeline import run_stub_pipeline
@@ -72,8 +73,6 @@ def _check_include_cycles(
         text = resolved.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return
-
-    from Cython.Compiler import Errors
 
     held = Errors.hold_errors()
     try:
@@ -205,11 +204,6 @@ def parse_file(
     tree.scope = scope
     tree.is_pxd = pxd
 
-    # Snapshot structural type info before the pipeline can clear it --
-    # see `capture_static_types`'s docstring for why this has to happen
-    # here, before `run_stub_pipeline`, not after.
-    from ..conversion.type_parsing import capture_static_types
-
     capture_static_types(tree)
 
     result = run_stub_pipeline(context, "pxd" if pxd else "pyx", tree)
@@ -223,7 +217,7 @@ def parse_file(
         scope=scope,
         context=context,
         comments=comments,
-        diagnostics=result.diagnostics,
+        diagnostics=result.diagnostics + context._diagnostics,
     )
 
 
@@ -249,8 +243,6 @@ def parse_str(
     """
     module_name = module_name or _DEFAULT_MODULE_NAME
     context = context or StubgenContext()
-
-    from Cython.Compiler import Errors
 
     held = Errors.hold_errors()
     try:
@@ -291,8 +283,6 @@ def parse_str(
     # Snapshot structural type info before the pipeline can clear it --
     # see `capture_static_types`'s docstring for why this has to happen
     # here, before `run_stub_pipeline`, not after.
-    from ..conversion.type_parsing import capture_static_types
-
     capture_static_types(tree)
 
     result = run_stub_pipeline(context, "pxd" if pxd else "pyx", tree)
