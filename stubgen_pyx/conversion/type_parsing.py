@@ -612,7 +612,9 @@ def _capture_annotation(node, enclosing) -> None:
         annotations = getattr(enclosing, "_stubgen_static_annotations", None)
         if annotations is None:
             annotations = enclosing._stubgen_static_annotations = []
-        annotations.append((node.expr.name, unparse_expr(node.expr.annotation.expr)))
+        annotations.append(
+            (node.expr.name, unparse_expr(node.expr.annotation.expr), node.pos[1])
+        )
 
 
 def _capture_fused_members(node, enclosing) -> None:
