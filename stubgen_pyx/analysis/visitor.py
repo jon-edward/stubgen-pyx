@@ -140,6 +140,10 @@ class ScopeVisitor(TreeVisitor):
     cdef_variables: list[Nodes.CVarDefNode | Nodes.PropertyNode] = field(
         default_factory=list, init=False
     )
+    property_getters: list[Nodes.PropertyNode] = field(default_factory=list, init=False)
+    """Get-only, source-level ``@property`` methods -- kept as real
+    properties (see ``visit_PropertyNode``) rather than flattened into a
+    plain attribute annotation."""
     cdef_structs_or_unions: list[Nodes.CStructOrUnionDefNode] = field(
         default_factory=list, init=False
     )
@@ -418,16 +422,35 @@ class ScopeVisitor(TreeVisitor):
 
     def visit_PropertyNode(self, node: Nodes.PropertyNode):
         """Collect the properties `AnalyseDeclarationsTransform` synthesizes
-        for ``cdef public``/``cdef readonly`` extension-type attributes.
+        for ``cdef public``/``cdef readonly`` extension-type attributes --
+        and, identically shaped, a source-level ``@property``-decorated
+        ``def`` method too (see `type_parsing.get_cdef_variables`).
 
-        Declaration analysis replaces the original `CVarDefNode` for such
-        an attribute with a `PropertyNode` (`__get__`/`__set__` methods) --
-        `visit_CVarDefNode` above never sees these anymore. Appended to
-        the same `cdef_variables` list; `type_parsing.get_cdef_variables`
-        dispatches on the node type when converting.
+        A get-only, real ``@property`` (the inner ``__get__`` `DefNode`
+        still has a (possibly emptied) `decorators` list -- `None` only
+        for the synthesized getter Cython adds for `cdef public`/
+        `readonly`) is routed to `property_getters` instead of
+        `cdef_variables`, so it renders as an actual `@property` method
+        with its docstring intact rather than a bare `name: type`
+        annotation that would misrepresent it as writable and drop the
+        docstring. Anything with a setter -- a real read/write property,
+        or the synthesized pair for `cdef public` -- still flattens to a
+        plain attribute: indistinguishable from one at the Python level,
+        and the previous, simpler rendering.
         """
         if self.in_class:
-            self.cdef_variables.append(node)
+            stats = getattr(node.body, "stats", None) or ()
+            getter = next(
+                (s for s in stats if getattr(s, "name", None) == "__get__"), None
+            )
+            has_setter = any(getattr(s, "name", None) == "__set__" for s in stats)
+            is_real_property = (
+                getter is not None and getattr(getter, "decorators", None) is not None
+            )
+            if is_real_property and not has_setter:
+                self.property_getters.append(node)
+            else:
+                self.cdef_variables.append(node)
         return node
 
     def visit_CStructOrUnionDefNode(self, node: Nodes.CStructOrUnionDefNode):
