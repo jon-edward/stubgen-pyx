@@ -16,6 +16,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from Cython import Utils as CythonUtils
+from Cython.Compiler import Errors
 from Cython.Compiler.Main import Context
 from Cython.Compiler.Options import CompilationOptions, default_options
 
@@ -50,8 +51,6 @@ def _ensure_errors_thread_initialized() -> None:
     reset error-listing state a host application may have set up for its
     own, unrelated use of Cython in the same process.
     """
-    from Cython.Compiler import Errors
-
     if not hasattr(Errors.threadlocal, "cython_errors_count"):
         Errors.init_thread()
 
@@ -64,6 +63,8 @@ class StubgenContext(Context):
     conversion run is what makes cross-file ``cimport`` resolution work.
     """
 
+    _diagnostics: list[Exception]
+
     def __init__(
         self,
         include_directories: list[str] | None = None,
@@ -71,6 +72,7 @@ class StubgenContext(Context):
         cpp: bool = True,
     ) -> None:
         _ensure_errors_thread_initialized()
+        self._diagnostics = []
         super().__init__(
             list(include_directories or []),
             dict(compiler_directives or _DEFAULT_COMPILER_DIRECTIVES),
@@ -137,6 +139,16 @@ class StubgenContext(Context):
             kwargs["source_file_path"] = None
             return super().search_include_directories(*args, **kwargs)
 
+    def parse(self, *args, **kwargs):
+        self._diagnostics = []
+        held = Errors.hold_errors()
+        try:
+            result = super().parse(*args, **kwargs)
+        finally:
+            Errors.release_errors(ignore=True)
+        self._diagnostics.extend(held)
+        return result
+
 
 def find_root_package_dir(path: Path | str) -> Path:
     """The topmost ancestor directory of `path` that's still part of the same package tree.
@@ -186,6 +198,27 @@ def context_for_paths(
         root = find_root_package_dir(Path(path).resolve())
         if str(root) not in directories:
             directories.append(str(root))
+        # `find_root_package_dir` stops climbing at the first ancestor
+        # with no `__init__.{py,pyx,pxd}` -- correct for an ordinary
+        # package tree, but one level too shallow whenever the *true*
+        # project root is itself a PEP 420 implicit namespace package
+        # (a directory with no `__init__` of its own that still holds
+        # further packages, e.g. `cuda/` in NVIDIA/cuda-python's
+        # `cuda_core`/`cuda_bindings` split: `cuda/core/` has an
+        # `__init__.pxd`, but `cuda/` itself doesn't). In that case
+        # `root` ends up naming the namespace-package directory itself
+        # (`.../cuda`), one level short of where a `cimport
+        # cuda.core.x` needs to search from (`.../cuda`'s parent, so
+        # that `cuda/core/x.pxd` resolves beneath it) -- silently
+        # failing to resolve any `cimport` that crosses into a sibling
+        # subpackage. Also adding the parent here costs nothing (it's
+        # just one more directory Cython's search tries and moves on
+        # from if nothing matches) and fixes exactly that case without
+        # having to reliably detect "namespace package" vs. "unrelated
+        # containing directory" up front.
+        parent = root.parent
+        if parent != root and str(parent) not in directories:
+            directories.append(str(parent))
     for extra in extra_include_dirs or ():
         extra = str(Path(extra))
         if extra not in directories:
