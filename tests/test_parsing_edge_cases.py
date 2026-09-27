@@ -271,8 +271,8 @@ cdef class UsesShared:
         context = context_for_paths([pkg_dir / "b.pyx"])
         # The namespace-package dir itself (old behavior) plus its
         # parent (the fix) must both be on the search path.
-        assert str(temp_dir / "ns") in context.include_directories
-        assert str(temp_dir) in context.include_directories
+        assert str((temp_dir / "ns").resolve()) in context.include_directories
+        assert str(temp_dir.resolve()) in context.include_directories
 
     def test_cross_subpackage_cimport_resolves(self, temp_dir):
         """End-to-end: a same-package cimport across a namespace-package
