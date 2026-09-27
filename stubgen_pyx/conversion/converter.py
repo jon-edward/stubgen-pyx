@@ -204,15 +204,32 @@ class Converter:
         visitor: ScopeVisitor,
         handled_names: set[str],
         ctypedef_aliases: dict[str, str] | None,
-    ) -> list[PyiAssignment]:
+    ) -> list[tuple[int, PyiAssignment]]:
+        """Recover bare (no-value) annotated attributes, each paired with
+        its original source line.
+
+        `AnalyseDeclarationsTransform` folds every bare-annotated
+        attribute in a scope (`x: int`, no `= ...`) into a single
+        synthetic `__annotations__ = {...}` dict, destroying both the
+        individual declarations *and* their interleaving with whatever
+        ordinary, value-having assignments (`y: int = 0`) sit alongside
+        them in the same scope. The line number recovered here (from the
+        pre-pipeline snapshot -- see `type_parsing.capture_static_types`)
+        is what lets `convert_scope` re-interleave the two by original
+        source position instead of dumping every recovered attribute
+        after every real one, which silently reorders a dataclass's
+        fields relative to its own source and can turn a valid field
+        order into one `dataclasses`/mypy rejects (a default-less field
+        put after one that has a default).
+        """
         assignments = []
-        for name, type_str in (
+        for name, type_str, line in (
             getattr(visitor.node, "_stubgen_static_annotations", ()) or ()
         ):
             if name in handled_names:
                 continue
             type_str = _substitute_ctypedef_aliases(type_str, ctypedef_aliases or {})
-            assignments.append(PyiAssignment(f"{name}: {type_str}", name=name))
+            assignments.append((line, PyiAssignment(f"{name}: {type_str}", name=name)))
             handled_names.add(name)
         return assignments
 
@@ -303,14 +320,24 @@ class Converter:
         extra_structs: list[PyiClass] = []
         extra_functions: list[PyiFunction] = []
 
-        extra_assignments.extend(
-            self._recover_static_annotations(visitor, handled_names, ctypedef_aliases)
-        )
-
         for name, entry in scope.entries.items():
             if name in handled_names or (name.startswith("__") and name.endswith("__")):
                 continue
             if name.startswith("__pyx_"):
+                continue
+            if not name.isidentifier():
+                # Not a name Python code could ever reference, so not
+                # worth a declaration -- and, unlike `__pyx_`-prefixed
+                # internal names, not reliably prefix-matchable. Seen in
+                # practice: Cython auto-generates a by-value return
+                # struct for an unspecialized fused `ctypedef fused`
+                # ctuple (e.g. `(floating, floating)` where `floating`
+                # is never resolved to a concrete type), named from
+                # `PyrexTypes.c_tuple_type`'s own internal placeholder
+                # cname (`"<dummy fused ctuple ...>"`, by its own
+                # comment "should never end up in code") plus a
+                # `_struct` suffix -- emitting it verbatim as a class
+                # name produced invalid Python syntax.
                 continue
             if entry.scope is not scope:
                 continue
@@ -361,6 +388,56 @@ class Converter:
                 handled_names.add(name)
         return assignments, handled_names
 
+    @staticmethod
+    def _patch_dataclass_init_annotations(
+        visitor: ScopeVisitor,
+        source_code: str,
+        py_funcs: list[tuple[int, PyiFunction]],
+    ) -> None:
+        """Backfill a missing parameter annotation on a compiler-
+        synthesized dataclass ``__init__``, for a parameter that
+        corresponds to a ``cdef public``/``cdef readonly`` C attribute.
+
+        Cython's own ``AnalyseDeclarationsTransform`` builds this
+        ``__init__`` (real `dataclasses`-module support for extension
+        types, not anything stubgen-pyx generates itself), correctly
+        ordered and everything -- but each synthesized parameter's own
+        ``annotation`` is only ever set from a Python-style ``x: type``
+        class-body annotation. A field declared instead via ``cdef
+        public``/``cdef readonly`` (C-style, no ``: type`` syntax to
+        carry over) leaves that parameter with no annotation and no
+        resolvable ``base_type`` node either, so `_to_argument` renders
+        it bare (``z`` instead of ``z: float``) -- silently wrong, and
+        for any field after it that still has a default, enough on its
+        own to produce a `def __init__(...)` that fails to parse as
+        Python at all (a default-less bare name follows a defaulted
+        one). The same type recovery `_convert_cdef_assignments` already
+        relies on for these attributes when they're rendered as a plain
+        ``name: type`` line (`type_parsing.capture_static_types`'
+        pre-pipeline `_stubgen_static_property_types` snapshot) resolves
+        it here too.
+        """
+        if not visitor.in_class:
+            return
+        static_property_types = (
+            getattr(visitor.node, "_stubgen_static_property_types", None) or {}
+        )
+        if not static_property_types:
+            return
+        if not any(
+            "dataclass" in decorator
+            for decorator in get_decorators(source_code, visitor.node)
+        ):
+            return
+        for _, py_func in py_funcs:
+            if py_func.name != "__init__":
+                continue
+            for argument in py_func.signature.args:
+                if argument.annotation is None:
+                    fallback = static_property_types.get(argument.name)
+                    if fallback is not None:
+                        argument.annotation = fallback
+
     def _convert_scope_members(
         self,
         visitor: ScopeVisitor,
@@ -401,6 +478,21 @@ class Converter:
             )
             for node in visitor.py_functions
         ]
+        property_getters = [
+            (
+                node.pos[1],
+                self.convert_property_getter(
+                    node,
+                    comments,
+                    include_docstrings,
+                    fused_types,
+                    ctypedef_aliases=ctypedef_aliases,
+                ),
+            )
+            for node in visitor.property_getters
+        ]
+
+        self._patch_dataclass_init_annotations(visitor, source_code, py_funcs)
 
         contains_init = any(py_func.name == "__init__" for _, py_func in py_funcs)
         for idx, (_, py_func) in enumerate(py_funcs):
@@ -412,7 +504,9 @@ class Converter:
 
         functions = [
             function
-            for _, function in sorted(cdef_funcs + py_funcs, key=lambda item: item[0])
+            for _, function in sorted(
+                cdef_funcs + py_funcs + property_getters, key=lambda item: item[0]
+            )
         ]
         structs_or_enums = [
             convert_struct_or_union(node) for node in visitor.cdef_structs_or_unions
@@ -682,6 +776,37 @@ class Converter:
             visitor, functions, cdef_handled_names
         )
 
+        # Recovered here, before `_convert_declared_entries`, so its
+        # `handled_names.add(name)` calls (mutating the same set) are
+        # visible to that call's `scope.entries` walk and it doesn't
+        # also emit a duplicate fallback entry for the same name.
+        recovered_annotations = self._recover_static_annotations(
+            visitor, handled_names, ctypedef_aliases
+        )
+        # Merged into `conv_assignments_with_source` by original source
+        # line (see `_recover_static_annotations`'s docstring) rather
+        # than appended separately after pruning: a bare `x: int`
+        # attribute and an ordinary `y: int = 0` one in the same class
+        # are two arbitrarily-interleaved buckets by the time they reach
+        # here, and rendering them bucket-by-bucket instead of by
+        # source order can silently reorder a dataclass's fields --
+        # turning a source order `dataclasses`/mypy accepts into one
+        # they reject (a default-less field placed after a defaulted
+        # one). `raw_node` is `None` for a recovered annotation (no
+        # surviving AST node to carry) -- fine, since the only thing
+        # `_prune_scope_assignments` does with it is a `CTypeDefNode`
+        # isinstance check, which is trivially `False` for `None` too.
+        positioned_assignments = [
+            (raw_node.pos[1], raw_node, converted)
+            for raw_node, converted in conv_assignments_with_source
+        ] + [(line, None, converted) for line, converted in recovered_annotations]
+        conv_assignments_with_source = [
+            (raw_node, converted)
+            for _, raw_node, converted in sorted(
+                positioned_assignments, key=lambda item: item[0]
+            )
+        ]
+
         extra_assignments, extra_enums, extra_structs, extra_functions = (
             self._convert_declared_entries(visitor, handled_names, ctypedef_aliases)
         )
@@ -824,6 +949,52 @@ class Converter:
             is_async=node.is_async_def,
             doc=doc if include_docstrings else None,
             decorators=get_decorators(source_code, node),
+            signature=signature,
+            type_comment=raw_fallback,
+        )
+
+    def convert_property_getter(
+        self,
+        node: Nodes.PropertyNode,
+        comments: CommentIndex | None = None,
+        include_docstrings: bool = True,
+        fused_types: dict[str, PyiFusedType] | None = None,
+        ctypedef_aliases: dict[str, str] | None = None,
+    ) -> PyiFunction:
+        """Convert a get-only, real ``@property`` to a ``@property``-decorated
+        `PyiFunction` (see `ScopeVisitor.visit_PropertyNode`).
+
+        Built from the property's own `__get__` `DefNode` rather than
+        `convert_py_func`: its name is always the synthetic `"__get__"`
+        (the real, user-given name -- ``x`` for ``def x(self): ...`` --
+        lives on the enclosing `PropertyNode` instead), and its
+        `decorators` never carries the original `@property` (consumed by
+        the compiler when it built this node) -- re-added explicitly here.
+        """
+        comments = comments if comments is not None else CommentIndex([])
+        getter = next(
+            (s for s in node.body.stats if getattr(s, "name", None) == "__get__"),
+            None,
+        )
+        doc = docstring_to_string(node.doc) if node.doc else None
+        signature = _resolve_fused_signature(
+            _restore_fused_memoryview_annotations(
+                get_signature(getter), getter, fused_types or {}
+            ),
+            fused_types or {},
+        )
+        raw_fallback = apply_type_comments(
+            signature,
+            getter,
+            getter.args,
+            comments,  # type: ignore
+        )
+        apply_ctypedef_aliases(signature, ctypedef_aliases)
+        return PyiFunction(
+            node.name,
+            is_async=False,
+            doc=doc if include_docstrings else None,
+            decorators=["@property"],
             signature=signature,
             type_comment=raw_fallback,
         )
