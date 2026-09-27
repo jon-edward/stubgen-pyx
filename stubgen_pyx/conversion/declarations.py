@@ -185,7 +185,11 @@ def convert_assignment(
     if in_class and _is_unhashable_hash_assignment(node.body[0]):
         out_assignment_str = "__hash__ = None  # type: ignore[assignment]"
 
-    return PyiAssignment(out_assignment_str, name=_assignment_target_name(node.body[0]))
+    name = _assignment_target_name(node.body[0])
+    if name is not None and name.startswith("__pyx_"):
+        return None
+
+    return PyiAssignment(out_assignment_str, name=name)
 
 
 def convert_enum(node: Nodes.CEnumDefNode) -> PyiEnum | PyiAssignment:
