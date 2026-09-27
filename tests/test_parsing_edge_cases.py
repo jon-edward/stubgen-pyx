@@ -8,8 +8,17 @@ from pathlib import Path
 import pytest
 from Cython.Compiler.Errors import CompileError
 
-from stubgen_pyx.parsing.context import StubgenContext
+from stubgen_pyx.config import StubgenPyxConfig
+from stubgen_pyx.parsing.context import StubgenContext, context_for_paths
 from stubgen_pyx.parsing.parser import parse_file
+from stubgen_pyx.stubgen import StubgenPyx
+
+
+@pytest.fixture
+def temp_dir():
+    """Create a temporary directory for test files."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        yield Path(tmpdir)
 
 
 class TestParsingEdgeCases:
@@ -203,3 +212,80 @@ class Test:
 
             result = parse_file(pyx_file, StubgenContext())
             assert result.source == code
+
+
+class TestNamespacePackageRootDetection:
+    """`context_for_paths` must widen its search past a PEP 420 implicit
+    namespace-package directory (no `__init__` of its own) sitting above
+    the real, `__init__`-bearing package root.
+
+    Regression test found converting NVIDIA/cuda-python's `cuda_core`
+    package: its layout is `cuda/core/...`, where `cuda/` has no
+    `__init__` file (a namespace package shared with the separately
+    installed `cuda_bindings` distribution) but `cuda/core/` does.
+    `Cython.Utils.find_root_package_dir` (which `context_for_paths`
+    uses to auto-derive each file's include search root) stops
+    climbing at the first ancestor with no `__init__`, so it named
+    `.../cuda` as the root -- one level too shallow for a `cimport
+    cuda.core.sibling_module` (which needs `.../cuda`'s *parent*
+    searched, so `cuda/core/sibling_module.pxd` resolves beneath it)
+    to succeed. A same-package cimport crossing into a sibling
+    subpackage this way silently failed to resolve, and anything
+    referencing the unresolved type was dropped from the generated
+    stub rather than degraded.
+
+    Fixed in `parsing/context.py::context_for_paths`: also add each
+    root's parent directory to the search path.
+    """
+
+    def _make_namespace_package_layout(self, temp_dir: Path) -> Path:
+        """`<temp_dir>/ns/pkg/{__init__.pxd,a.pxd,a.pyx,b.pyx}` -- `ns`
+        has no `__init__` (the namespace package), `pkg` does (the
+        real, `__init__`-bearing package underneath it).
+        """
+        pkg_dir = temp_dir / "ns" / "pkg"
+        pkg_dir.mkdir(parents=True)
+        (pkg_dir / "__init__.pxd").write_text("")
+        (pkg_dir / "a.pxd").write_text("""
+cdef class Shared:
+    cdef int value
+""")
+        (pkg_dir / "a.pyx").write_text("""
+cdef class Shared:
+    def __init__(self, value: int):
+        self.value = value
+""")
+        (pkg_dir / "b.pyx").write_text("""
+from ns.pkg.a cimport Shared
+
+cdef class UsesShared:
+    cdef Shared shared
+
+    def __init__(self, shared: Shared):
+        self.shared = shared
+""")
+        return pkg_dir
+
+    def test_context_for_paths_adds_namespace_parent(self, temp_dir):
+        pkg_dir = self._make_namespace_package_layout(temp_dir)
+        context = context_for_paths([pkg_dir / "b.pyx"])
+        # The namespace-package dir itself (old behavior) plus its
+        # parent (the fix) must both be on the search path.
+        assert str(temp_dir / "ns") in context.include_directories
+        assert str(temp_dir) in context.include_directories
+
+    def test_cross_subpackage_cimport_resolves(self, temp_dir):
+        """End-to-end: a same-package cimport across a namespace-package
+        boundary must actually resolve, not just widen the search list.
+        """
+        pkg_dir = self._make_namespace_package_layout(temp_dir)
+
+        stubgen = StubgenPyx(StubgenPyxConfig(include_private=True))
+        results = stubgen.convert_glob(str(pkg_dir / "b.pyx"))
+        assert all(r.success for r in results), [
+            r.error for r in results if not r.success
+        ]
+
+        result = (pkg_dir / "b.pyi").read_text()
+        assert "class UsesShared" in result
+        assert "shared: Shared" in result or "Shared" in result
