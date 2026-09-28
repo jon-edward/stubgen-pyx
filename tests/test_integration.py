@@ -1664,7 +1664,10 @@ cdef class Foo:
     def test_cdef_public_readonly_attributes_unaffected(self, temp_dir):
         """Baseline: the original use case this code path was built for
         -- a real C-typed `cdef public`/`cdef readonly` attribute --
-        must keep resolving from its `Entry` type exactly as before."""
+        must keep resolving from its `Entry` type exactly as before
+        (`cdef readonly` also gets wrapped in `Final`, per
+        `TestReadonlyCdefAttributes` -- orthogonal to type resolution,
+        which is what this test guards)."""
         pyx_file = temp_dir / "test.pyx"
         pyx_file.write_text("""
 cdef class Foo:
@@ -1673,7 +1676,61 @@ cdef class Foo:
 """)
         result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
         assert "x: int" in result
-        assert "y: float" in result
+        assert "y: Final[float]" in result
+
+    def test_get_set_property_flattened_to_bare_assignment_keeps_docstring(
+        self, temp_dir
+    ):
+        """A get+set property is indistinguishable from a plain
+        attribute at the Python level, so `visit_PropertyNode` flattens
+        it to `name: type` (see this class's own docstring) -- but its
+        getter's docstring must survive that flattening rather than
+        being silently dropped."""
+        pyx_file = temp_dir / "test.pyx"
+        pyx_file.write_text('''
+cdef class Widget:
+    @property
+    def height(self) -> int:
+        """The widget's height in pixels."""
+        return self._height
+
+    @height.setter
+    def height(self, value: int) -> None:
+        self._height = value
+''')
+        result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+        assert (
+            'class Widget:\n    height: int\n    "The widget\'s height in pixels."\n'
+        ) in result
+        assert "@property" not in result
+
+    def test_get_only_property_docstring_still_only_on_the_method(self, temp_dir):
+        """Companion to the get+set case above: a get-only property is
+        *not* flattened (see `test_getter_only_property_keeps_docstring`),
+        so its docstring must appear exactly once, attached to the
+        `@property` method, never duplicated onto a bare assignment."""
+        pyx_file = temp_dir / "test.pyx"
+        pyx_file.write_text('''
+cdef class Foo:
+    @property
+    def size(self) -> int:
+        """The size, in bytes."""
+        return 5
+''')
+        result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+        assert result.count("The size, in bytes.") == 1
+
+    def test_cdef_public_attribute_has_no_docstring(self, temp_dir):
+        """A raw `cdef public`/`cdef readonly` C attribute has no
+        source-level docstring to preserve -- Cython has no syntax for
+        one -- so it must render as a plain, undecorated assignment."""
+        pyx_file = temp_dir / "test.pyx"
+        pyx_file.write_text("""
+cdef class Foo:
+    cdef public int x
+""")
+        result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+        assert "class Foo:\n    x: int\n" in result
 
 
 class TestIncludeStatementInCompanionPxd:
@@ -1816,3 +1873,412 @@ cdef class Widget:
         result = (temp_dir / "mod.pyi").read_text()
         assert "class Widget" in result
         assert "width: int" in result
+
+
+class TestReadonlyCdefAttributes:
+    """``cdef readonly`` has no Python-level setter -- assigning to it
+    from outside the extension type raises `AttributeError` at runtime.
+    The rendered attribute is wrapped in `typing.Final` so a type
+    checker rejects that assignment statically too, instead of only a
+    real interpreter run catching it. ``cdef public`` (a real
+    read/write attribute) and a real read/write ``@property`` are
+    unaffected -- assignment to either is genuinely allowed.
+    """
+
+    def test_readonly_attribute_is_wrapped_in_final(self, temp_dir):
+        pyx_file = temp_dir / "test.pyx"
+        pyx_file.write_text("""
+cdef class Foo:
+    cdef readonly int y
+""")
+        result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+        assert "from typing import Final" in result
+        assert "class Foo:\n    y: Final[int]\n" in result
+
+    def test_public_attribute_is_not_wrapped(self, temp_dir):
+        pyx_file = temp_dir / "test.pyx"
+        pyx_file.write_text("""
+cdef class Foo:
+    cdef public int x
+""")
+        result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+        assert "class Foo:\n    x: int\n" in result
+        assert "Final" not in result
+
+    def test_real_read_write_property_is_not_wrapped(self, temp_dir):
+        pyx_file = temp_dir / "test.pyx"
+        pyx_file.write_text("""
+cdef class Foo:
+    @property
+    def z(self) -> int:
+        return 5
+
+    @z.setter
+    def z(self, value: int) -> None:
+        pass
+""")
+        result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+        assert "class Foo:\n    z: int\n" in result
+        assert "Final" not in result
+
+    def test_public_and_readonly_together_are_each_wrapped_correctly(self, temp_dir):
+        pyx_file = temp_dir / "test.pyx"
+        pyx_file.write_text("""
+cdef class Foo:
+    cdef public int x
+    cdef readonly int y
+""")
+        result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+        assert "class Foo:\n    x: int\n    y: Final[int]\n" in result
+
+    def test_readonly_dataclass_field_init_param_is_not_wrapped(self, temp_dir):
+        """The rendered attribute is `Final`, but the synthesized
+        `__init__` parameter that assigns it must stay a plain type --
+        `def __init__(self, y: Final[int])` is invalid syntax for a
+        parameter annotation."""
+        pyx_file = temp_dir / "test.pyx"
+        pyx_file.write_text("""
+from dataclasses import dataclass
+
+@dataclass
+cdef class Foo:
+    cdef readonly int y
+""")
+        result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+        assert "y: Final[int]" in result
+        assert "def __init__(self, y: int): ..." in result
+
+
+class TestCdefClassDataclass:
+    """A ``cdef class`` decorated with ``@dataclass`` gets a real,
+    correctly-ordered ``__init__``/``__repr__``/``__eq__`` synthesized by
+    Cython's own compiler (`Cython.Compiler.Dataclass`), for *every*
+    C-typed attribute regardless of ``cdef public``/``cdef readonly``/
+    private visibility -- not anything stubgen-pyx generates itself, but
+    something it must render accurately: every parameter typed to match
+    its attribute, no debug noise from the two bookkeeping assignments
+    (``__dataclass_params__``/``__dataclass_fields__``) the compiler adds
+    alongside them, and the decorator itself marked ``init=False`` so a
+    type checker's own dataclass support doesn't try to synthesize a
+    second, independently-derived ``__init__`` from the class-body
+    attribute annotations alone (which, for a private field with no
+    class-body annotation at all, wouldn't even have the same parameters).
+    """
+
+    def test_public_readonly_and_private_fields_all_typed_in_init(self, temp_dir):
+        pyx_file = temp_dir / "test.pyx"
+        pyx_file.write_text("""
+import dataclasses
+
+
+@dataclasses.dataclass
+cdef class Point:
+    cdef public double x
+    cdef readonly double y
+    cdef double z
+
+    def __init__(self, x: float, y: float, z: float):
+        self.x = x
+        self.y = y
+        self.z = z
+""")
+        result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+        assert "def __init__(self, x: float, y: float, z: float): ..." in result
+        assert "Incomplete" not in result
+
+    def test_no_explicit_init_still_gets_fully_typed_synthesized_one(self, temp_dir):
+        """No user-written ``__init__`` at all -- Cython synthesizes one
+        from the ``cdef public``/``cdef readonly`` attributes alone, and
+        it must come out fully typed, not bare names."""
+        pyx_file = temp_dir / "test.pyx"
+        pyx_file.write_text("""
+import dataclasses
+
+
+@dataclasses.dataclass
+cdef class Point:
+    cdef public double x
+    cdef readonly double y
+""")
+        result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+        assert "def __init__(self, x: float, y: float): ..." in result
+
+    def test_python_style_annotated_attribute_with_default_is_typed(self, temp_dir):
+        """A field declared with a Python-style annotation naming a
+        Cython pure-Python-mode type (``x: cython.double = 0.0``) must
+        resolve to its real Python type (``float``) on the synthesized
+        ``__init__`` parameter, not leak the unimportable ``cython.double``
+        annotation through to `_typeshed.Incomplete` once the ``cython``
+        import itself is trimmed as unused."""
+        pyx_file = temp_dir / "test.pyx"
+        pyx_file.write_text("""
+import cython
+import dataclasses
+
+
+@dataclasses.dataclass
+cdef class Point:
+    x: cython.double = 0.0
+    y: cython.double = 1.0
+""")
+        result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+        assert "def __init__(self, x: float=0.0, y: float=1.0): ..." in result
+        assert "Incomplete" not in result
+        assert "cython" not in result
+
+    def test_no_dataclass_bookkeeping_debug_noise(self, temp_dir, caplog):
+        """The compiler's own ``__dataclass_params__``/``__dataclass_fields__``
+        class-body assignments must never reach `unparse_expr`/
+        `convert_assignment` at all -- previously logged an "unknown node
+        type" warning followed by a spurious "could not parse assignment
+        source: '@dataclasses.dataclass'" one (the assignment's own
+        position resolves back to the decorator line once unparsing
+        fails), and produced no visible output either way."""
+        import logging
+
+        pyx_file = temp_dir / "test.pyx"
+        pyx_file.write_text("""
+import dataclasses
+
+
+@dataclasses.dataclass
+cdef class Point:
+    cdef public double x
+""")
+        with caplog.at_level(logging.DEBUG):
+            result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+
+        assert "__dataclass_params__" not in result
+        assert "__dataclass_fields__" not in result
+        assert not any(
+            "Unknown node type encountered" in message for message in caplog.messages
+        )
+        assert not any(
+            "Could not parse assignment source" in message
+            for message in caplog.messages
+        )
+
+    def test_decorator_gets_init_false_added(self, temp_dir):
+        """A bare ``@dataclasses.dataclass`` gets call parens created for
+        it; other keyword arguments on an already-parenthesized call are
+        preserved alongside the new ``init=False``."""
+        pyx_file = temp_dir / "test.pyx"
+        pyx_file.write_text("""
+import dataclasses
+
+
+@dataclasses.dataclass
+cdef class Bare:
+    cdef public double x
+
+
+@dataclasses.dataclass(frozen=True)
+cdef class Frozen:
+    cdef public double x
+""")
+        result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+        assert "@dataclasses.dataclass(init=False)" in result
+        assert "@dataclasses.dataclass(frozen=True, init=False)" in result
+
+    def test_explicit_init_false_is_not_duplicated(self, temp_dir):
+        pyx_file = temp_dir / "test.pyx"
+        pyx_file.write_text("""
+import dataclasses
+
+
+@dataclasses.dataclass(init=False)
+cdef class Point:
+    cdef public double x
+
+    def __init__(self, x):
+        self.x = x
+""")
+        result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+        assert result.count("init=False") == 1
+
+    def test_other_decorators_on_the_class_are_unaffected(self, temp_dir):
+        pyx_file = temp_dir / "test.pyx"
+        pyx_file.write_text("""
+from dataclasses import dataclass
+
+
+def other_decorator(cls):
+    return cls
+
+
+@other_decorator
+@dataclass
+class Multi:
+    x: float
+
+    def __init__(self, x: float):
+        self.x = x
+""")
+        result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+        assert "@other_decorator\n@dataclass(init=False)\nclass Multi" in result
+
+    def test_plain_python_dataclass_without_explicit_init_is_unaffected(self, temp_dir):
+        """No ``cdef class`` and no explicit ``__init__`` -- a real
+        `dataclasses`-module class relies entirely on the standard
+        library's own runtime-generated ``__init__``, which a type
+        checker already infers correctly from the class-body field
+        annotations. Nothing here is Cython-synthesized, so the decorator
+        must be left exactly as written and no ``__init__`` should appear
+        in the stub at all."""
+        pyx_file = temp_dir / "test.pyx"
+        pyx_file.write_text("""
+from dataclasses import dataclass
+
+
+@dataclass
+class Point:
+    x: float
+    y: float = 0.0
+""")
+        result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+        assert "@dataclass\nclass Point" in result
+        assert "init=False" not in result
+        assert "def __init__" not in result
+
+    def test_cdef_public_readonly_without_dataclass_unaffected(self, temp_dir):
+        """Baseline: a plain ``cdef public``/``cdef readonly`` attribute
+        on a class with no ``@dataclass`` decorator at all must keep
+        rendering exactly as before -- this whole feature only ever
+        touches a class that both has the decorator and already has an
+        explicit ``__init__`` in its converted output."""
+        pyx_file = temp_dir / "test.pyx"
+        pyx_file.write_text("""
+cdef class Plain:
+    cdef public double x
+    cdef readonly double y
+    cdef double z
+
+    def __init__(self, x, y, z):
+        self.x = x
+        self.y = y
+        self.z = z
+""")
+        result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+        assert (
+            "class Plain:\n    x: float\n    y: Final[float]\n\n    def __init__"
+            in result
+        )
+        assert "z:" not in result
+        assert "init=False" not in result
+        assert "def __init__(self, x, y, z): ..." in result
+
+    def test_bare_annotated_extension_type_field_keeps_its_class_name(self, temp_dir):
+        """A bare (no-default) Python-style-annotated attribute naming a
+        plain Python class (``pt: Point``, ``Point`` not itself a ``cdef
+        class``) still becomes a real, ``PropertyNode``-wrapped C
+        attribute, exactly like ``cdef public``/``cdef readonly`` -- but
+        it can only ever get a generic ``PyObject*`` slot (only an
+        extension type gets a specifically-typed one), so its own
+        ``Entry.type`` is indistinguishable from a genuinely untyped
+        ``object`` attribute. The class name the source actually wrote
+        must still make it through to both the class-body annotation and
+        the synthesized ``__init__`` parameter, not fall back to the
+        generic ``object``."""
+        pyx_file = temp_dir / "test.pyx"
+        pyx_file.write_text("""
+import dataclasses
+
+
+@dataclasses.dataclass
+class Point:
+    x: float
+
+
+@dataclasses.dataclass
+cdef class PointCdef:
+    x: float
+    pt: Point
+""")
+        result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+        assert "class PointCdef" in result
+        assert "pt: Point" in result
+        assert "def __init__(self, x: float, pt: Point): ..." in result
+        assert "pt: object" not in result
+
+    def test_cdef_public_extension_type_field_still_keeps_its_class_name(
+        self, temp_dir
+    ):
+        """Baseline for the same fixture, using a raw ``cdef public``
+        attribute of a real ``cdef class`` type instead of a bare
+        annotation -- this one has always resolved correctly, since a
+        `cdef class` attribute gets a specifically-typed slot at the
+        `Entry`/`Type` level and needs no static-annotation fallback."""
+        pyx_file = temp_dir / "test.pyx"
+        pyx_file.write_text("""
+import dataclasses
+
+
+@dataclasses.dataclass
+cdef class PointCdef:
+    cdef public double x
+
+
+@dataclasses.dataclass
+cdef class PointCdef2:
+    cdef public PointCdef pt
+""")
+        result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+        assert "pt: PointCdef" in result
+        assert "def __init__(self, pt: PointCdef): ..." in result
+
+    def test_defaulted_union_annotated_field_keeps_its_full_type(self, temp_dir):
+        """The same generic-`object`-`Entry`-type problem as a bare
+        extension-type annotation, but for a *defaulted* attribute whose
+        annotation is a PEP 604 union of a generic and `None`
+        (``count: int | Sequence[int] | None = None``) -- a
+        `SingleAssignmentNode`, not the bare `ExprStatNode`
+        `_capture_annotation` covers, so the source annotation has to
+        reach `_stubgen_static_python_annotations` through
+        `_capture_annotated_assignment_property_type` instead. Also
+        confirms the otherwise-unused `Sequence` import
+        survives once its only use is inside a field's dropped
+        annotation."""
+        pyx_file = temp_dir / "test.pyx"
+        pyx_file.write_text("""
+from collections.abc import Sequence
+from dataclasses import dataclass
+
+
+@dataclass
+cdef class Options:
+    count: int | Sequence[int] | None = None
+    backfill: bool | Sequence[bool] = False
+""")
+        result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+        assert "from collections.abc import Sequence" in result
+        assert "count: int | Sequence[int] | None" in result
+        assert "backfill: bool | Sequence[bool]" in result
+        assert (
+            "def __init__(self, count: int | Sequence[int] | None=None, "
+            "backfill: bool | Sequence[bool]=False): ..."
+        ) in result
+        assert ": object" not in result
+
+    def test_scalar_union_with_none_default_keeps_the_union(self, temp_dir):
+        """A union of a real scalar C type and `None`
+        (``x: float | None = None``) is the sharpest version of this bug:
+        unlike a plain Python class or a generic, `float` alone *does*
+        get a specifically-typed `Entry`/`Type` slot (`PyrexTypes`
+        recognizes the builtin `float` on its own), so the naive object-
+        only fallback never catches this -- `Entry.type` renders as the
+        perfectly valid `float`, just missing the `| None`, and combined
+        with the real default of `None` produces `def __init__(self, x:
+        float=None)`: no type checker accepts an unmarked default of
+        `None` on a non-Optional parameter."""
+        pyx_file = temp_dir / "test.pyx"
+        pyx_file.write_text("""
+from dataclasses import dataclass
+
+
+@dataclass
+cdef class Options:
+    x: float | None = None
+""")
+        result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+        assert "x: float | None" in result
+        assert "def __init__(self, x: float | None=None): ..." in result
