@@ -588,6 +588,64 @@ def _capture_property_type(node, enclosing) -> None:
             property_types[decl_name] = type_str
 
 
+def _set_static_python_annotation(enclosing, name: str, type_str: str) -> None:
+    annotations = getattr(enclosing, "_stubgen_static_python_annotations", None)
+    if annotations is None:
+        annotations = enclosing._stubgen_static_python_annotations = {}
+    annotations[name] = type_str
+
+
+def _capture_annotated_assignment_property_type(node, enclosing) -> None:
+    """Record a Python-style-annotated class attribute's own source
+    annotation (``x: cython.double = 0.0``, ``pt: Point``, ``x: float |
+    None = None``) into ``_stubgen_static_python_annotations``, keyed by
+    name.
+
+    This shape parses as a `SingleAssignmentNode` with an annotated
+    `NameNode` target, not a `CVarDefNode` -- `_capture_property_type`
+    never sees it. Once real declaration analysis runs, this attribute
+    becomes a synthesized `PropertyNode` (see `ScopeVisitor.
+    visit_PropertyNode`) whose `Entry.type` is only ever the single,
+    concrete C/Python type Cython actually gives the attribute's storage
+    slot -- never the full union/generic/plain-Python-class annotation
+    the source wrote, for three different reasons `Converter.
+    _convert_cdef_assignments` all resolves the same way, from this same
+    snapshot:
+
+    - A plain Python class (not itself a ``cdef class``) can only ever
+      back a generic ``PyObject*`` slot, indistinguishable at the
+      `Entry`/`Type` level from a genuinely untyped ``object`` attribute
+      (``pt: Point`` -> `Entry.type` renders as plain ``object``).
+    - A union that includes ``None`` alongside a real scalar type still
+      gets that scalar's own specific C slot (``x: float | None`` ->
+      `Entry.type` renders as ``float``, silently dropping the ``| None``
+      -- and, combined with a default of ``None``, produces a `def
+      __init__(..., x: float=None)` that no type checker accepts).
+    - A generic parameterized over anything beyond what `PyrexTypes.Type`
+      itself tracks loses those parameters entirely at the `Entry`/`Type`
+      level (see `extract_type_from_base_type`'s docstring on
+      ``list[int]``).
+
+    A Cython pure-Python-mode type name (``cython.double``) also needs
+    its ``cython.`` prefix stripped before use: there's no Python-level
+    ``cython`` module for a `.pyi` to import, so left alone,
+    `postprocessing.trim_not_defined` would find no binding for it and
+    replace the whole annotation with `_typeshed.Incomplete`.
+    """
+    if not (
+        isinstance(node, Nodes.SingleAssignmentNode)
+        and isinstance(node.lhs, ExprNodes.NameNode)
+        and node.lhs.annotation is not None
+        and enclosing is not None
+    ):
+        return
+    type_str = unparse_expr(node.lhs.annotation.expr)
+    if type_str is None:
+        return
+    type_str = type_str.removeprefix("cython.")
+    _set_static_python_annotation(enclosing, node.lhs.name, type_str)
+
+
 def _capture_bare_identifier_arg(node) -> None:
     if isinstance(node, Nodes.CArgDeclNode):
         declarator = getattr(node, "declarator", None)
@@ -609,12 +667,18 @@ def _capture_annotation(node, enclosing) -> None:
         and node.expr.annotation is not None
         and enclosing is not None
     ):
+        type_str = unparse_expr(node.expr.annotation.expr)
         annotations = getattr(enclosing, "_stubgen_static_annotations", None)
         if annotations is None:
             annotations = enclosing._stubgen_static_annotations = []
-        annotations.append(
-            (node.expr.name, unparse_expr(node.expr.annotation.expr), node.pos[1])
-        )
+        annotations.append((node.expr.name, type_str, node.pos[1]))
+        # Also keyed by name alone (no line, overwrite-safe) for
+        # `Converter._convert_cdef_assignments` -- see
+        # `_capture_annotated_assignment_property_type`'s docstring for
+        # why a cdef class's own bare-annotated attribute needs this same
+        # source-text override, not just a module/plain-class one.
+        if type_str is not None:
+            _set_static_python_annotation(enclosing, node.expr.name, type_str)
 
 
 def _capture_fused_members(node, enclosing) -> None:
@@ -653,6 +717,7 @@ def _capture_static_types_recursive(node, enclosing, seen: set[int]) -> None:
 
     _capture_static_type(node)
     _capture_property_type(node, enclosing)
+    _capture_annotated_assignment_property_type(node, enclosing)
     _capture_bare_identifier_arg(node)
     _capture_decorators(node)
     _capture_annotation(node, enclosing)
