@@ -117,14 +117,17 @@ def test_const_public_class_attribute_keeps_its_type():
 
 
 def test_const_readonly_class_attribute_keeps_its_type():
-    """`cdef readonly const double` renders `float`, not `_typeshed.Incomplete`."""
+    """`cdef readonly const double` renders `Final[float]`, not
+    `_typeshed.Incomplete` -- the `const`/`readonly` qualifiers are
+    independent (see `TestReadonlyCdefAttributes`), and this only
+    verifies `const` doesn't swallow the underlying type."""
     result = _stubgen().convert_str(
         _cy("""
         cdef class Foo:
             cdef readonly const double value
     """)
     )
-    assert "value: float" in result
+    assert "value: Final[float]" in result
     assert "Incomplete" not in result
 
 
