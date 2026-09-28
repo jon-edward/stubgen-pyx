@@ -175,6 +175,8 @@ class Builder:
                 name = assignment.statement.partition("=")[0].partition(":")[0].strip()
             if self._is_private(name):
                 return None
+        if assignment.doc is not None:
+            return f"{assignment.statement}\n{assignment.doc}"
         return assignment.statement
 
     def build_import(self, import_statement: PyiImport) -> str | None:
