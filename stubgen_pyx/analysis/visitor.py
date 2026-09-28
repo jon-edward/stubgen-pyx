@@ -261,6 +261,25 @@ class ScopeVisitor(TreeVisitor):
             # synthetic node too would emit a bogus, TypedDict-invalid
             # `__annotations__ = {...}` module/class-level assignment.
             return node
+        if isinstance(node.lhs, ExprNodes.NameNode) and node.lhs.name in (
+            "__dataclass_params__",
+            "__dataclass_fields__",
+        ):
+            # `Dataclass.py`'s `@dataclass` transform adds these two
+            # class-body assignments (a `_DataclassParams(...)` call and a
+            # `{name: field(...), ...}` dict) to back the real `dataclasses`
+            # module's introspection API. Their right-hand sides are
+            # `PythonCapiFunctionNode`/attribute-lookup shapes `unparse_expr`
+            # doesn't know how to render, so keeping them here would only
+            # produce noisy "unknown node type" debug logging and then a
+            # spurious "could not parse assignment source" one -- `get_source`
+            # falls back to the position on the source `@dataclass` decorator
+            # line, not any of this synthesized code, once unparsing fails --
+            # before the assignment is dropped anyway. A `.pyi` consumer never
+            # sees `__dataclass_params__`/`__dataclass_fields__` on a real
+            # dataclass either, since neither is part of the type's own
+            # annotations.
+            return node
         if isinstance(node.lhs, ExprNodes.NameNode):
             entry = getattr(node.lhs, "entry", None)
             if entry is not None and entry.is_cglobal and entry.visibility == "private":
