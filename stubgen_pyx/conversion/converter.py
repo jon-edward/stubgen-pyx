@@ -86,6 +86,35 @@ def _is_readonly_cdef_attribute(
     return getattr(cdef_variable, "visibility", None) == "readonly"
 
 
+def _substitute_ctypedef_aliases_in_assignment(
+    assignment: PyiAssignment | None,
+    ctypedef_aliases: dict[str, str],
+) -> PyiAssignment | None:
+    """Apply `resolve_ctypedef_aliases`'s alias -> underlying-type
+    substitution to a plain assignment's whole rendered statement, not
+    just an isolated type string.
+
+    Every other substitution site (`_convert_cdef_assignments`,
+    `apply_ctypedef_aliases` for a signature) only ever needs to
+    replace a name inside a string that's *already* known to be nothing
+    but a type. A plain assignment's value can itself reference a
+    `ctypedef` alias by name -- `unparse.py`'s `visit_TypecastNode`
+    renders a C-style cast's declared type straight into the value
+    expression (``typing.cast(underlying_type_t_compression, 1)``) --
+    and that occurrence needs the exact same substitution, or the
+    now-inlined-everywhere-else alias reads as unused and gets pruned
+    while this one remaining, unsubstituted reference still needs it
+    (left dangling, then wiped out entirely by `trim_not_defined`
+    reading it as a reference to an undefined name).
+    """
+    if assignment is None or not ctypedef_aliases:
+        return assignment
+    assignment.statement = _substitute_ctypedef_aliases(
+        assignment.statement, ctypedef_aliases
+    )
+    return assignment
+
+
 _CYTHON_IMPORT_RE = re.compile(
     r"^\s*from\s+(?:cython|cpython)(?:\.[^\s]+)*\s+c?import\b"
 )
@@ -922,7 +951,26 @@ class Converter:
         conv_assignments_with_source = [
             (
                 assignment,
-                convert_assignment(assignment, source_code, in_class=visitor.in_class),
+                (
+                    convert_assignment(
+                        assignment, source_code, in_class=visitor.in_class
+                    )
+                    if isinstance(assignment, Nodes.CTypeDefNode)
+                    # A `ctypedef`'s own defining statement must never go
+                    # through this substitution -- it's the one place the
+                    # alias name is *supposed* to appear undisturbed, and
+                    # substituting it there rewrites the assignment's own
+                    # target name into the resolved type
+                    # (`size_type: TypeAlias = int` -> `int: TypeAlias =
+                    # int`), which every other pruning/usage check then
+                    # reads as the alias no longer existing at all.
+                    else _substitute_ctypedef_aliases_in_assignment(
+                        convert_assignment(
+                            assignment, source_code, in_class=visitor.in_class
+                        ),
+                        ctypedef_aliases,
+                    )
+                ),
             )
             for assignment in visitor.assignments
         ]
