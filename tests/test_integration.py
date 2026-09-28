@@ -992,6 +992,63 @@ cpdef object process(MyFloat x)
         )
         assert "def process(x: float) -> float: ..." in result
 
+    def test_resolves_alias_used_inside_a_cast(self, temp_dir):
+        """A `ctypedef` alias named as a C-style cast's declared type
+        (``<MyFloat> expr``, rendered as ``typing.cast(MyFloat, expr)``
+        by `unparse.visit_TypecastNode`) is substituted the same as any
+        other occurrence -- this is a plain assignment's *value*, not
+        an annotation, so it uses a different code path
+        (`_substitute_ctypedef_aliases_in_assignment`) than every other
+        case in this class."""
+        pyx_file = temp_dir / "test.pyx"
+        pyx_file.write_text("""
+ctypedef int MyInt
+
+class Foo:
+    x = <MyInt> 1
+""")
+        result = StubgenPyx(
+            StubgenPyxConfig(resolve_ctypedef_aliases=True)
+        ).convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+        assert "x = cast(int, 1)" in result
+        assert "MyInt" not in result
+
+    def test_cast_to_alias_does_not_corrupt_alias_declaration_kept_by_a_sibling_file(
+        self, temp_dir
+    ):
+        """The alias's own defining statement must never itself be
+        substituted -- only a genuinely separate usage (like the cast
+        below) is. Substituting the declaration's own target name would
+        rewrite `size_type: TypeAlias = int` into
+        `int: TypeAlias = int`, which every usage/pruning check then
+        reads as `size_type` never having existed at all, corrupting
+        the declaration in the file that owns it -- a single file's own
+        cast usage always gets fully substituted away, same as any
+        other usage (see `test_resolves_alias_used_inside_a_cast`), so
+        a cross-file batch (`TestCtypedefAliasBatchPruning`'s own
+        shape) is what's needed to still have the declaration around
+        to check for corruption at all.
+        """
+        (temp_dir / "types_mod.pxd").write_text("ctypedef int size_type\n")
+        types_file = temp_dir / "types_mod.pyx"
+        types_file.write_text("")
+        consumer_file = temp_dir / "consumer.pyx"
+        consumer_file.write_text(
+            "from types_mod cimport size_type\n\nclass Foo:\n    x = <size_type> 1\n"
+        )
+
+        stubgen = StubgenPyx(
+            StubgenPyxConfig(resolve_ctypedef_aliases=True, continue_on_error=True)
+        )
+        results = stubgen.convert_multiple_files([types_file, consumer_file])
+        assert all(r.success for r in results)
+
+        types_pyi = (temp_dir / "types_mod.pyi").read_text()
+        consumer_pyi = (temp_dir / "consumer.pyi").read_text()
+        assert "size_type: TypeAlias = int" in types_pyi
+        assert "int: TypeAlias = int" not in types_pyi
+        assert "x = cast(int, 1)" in consumer_pyi
+
 
 class TestQualifiedModuleTypeReferences:
     """A type referenced through its cimported module name (``cimport mod``
@@ -1947,6 +2004,58 @@ cdef class Foo:
         result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
         assert "y: Final[int]" in result
         assert "def __init__(self, y: int): ..." in result
+
+
+class TestTypecastExpression:
+    """A C-style cast (``<type> expr``) is not Python syntax at all --
+    left as raw source text, the statement containing it fails to parse
+    as Python (`declarations.convert_assignment`'s own source-text
+    fallback hits the exact same invalid syntax), so the whole statement
+    used to be silently dropped. Rendered as ``typing.cast(type, expr)``
+    instead -- inert to a type checker, and valid Python.
+    """
+
+    def test_cast_in_enum_member_value_is_preserved(self, temp_dir):
+        """The regression this whole class guards against: an
+        `IntEnum` member assigned from a cast used to vanish from the
+        stub entirely rather than just losing its cast."""
+        pyx_file = temp_dir / "test.pyx"
+        pyx_file.write_text("""
+from enum import IntEnum
+
+class Compression(IntEnum):
+    INFER = <int> 1
+    GZIP = 2
+""")
+        result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+        assert "from typing import cast" in result
+        assert (
+            "class Compression(IntEnum):\n    INFER = cast(int, 1)\n    GZIP = 2\n"
+            in result
+        )
+
+    def test_cast_to_object_and_scalar_type_render_correctly(self, temp_dir):
+        pyx_file = temp_dir / "test.pyx"
+        pyx_file.write_text("""
+class Foo:
+    x = <object> "abc"
+    y = <double> 3
+""")
+        result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+        assert "x = cast(object, 'abc')" in result
+        # `double` is a Cython, not a Python, type name -- must go
+        # through the same normalize_names translation as any other
+        # scalar type, not survive verbatim inside the cast.
+        assert "y = cast(float, 3)" in result
+
+    def test_cast_in_default_argument_value_is_preserved(self, temp_dir):
+        pyx_file = temp_dir / "test.pyx"
+        pyx_file.write_text("""
+def foo(x=<int> 5):
+    pass
+""")
+        result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+        assert "def foo(x=cast(int, 5)): ...\n" in result
 
 
 class TestCdefClassDataclass:
