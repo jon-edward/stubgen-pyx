@@ -66,6 +66,16 @@ class PyiAssignment(PyiStatement):
     # real separator (e.g. `_x: Annotated[int, Field(default=5)] = 5`).
     name: str | None = None
 
+    # A property's own docstring, when this assignment is what a
+    # get+set (or synthesized `cdef public`/`cdef readonly`) property
+    # got flattened to (see `visit_PropertyNode`'s routing and
+    # `Converter._convert_cdef_assignments`). Already run through
+    # `docstring_to_string` (escaped, triple-quoted), matching
+    # `PyiFunction.doc`/`PyiClass.doc`. `None` for every other kind of
+    # assignment (a raw `cdef` field never carries one; Cython has no
+    # syntax to attach a docstring to one).
+    doc: str | None = None
+
 
 @dataclass
 class PyiImport(PyiStatement):
