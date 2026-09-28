@@ -838,7 +838,7 @@ cdef cppclass Native:
 
     assert "class Visible:" in result
     assert "public_value: int" in result
-    assert "readonly_value: int" in result
+    assert "readonly_value: Final[int]" in result
     # A plain (no visibility keyword) cdef attribute is pure C state,
     # never Python-visible -- not importable, so not in the stub at all.
     assert "private_value" not in result
