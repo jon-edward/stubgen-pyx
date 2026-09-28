@@ -63,10 +63,78 @@ _CXX_FROM_CIMPORT_RE = re.compile(
 )
 _CXX_CIMPORT_RE = re.compile(r"^\s*cimport\s+(?:libcpp|libc)(?:\.|\b)")
 
+
+def _is_readonly_cdef_attribute(
+    cdef_variable: Nodes.CVarDefNode | Nodes.PropertyNode,
+) -> bool:
+    """Whether a `cdef_variables` entry came from `cdef readonly` (as
+    opposed to `cdef public`, or a real read/write `@property`).
+
+    A raw `CVarDefNode` (the pre-pipeline fallback shape -- see
+    `ScopeVisitor.visit_CVarDefNode`) carries its own `visibility`
+    directly. A `PropertyNode` reaching `cdef_variables` at all is
+    always either the synthesized pair for `cdef public` (has a
+    `__set__`) or, identically shaped, a real read/write property with
+    a setter -- `visit_PropertyNode` already routes every setter-less
+    `PropertyNode` that isn't one of those to `property_getters`
+    instead, so a `PropertyNode` with no `__set__` reaching here can
+    only be the synthesized getter-only pair for `cdef readonly`.
+    """
+    if isinstance(cdef_variable, Nodes.PropertyNode):
+        stats = getattr(cdef_variable.body, "stats", None) or ()
+        return not any(getattr(s, "name", None) == "__set__" for s in stats)
+    return getattr(cdef_variable, "visibility", None) == "readonly"
+
+
 _CYTHON_IMPORT_RE = re.compile(
     r"^\s*from\s+(?:cython|cpython)(?:\.[^\s]+)*\s+c?import\b"
 )
 _CYTHON_FROM_IMPORT_RE = re.compile(r"^\s*c?import\s+(?:cython|cpython)(?:\.[^\s]+)*\b")
+
+#: Matches a rendered ``@dataclass``/``@dataclasses.dataclass`` decorator
+#: (any dotted prefix, e.g. ``@cython.dataclasses.dataclass``), with or
+#: without a call -- `callee` is everything through the final ``dataclass``
+#: segment, `args` is whatever's inside the parens, if any. See
+#: `_add_init_false_to_dataclass_decorator`.
+_DATACLASS_DECORATOR_RE = re.compile(
+    r"^@(?P<callee>(?:\w+\.)*dataclass)(?:\((?P<args>.*)\))?$", re.DOTALL
+)
+#: An already-explicit ``init=`` keyword argument -- never overridden by
+#: `_add_init_false_to_dataclass_decorator`, and never duplicated.
+_DATACLASS_INIT_KWARG_RE = re.compile(r"(?<![\w.])init\s*=")
+
+
+def _add_init_false_to_dataclass_decorator(decorator: str) -> str:
+    """Add ``init=False`` to a ``@dataclass``-family decorator string,
+    creating the call parens if the decorator is currently bare.
+
+    Cython's own dataclass support (see `Converter._patch_dataclass_init_annotations`'s
+    docstring) synthesizes a real, correctly-ordered ``__init__`` for a
+    ``cdef class`` and stubgen-pyx always renders it explicitly in the
+    class body -- so once that happens, the ``@dataclass`` decorator
+    itself no longer needs to (and shouldn't) tell a type checker to
+    synthesize *another* one from the class-body field annotations: the
+    two are derived independently (one from Cython's own field
+    collection, the other from whatever a type checker's dataclass
+    support infers from the rendered attributes) and nothing keeps them
+    in sync, particularly for a private field with no class-body
+    annotation at all. ``init=False`` makes the explicit, real ``__init__``
+    the only one a type checker considers, unambiguously.
+
+    Leaves any other decorator, and any dataclass decorator that already
+    sets ``init=`` explicitly (respecting whatever the source itself
+    asked for), untouched.
+    """
+    match = _DATACLASS_DECORATOR_RE.match(decorator)
+    if match is None:
+        return decorator
+    args = match.group("args")
+    if args is not None and _DATACLASS_INIT_KWARG_RE.search(args):
+        return decorator
+    callee = match.group("callee")
+    if not args:
+        return f"@{callee}(init=False)"
+    return f"@{callee}({args}, init=False)"
 
 
 _logger = logging.getLogger(__name__)
@@ -360,21 +428,41 @@ class Converter:
         self,
         visitor: ScopeVisitor,
         ctypedef_aliases: dict[str, str],
-    ) -> tuple[list[PyiAssignment], set[str]]:
+        include_docstrings: bool = True,
+    ) -> tuple[list[PyiAssignment], set[str], dict[str, str]]:
         assignments: list[PyiAssignment] = []
         handled_names: set[str] = set()
+        resolved_types: dict[str, str] = {}
         static_property_types = (
             getattr(visitor.node, "_stubgen_static_property_types", None) or {}
         )
+        static_python_annotations = (
+            getattr(visitor.node, "_stubgen_static_python_annotations", None) or {}
+        )
         for cdef_variable in visitor.cdef_variables:
+            is_readonly = _is_readonly_cdef_attribute(cdef_variable)
             for name, base_type in get_cdef_variables(cdef_variable):
-                static_type = static_property_types.get(name)
-                if (
-                    static_type is not None
-                    and base_type is not None
-                    and static_type.endswith(f".{base_type}")
-                ):
-                    base_type = static_type
+                if name in static_python_annotations:
+                    # A Python-style-annotated attribute (bare or
+                    # defaulted; a plain Python class, a generic, or a
+                    # union with `None`) always renders from its own
+                    # source annotation, never from `Entry.type` --
+                    # `_capture_annotated_assignment_property_type`'s
+                    # docstring has the full reasoning for why the two
+                    # can disagree (a generic `PyObject*` slot indifferent
+                    # to which Python class it holds, a real scalar slot
+                    # silently dropping a `| None`, a lost generic
+                    # parameter) and why the source annotation is always
+                    # the more correct answer for a `.pyi` to show.
+                    base_type = static_python_annotations[name]
+                else:
+                    static_type = static_property_types.get(name)
+                    if (
+                        static_type is not None
+                        and base_type is not None
+                        and static_type.endswith(f".{base_type}")
+                    ):
+                        base_type = static_type
 
                 resolved_type = with_debug_fallback(
                     base_type,
@@ -384,45 +472,107 @@ class Converter:
                 resolved_type = _substitute_ctypedef_aliases(
                     resolved_type, ctypedef_aliases
                 )
-                assignments.append(PyiAssignment(f"{name}: {resolved_type}", name=name))
+                # A `PropertyNode` (a get+set property, or the synthesized
+                # pair for `cdef public`/`cdef readonly`) carries its own
+                # docstring on `.doc`, same as a real `def` method's --
+                # a raw `CVarDefNode` has no such attribute (Cython has no
+                # syntax to attach a docstring to a plain `cdef` field), so
+                # `getattr` with a default covers both without a type check.
+                node_doc = getattr(cdef_variable, "doc", None)
+                doc = (
+                    docstring_to_string(node_doc)
+                    if include_docstrings and node_doc
+                    else None
+                )
+                # `cdef readonly` has no Python-level setter -- assigning
+                # to it from outside the extension type raises at
+                # runtime. Wrapping the annotation in `Final` (only here,
+                # on the rendered attribute; `resolved_types` below keeps
+                # the bare type, since a dataclass's synthesized
+                # `__init__` parameter still needs its plain type) makes
+                # a type checker reject that assignment statically too,
+                # instead of only a real interpreter run catching it.
+                annotation = (
+                    f"typing.Final[{resolved_type}]" if is_readonly else resolved_type
+                )
+                assignments.append(
+                    PyiAssignment(f"{name}: {annotation}", name=name, doc=doc)
+                )
                 handled_names.add(name)
-        return assignments, handled_names
+                resolved_types[name] = resolved_type
+        return assignments, handled_names, resolved_types
 
     @staticmethod
     def _patch_dataclass_init_annotations(
         visitor: ScopeVisitor,
         source_code: str,
         py_funcs: list[tuple[int, PyiFunction]],
+        cdef_resolved_types: dict[str, str],
     ) -> None:
-        """Backfill a missing parameter annotation on a compiler-
-        synthesized dataclass ``__init__``, for a parameter that
-        corresponds to a ``cdef public``/``cdef readonly`` C attribute.
+        """Fix up a compiler-synthesized dataclass ``__init__``'s parameter
+        annotations for parameters that correspond to ``cdef public``/
+        ``cdef readonly`` (or Python-style-annotated, still C-typed)
+        extension-type attributes.
 
         Cython's own ``AnalyseDeclarationsTransform`` builds this
         ``__init__`` (real `dataclasses`-module support for extension
         types, not anything stubgen-pyx generates itself), correctly
         ordered and everything -- but each synthesized parameter's own
-        ``annotation`` is only ever set from a Python-style ``x: type``
-        class-body annotation. A field declared instead via ``cdef
-        public``/``cdef readonly`` (C-style, no ``: type`` syntax to
-        carry over) leaves that parameter with no annotation and no
-        resolvable ``base_type`` node either, so `_to_argument` renders
-        it bare (``z`` instead of ``z: float``) -- silently wrong, and
-        for any field after it that still has a default, enough on its
-        own to produce a `def __init__(...)` that fails to parse as
-        Python at all (a default-less bare name follows a defaulted
-        one). The same type recovery `_convert_cdef_assignments` already
-        relies on for these attributes when they're rendered as a plain
-        ``name: type`` line (`type_parsing.capture_static_types`'
-        pre-pipeline `_stubgen_static_property_types` snapshot) resolves
-        it here too.
+        ``annotation`` is unreliable for exactly the attributes
+        `_convert_cdef_assignments` already had to resolve properly to
+        render as a class-body ``name: type`` line, and for the same two
+        reasons:
+
+        - A field declared via ``cdef public``/``cdef readonly`` (C-style,
+          no ``: type`` syntax to carry over) leaves its parameter with no
+          annotation and no resolvable ``base_type`` node either, so
+          `_to_argument` renders it bare (``z`` instead of ``z: float``)
+          -- silently wrong, and for any field after it that still has a
+          default, enough on its own to produce a `def __init__(...)`
+          that fails to parse as Python at all (a default-less bare name
+          follows a defaulted one).
+        - A field declared with a Python-style annotation that happens to
+          name a Cython pure-Python-mode type (``x: cython.double = 0.0``)
+          *does* carry that annotation over verbatim onto the parameter --
+          but verbatim means literally ``cython.double``, and stubgen-pyx
+          never emits a ``cython`` import into the stub (there's no
+          Python-level ``cython`` module to import at all outside a
+          Cython build). `trim_not_defined` then finds no binding for
+          ``cython`` and replaces the whole annotation with
+          `_typeshed.Incomplete` -- again silently wrong, and
+          inconsistent with the same attribute's own, correctly
+          ``float``-rendered class-body annotation.
+
+        Both are fixed the same way: every parameter that names a field
+        `_convert_cdef_assignments` already resolved gets that exact
+        resolved type here too, replacing whatever the compiler's own
+        synthesized annotation says (or doesn't). This keeps a
+        dataclass's ``__init__`` parameter types and its class-body
+        attribute types in sync by construction, rather than trusting two
+        separately-derived renderings of the same underlying type to
+        agree.
+
+        A private (neither ``public`` nor ``readonly``) attribute is still
+        a real dataclass field -- Cython includes it in the synthesized
+        ``__init__`` regardless of Python visibility -- but it never
+        becomes a `PropertyNode`/`CVarDefNode` `_convert_cdef_assignments`
+        walks (there's no Python-visible property to render), so it never
+        makes it into `cdef_resolved_types`. `type_parsing.capture_static_types`'
+        pre-pipeline ``_stubgen_static_property_types`` snapshot still has
+        it (from either its raw ``cdef`` declaration or a Python-style
+        annotation -- see `_capture_property_type`/
+        `_capture_annotated_assignment_property_type`), as a raw Cython
+        type name (``double``, not ``float``) that
+        `postprocessing.normalize_names` normalizes later -- used here as
+        the fallback for exactly the names `cdef_resolved_types` doesn't
+        cover.
         """
         if not visitor.in_class:
             return
         static_property_types = (
             getattr(visitor.node, "_stubgen_static_property_types", None) or {}
         )
-        if not static_property_types:
+        if not cdef_resolved_types and not static_property_types:
             return
         if not any(
             "dataclass" in decorator
@@ -433,10 +583,11 @@ class Converter:
             if py_func.name != "__init__":
                 continue
             for argument in py_func.signature.args:
-                if argument.annotation is None:
-                    fallback = static_property_types.get(argument.name)
-                    if fallback is not None:
-                        argument.annotation = fallback
+                resolved = cdef_resolved_types.get(
+                    argument.name
+                ) or static_property_types.get(argument.name)
+                if resolved is not None:
+                    argument.annotation = resolved
 
     def _convert_scope_members(
         self,
@@ -449,6 +600,7 @@ class Converter:
         resolve_ctypedef_aliases: bool,
         defer_ctypedef_pruning: bool,
         prunable_ctypedef_aliases: dict[str, PyiAssignment] | None,
+        cdef_resolved_types: dict[str, str],
     ) -> tuple[list[PyiFunction], list[PyiClass], list[PyiClass]]:
         cdef_funcs = [
             (
@@ -492,7 +644,9 @@ class Converter:
             for node in visitor.property_getters
         ]
 
-        self._patch_dataclass_init_annotations(visitor, source_code, py_funcs)
+        self._patch_dataclass_init_annotations(
+            visitor, source_code, py_funcs, cdef_resolved_types
+        )
 
         contains_init = any(py_func.name == "__init__" for _, py_func in py_funcs)
         for idx, (_, py_func) in enumerate(py_funcs):
@@ -741,8 +895,10 @@ class Converter:
             **local_ctypedef_aliases,
         }
 
-        cdef_assignments, cdef_handled_names = self._convert_cdef_assignments(
-            visitor, ctypedef_aliases
+        cdef_assignments, cdef_handled_names, cdef_resolved_types = (
+            self._convert_cdef_assignments(
+                visitor, ctypedef_aliases, include_docstrings
+            )
         )
         functions, classes, structs_or_enums = self._convert_scope_members(
             visitor,
@@ -754,6 +910,7 @@ class Converter:
             resolve_ctypedef_aliases,
             defer_ctypedef_pruning,
             prunable_ctypedef_aliases,
+            cdef_resolved_types,
         )
         typevar_candidates = (
             fused_types if emit_inherited_fused_typevars else local_fused_types
@@ -864,23 +1021,41 @@ class Converter:
         node_doc: str | None = getattr(class_visitor.node, "doc", None)
         doc = docstring_to_string(node_doc) if node_doc else None
 
+        scope = self.convert_scope(
+            class_visitor.scope,
+            source_code,
+            comments,
+            include_docstrings,
+            inherited_fused_types,
+            resolve_ctypedef_aliases=resolve_ctypedef_aliases,
+            inherited_ctypedef_aliases=inherited_ctypedef_aliases,
+            defer_ctypedef_pruning=defer_ctypedef_pruning,
+            prunable_ctypedef_aliases=prunable_ctypedef_aliases,
+        )
+        decorators = get_decorators(source_code, class_visitor.node)
+        if any(function.name == "__init__" for function in scope.functions):
+            # An explicit `__init__` is already in the class body -- real
+            # `dataclasses`-module behavior never overwrites one (whether
+            # it's the user's own or Cython's compiler-synthesized one for
+            # a `cdef class`, see `_patch_dataclass_init_annotations`'s
+            # docstring), so a type checker's dataclass support shouldn't
+            # synthesize a second, independently-derived one from the
+            # class-body field annotations either -- `init=False` says so
+            # explicitly instead of relying on each type checker's own
+            # (unspecified, possibly inconsistent) handling of a
+            # `@dataclass`-decorated class that already defines `__init__`.
+            decorators = [
+                _add_init_false_to_dataclass_decorator(decorator)
+                for decorator in decorators
+            ]
+
         return PyiClass(
             name=name,
             doc=doc if include_docstrings else None,
             bases=get_bases(class_visitor.node),
             metaclass=get_metaclass(class_visitor.node),
-            decorators=get_decorators(source_code, class_visitor.node),
-            scope=self.convert_scope(
-                class_visitor.scope,
-                source_code,
-                comments,
-                include_docstrings,
-                inherited_fused_types,
-                resolve_ctypedef_aliases=resolve_ctypedef_aliases,
-                inherited_ctypedef_aliases=inherited_ctypedef_aliases,
-                defer_ctypedef_pruning=defer_ctypedef_pruning,
-                prunable_ctypedef_aliases=prunable_ctypedef_aliases,
-            ),
+            decorators=decorators,
+            scope=scope,
         )
 
     def convert_cdef_func(
