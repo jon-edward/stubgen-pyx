@@ -36,6 +36,56 @@ class InvalidAssignment(Exception):
     """An invalid assignment was encountered."""
 
 
+def _assignment_source(
+    assignment: Nodes.AssignmentNode | Nodes.ExprStatNode, source_code: str
+) -> str | None:
+    out_assignment_str: str | None = None
+
+    if isinstance(assignment, Nodes.SingleAssignmentNode):
+        name = assignment.lhs.name
+        expr = unparse_expr(assignment.rhs)
+        if expr is not None:
+            annotation = (
+                assignment.lhs.annotation.string.value
+                if assignment.lhs.annotation is not None
+                else None
+            )
+            target = f"{name}: {annotation}" if annotation else name
+            out_assignment_str = f"{target} = {expr}"
+
+    if isinstance(assignment, Nodes.CTypeDefNode):
+        name, typ = extract_name_and_type(assignment)
+        if typ and name:
+            out_assignment_str = f"{name}: typing_extensions.TypeAlias = {typ}"
+        elif name:
+            _logger.debug(
+                "Could not extract ctypedef type: %r",
+                get_source(source_code, assignment),
+            )
+            out_assignment_str = f"{name} = ..."
+        else:
+            _logger.debug(
+                "Could not extract ctypedef name or type: %r",
+                get_source(source_code, assignment),
+            )
+            return None
+
+    return out_assignment_str or get_source(source_code, assignment)
+
+
+def _parse_assignment(source: str) -> ast.Assign | ast.AnnAssign | None:
+    try:
+        node = ast.parse(source)
+        if len(node.body) != 1 or not isinstance(
+            node.body[0], (ast.Assign, ast.AnnAssign)
+        ):
+            raise InvalidAssignment
+    except (SyntaxError, InvalidAssignment):
+        _logger.debug("Could not parse assignment source: %r", source)
+        return None
+    return node.body[0]
+
+
 def convert_import(
     node: Nodes.Node, source_code: str, raw: str | None = None
 ) -> PyiImport:
@@ -133,63 +183,21 @@ def convert_assignment(
     in_class: bool = False,
 ) -> PyiAssignment | None:
     """Convert an assignment node to PyiAssignment, extracting type annotations."""
-    out_assignment_str: str | None = None
-
-    if isinstance(assignment, Nodes.SingleAssignmentNode):
-        name = assignment.lhs.name
-        expr = unparse_expr(assignment.rhs)
-
-        if expr is not None:
-            annotation = (
-                assignment.lhs.annotation.string.value
-                if assignment.lhs.annotation is not None
-                else None
-            )
-
-            assign: str = name
-            if annotation:
-                assign = f"{assign}: {annotation}"
-            out_assignment_str = f"{assign} = {expr}"
-
-    if isinstance(assignment, Nodes.CTypeDefNode):
-        name, typ = extract_name_and_type(assignment)
-        if typ and name:
-            out_assignment_str = f"{name}: typing_extensions.TypeAlias = {typ}"
-        elif name:
-            _logger.debug(
-                "Could not extract ctypedef type: %r",
-                get_source(source_code, assignment),
-            )
-            out_assignment_str = f"{name} = ..."
-        else:
-            _logger.debug(
-                "Could not extract ctypedef name or type: %r",
-                get_source(source_code, assignment),
-            )
-            return None
-
-    if not out_assignment_str:
-        # Fallback to attempting to parse the source
-        out_assignment_str = get_source(source_code, assignment)
-
-    try:
-        node = ast.parse(out_assignment_str)
-        if not len(node.body) == 1 or not isinstance(
-            node.body[0], (ast.Assign, ast.AnnAssign)
-        ):
-            raise InvalidAssignment
-    except (SyntaxError, InvalidAssignment):
-        _logger.debug("Could not parse assignment source: %r", out_assignment_str)
+    source = _assignment_source(assignment, source_code)
+    if source is None:
+        return None
+    node = _parse_assignment(source)
+    if node is None:
         return None
 
-    if in_class and _is_unhashable_hash_assignment(node.body[0]):
-        out_assignment_str = "__hash__ = None  # type: ignore[assignment]"
+    if in_class and _is_unhashable_hash_assignment(node):
+        source = "__hash__ = None  # type: ignore[assignment]"
 
-    name = _assignment_target_name(node.body[0])
+    name = _assignment_target_name(node)
     if name is not None and name.startswith("__pyx_"):
         return None
 
-    return PyiAssignment(out_assignment_str, name=name)
+    return PyiAssignment(source, name=name)
 
 
 def convert_enum(node: Nodes.CEnumDefNode) -> PyiEnum | PyiAssignment:
