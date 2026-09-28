@@ -15,6 +15,7 @@ TYPE_IMPORTS = (
     "typing.Any",
     "typing.Callable",
     "typing.Final",
+    "typing.cast",
     "typing.TypedDict",
     "typing.TypeVar",
     "typing_extensions.TypeAlias",  # Use backport for Python < 3.10
