@@ -5,13 +5,10 @@ from __future__ import annotations
 from Cython.Compiler import Nodes
 
 from ..models.pyi_elements import PyiArgument, PyiSignature
-from .type_parsing import (
-    _declarator_name,
-    extract_type_from_base_type,
-    parameterize_builtin_generic,
-    render_pyrex_type,
-)
+from .pyrex_types import parameterize_builtin_generic, render_pyrex_type
+from .type_parsing import _declarator_name, extract_type_from_base_type
 from .unparse import unparse_expr
+from .utils import decode_or_pass
 
 
 def get_signature(node: Nodes.CFuncDefNode | Nodes.DefNode) -> PyiSignature:
@@ -53,22 +50,15 @@ def _create_argument_if_exists(arg_node) -> PyiArgument | None:
     return PyiArgument(arg_node.name, annotation=_get_annotation(arg_node))
 
 
-def _decode_or_pass(value: str | bytes) -> str:
-    """Ensure value is a string, decoding bytes if needed."""
-    if isinstance(value, bytes):
-        return value.decode("utf-8")
-    if isinstance(value, str):
-        return value
-    raise TypeError(f"Expected str or bytes, got {type(value)}")
-
-
 def _get_annotation(arg: Nodes.CArgDeclNode | Nodes.PyArgDeclNode) -> str | None:
     """Extract type annotation from a function argument node."""
     try:
         if arg.annotation is not None:
-            return _decode_or_pass(arg.annotation.string.value)
+            return decode_or_pass(arg.annotation.string.value)
         if not isinstance(arg, Nodes.CArgDeclNode):
             return None
+        if arg.name == "cls" and getattr(arg, "is_type_arg", False):
+            return "builtins.type"
         return extract_type_from_base_type(arg)
     except AttributeError:
         pass
@@ -79,7 +69,7 @@ def _get_return_type_annotation(node: Nodes.CFuncDefNode | Nodes.DefNode) -> str
     """Extract return type annotation from a function node."""
     if node.return_type_annotation is not None:
         return parameterize_builtin_generic(
-            _decode_or_pass(node.return_type_annotation.string.value)
+            decode_or_pass(node.return_type_annotation.string.value)
         )
     if isinstance(node, Nodes.DefNode):
         return None
@@ -115,7 +105,7 @@ def _to_argument(arg: Nodes.CArgDeclNode) -> PyiArgument:
     # inserts an extra `CConstDeclaratorNode`. Falls back to `""`: a
     # bare, unannotated argument's declarator has no name yet at this
     # point (see the bare-identifier-arg handling below).
-    name = _decode_or_pass(_declarator_name(declarator) or "")
+    name = decode_or_pass(_declarator_name(declarator) or "")
 
     if (
         not name

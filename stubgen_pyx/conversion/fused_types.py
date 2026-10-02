@@ -12,7 +12,7 @@ from Cython.Compiler.PyrexTypes import FusedType
 from ..analysis.visitor import ScopeVisitor
 from ..models.pyi_elements import PyiAssignment, PyiFusedType, PyiSignature
 from ..postprocessing.normalize_names import _CYTHON_TRANSLATIONS
-from .type_parsing import _CYTHON_TO_NUMPY_SCALAR, render_pyrex_type
+from .pyrex_types import _CYTHON_TO_NUMPY_SCALAR, render_pyrex_type
 
 
 def convert_fused_types(visitor: ScopeVisitor) -> dict[str, PyiFusedType]:

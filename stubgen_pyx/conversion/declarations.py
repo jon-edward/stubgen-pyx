@@ -14,12 +14,12 @@ from Cython.Compiler import Nodes
 
 from ..logging_utils import with_debug_fallback
 from ..models.pyi_elements import PyiAssignment, PyiClass, PyiEnum, PyiImport, PyiScope
+from .pyrex_types import render_pyrex_type
 from .source_extraction import get_source
 from .type_parsing import (
     extract_name_and_type,
     get_cdef_variables,
     get_enum_names,
-    render_pyrex_type,
 )
 from .unparse import unparse_expr
 

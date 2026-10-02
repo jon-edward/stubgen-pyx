@@ -49,6 +49,53 @@ class TestAddTypeImports:
 
         assert result == "from typing import Any\nx: Any"
 
+    def test_resolves_builtin_type_without_import(self):
+        tree = ast.parse("x: builtins.type")
+
+        result = ast.unparse(add_type_imports(tree))
+
+        assert result == "x: type"
+
+    def test_resolves_builtin_type_with_import_used_builtins(self):
+        tree = ast.parse("import builtins\nx: builtins.type = builtins.str")
+
+        result = ast.unparse(add_type_imports(tree))
+
+        assert result == "import builtins\nx: type = builtins.str"
+
+    def test_resolves_builtin_type_annotations(self):
+        tree = ast.parse("def func(x: builtins.type) -> builtins.type:\n    ...")
+
+        result = ast.unparse(add_type_imports(tree))
+
+        assert result == "def func(x: type) -> type:\n    ..."
+
+    def test_resolves_classmethod_cls_type_through_type_imports(self):
+        tree = ast.parse(
+            "class Foo:\n"
+            "    @classmethod\n"
+            "    def make(cls: builtins.type): ...\n"
+            "    def accepts_type(value: builtins.type): ...\n"
+        )
+
+        result = ast.unparse(add_type_imports(tree))
+
+        assert result == (
+            "class Foo:\n\n"
+            "    @classmethod\n"
+            "    def make(cls: type):\n"
+            "        ...\n\n"
+            "    def accepts_type(value: type):\n"
+            "        ..."
+        )
+
+    def test_resolves_builtin_type_name_used(self):
+        tree = ast.parse("type = str\nx: builtins.type = int")
+
+        result = ast.unparse(add_type_imports(tree))
+
+        assert result == "import builtins\ntype = str\nx: builtins.type = int"
+
     def test_keeps_qualified_name_when_leaf_conflicts_with_declaration(self):
         tree = ast.parse("class Incomplete: ...\nx: _typeshed.Incomplete")
 

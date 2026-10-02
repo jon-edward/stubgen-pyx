@@ -22,6 +22,7 @@ TYPE_IMPORTS = (
     "enum.IntEnum",
     "numpy.typing.NDArray",
     "numpy",
+    "builtins.type",  # For classmethods
 )
 # Qualified names for imported types that
 # might be needed by stubs.
@@ -94,6 +95,9 @@ def _resolve_type_import(
     used_names: set[str],
 ) -> tuple[_Import | None, str | None]:
     """Return an import to add and replacement for one qualified name."""
+    if qualified_name == "builtins.type" and "type" not in used_names:
+        return None, "type"
+
     if "." not in qualified_name:
         existing = _find_import(existing_imports, qualified_name, None)
         if existing and existing.asname:

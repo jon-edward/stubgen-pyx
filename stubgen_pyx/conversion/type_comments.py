@@ -11,7 +11,7 @@ from Cython.Compiler import Nodes
 
 from ..models.pyi_elements import PyiSignature
 from ..parsing.comments import Comment, CommentIndex
-from .type_parsing import parameterize_builtin_generic
+from .pyrex_types import parameterize_builtin_generic
 
 #: A `# type: EXPR` comment (PEP 484's comment-based type syntax). Matches
 #: both the whole-signature form (`# type: (int, str) -> bool`) and a

@@ -17,7 +17,7 @@ from ..models.pyi_elements import (
     PyiScope,
     PyiSignature,
 )
-from .type_parsing import render_pyrex_type
+from .pyrex_types import render_pyrex_type
 
 
 def ctypedef_alias_map(visitor: ScopeVisitor) -> dict[str, str]:
@@ -143,7 +143,7 @@ def remove_assignment_from_module(module: PyiModule, assignment: PyiAssignment) 
     `ctypedef` alias's containing scope was first converted, inside
     `Converter.convert_scope`): a companion `.pxd`'s assignments get
     merged into the `.pyx`'s own module afterward
-    (`_merge_pxd_into_module`), which builds a new list rather than
+    (`merge_pxd_into_module`), which builds a new list rather than
     mutating the `.pxd`'s own scope's list in place -- so a `.remove()`
     against that earlier reference would silently no-op on a list
     nothing renders from anymore. Searching by identity in the already
@@ -190,6 +190,26 @@ def pyi_module_uses_name(module: PyiModule, name: str) -> bool:
     return any(
         _text_uses_name(a.statement, name) for a in _scope_assignments(module.scope)
     )
+
+
+def prune_prepared_ctypedef_aliases(prepared: list[tuple]) -> None:
+    """Prune each file's provisionally-dead ctypedef aliases (`prepared`,
+    as built by `StubgenPyx._prepare_multiple_file_conversions`) once every
+    other successfully-converted module in the same batch has been checked
+    too -- see `pyi_module_uses_name`'s docstring for why that cross-check
+    is needed.
+    """
+    successful_modules = [entry[4] for entry in prepared if entry[4] is not None]
+    for _, _, early_result, _, module, _, prunable in prepared:
+        if early_result is not None or not prunable:
+            continue
+        for alias_name, assignment in prunable.items():
+            used_elsewhere = any(
+                other is not module and pyi_module_uses_name(other, alias_name)
+                for other in successful_modules
+            )
+            if not used_elsewhere:
+                remove_assignment_from_module(module, assignment)
 
 
 def _text_uses_name(text: str | None, name: str) -> bool:

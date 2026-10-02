@@ -13,7 +13,6 @@ from Cython.Compiler import Nodes
 from ..analysis.visitor import ClassVisitor, ImportVisitor, ModuleVisitor, ScopeVisitor
 from ..logging_utils import with_debug_fallback
 from ..models.pyi_elements import (
-    PyiArgument,
     PyiAssignment,
     PyiClass,
     PyiEnum,
@@ -22,7 +21,6 @@ from ..models.pyi_elements import (
     PyiImport,
     PyiModule,
     PyiScope,
-    PyiSignature,
 )
 from ..parsing.comments import CommentIndex
 from ..postprocessing.normalize_names import _CYTHON_TRANSLATIONS
@@ -39,7 +37,6 @@ from .declarations import (
     convert_enum,
     convert_import,
     convert_struct_or_union,
-    convert_struct_or_union_type,
 )
 from .docstrings import docstring_to_string
 from .fused_types import (
@@ -51,39 +48,18 @@ from .fused_types import (
 )
 from .signature import get_signature
 from .source_extraction import get_bases, get_decorators, get_metaclass, get_source
-from .type_comments import apply_type_comments
-from .type_parsing import (
-    extract_name_and_type,
-    get_cdef_variables,
-    render_pyrex_type,
+from .static_annotations import (
+    _is_readonly_cdef_attribute,
+    convert_declared_entries,
+    recover_static_annotations,
 )
+from .type_comments import apply_type_comments
+from .type_parsing import extract_name_and_type, get_cdef_variables
 
 _CXX_FROM_CIMPORT_RE = re.compile(
     r"^\s*from\s+(?:libcpp|libc)(?:\.[^\s]+)?\s+cimport\b"
 )
 _CXX_CIMPORT_RE = re.compile(r"^\s*cimport\s+(?:libcpp|libc)(?:\.|\b)")
-
-
-def _is_readonly_cdef_attribute(
-    cdef_variable: Nodes.CVarDefNode | Nodes.PropertyNode,
-) -> bool:
-    """Whether a `cdef_variables` entry came from `cdef readonly` (as
-    opposed to `cdef public`, or a real read/write `@property`).
-
-    A raw `CVarDefNode` (the pre-pipeline fallback shape -- see
-    `ScopeVisitor.visit_CVarDefNode`) carries its own `visibility`
-    directly. A `PropertyNode` reaching `cdef_variables` at all is
-    always either the synthesized pair for `cdef public` (has a
-    `__set__`) or, identically shaped, a real read/write property with
-    a setter -- `visit_PropertyNode` already routes every setter-less
-    `PropertyNode` that isn't one of those to `property_getters`
-    instead, so a `PropertyNode` with no `__set__` reaching here can
-    only be the synthesized getter-only pair for `cdef readonly`.
-    """
-    if isinstance(cdef_variable, Nodes.PropertyNode):
-        stats = getattr(cdef_variable.body, "stats", None) or ()
-        return not any(getattr(s, "name", None) == "__set__" for s in stats)
-    return getattr(cdef_variable, "visibility", None) == "readonly"
 
 
 def _substitute_ctypedef_aliases_in_assignment(
@@ -173,41 +149,6 @@ class ConversionError(Exception):
     """An error occurred during the conversion process."""
 
 
-def _convert_declared_function(name: str, t) -> PyiFunction:
-    """Convert a function-shaped Entry's `CFuncType` -- no surviving
-    `CFuncDefNode`/`DefNode` (e.g. a `cpdef` declared directly inside
-    `cdef extern from ...:`, with no body of its own) -- to a
-    `PyiFunction`.
-
-    No default values: `CFuncTypeArg` carries no default-value
-    information at all (defaults live on the original AST node, which
-    doesn't survive), so an argument with a real default renders without
-    one here. A narrower result than the structural path gives, but
-    still a real, usable signature rather than nothing.
-    """
-    args = [
-        PyiArgument(
-            name=arg.name or f"arg{i}",
-            annotation=with_debug_fallback(
-                render_pyrex_type(arg.type),
-                "_typeshed.Incomplete",
-                lambda name_=arg.name: f"Unable to determine type for {name_}",
-            ),
-        )
-        for i, arg in enumerate(t.args)
-    ]
-    return_type = with_debug_fallback(
-        render_pyrex_type(t.return_type),
-        "_typeshed.Incomplete",
-        lambda: f"Unable to determine return type for {name}",
-    )
-    return PyiFunction(
-        name=name,
-        is_async=False,
-        signature=PyiSignature(args=args, return_type=return_type),
-    )
-
-
 @dataclass
 class Converter:
     """Converts Cython AST visitors to PyiElements for code generation.
@@ -295,163 +236,6 @@ class Converter:
                 python_type = _CYTHON_TRANSLATIONS.get(original)
                 if python_type:
                     self.cimport_alias_map[alias] = python_type
-
-    @staticmethod
-    def _recover_static_annotations(
-        visitor: ScopeVisitor,
-        handled_names: set[str],
-        ctypedef_aliases: dict[str, str] | None,
-    ) -> list[tuple[int, PyiAssignment]]:
-        """Recover bare (no-value) annotated attributes, each paired with
-        its original source line.
-
-        `AnalyseDeclarationsTransform` folds every bare-annotated
-        attribute in a scope (`x: int`, no `= ...`) into a single
-        synthetic `__annotations__ = {...}` dict, destroying both the
-        individual declarations *and* their interleaving with whatever
-        ordinary, value-having assignments (`y: int = 0`) sit alongside
-        them in the same scope. The line number recovered here (from the
-        pre-pipeline snapshot -- see `type_parsing.capture_static_types`)
-        is what lets `convert_scope` re-interleave the two by original
-        source position instead of dumping every recovered attribute
-        after every real one, which silently reorders a dataclass's
-        fields relative to its own source and can turn a valid field
-        order into one `dataclasses`/mypy rejects (a default-less field
-        put after one that has a default).
-        """
-        assignments = []
-        for name, type_str, line in (
-            getattr(visitor.node, "_stubgen_static_annotations", ()) or ()
-        ):
-            if name in handled_names:
-                continue
-            type_str = _substitute_ctypedef_aliases(type_str, ctypedef_aliases or {})
-            assignments.append((line, PyiAssignment(f"{name}: {type_str}", name=name)))
-            handled_names.add(name)
-        return assignments
-
-    @staticmethod
-    def _convert_declared_entry(
-        visitor: ScopeVisitor,
-        name: str,
-        entry,
-        ctypedef_aliases: dict[str, str] | None,
-    ) -> tuple[
-        PyiAssignment | None,
-        PyiEnum | None,
-        PyiClass | None,
-        PyiFunction | None,
-    ]:
-        t = entry.type
-        if entry.is_type:
-            if getattr(t, "is_enum", False) or getattr(t, "is_cpp_enum", False):
-                if entry.create_wrapper:
-                    return (
-                        None,
-                        PyiEnum(enum_name=name, names=list(t.values)),
-                        None,
-                        None,
-                    )
-                return (
-                    PyiAssignment(
-                        f"{name}: typing_extensions.TypeAlias = int", name=name
-                    ),
-                    None,
-                    None,
-                    None,
-                )
-            if getattr(t, "is_struct_or_union", False):
-                return None, None, convert_struct_or_union_type(t), None
-            return None, None, None, None
-
-        if entry.is_cfunction:
-            function = (
-                _convert_declared_function(name, t) if entry.create_wrapper else None
-            )
-            return None, None, None, function
-
-        if not entry.is_variable or not (
-            visitor.in_class and entry.visibility in ("public", "readonly")
-        ):
-            return None, None, None, None
-        type_name = render_pyrex_type(t)
-        resolved = with_debug_fallback(
-            type_name,
-            "_typeshed.Incomplete",
-            lambda name_=name: f"Unable to determine type for {name_}",
-        )
-        resolved = _substitute_ctypedef_aliases(resolved, ctypedef_aliases or {})
-        return PyiAssignment(f"{name}: {resolved}", name=name), None, None, None
-
-    def _convert_declared_entries(
-        self,
-        visitor: ScopeVisitor,
-        handled_names: set[str],
-        ctypedef_aliases: dict[str, str] | None = None,
-    ) -> tuple[
-        list[PyiAssignment],
-        list[PyiEnum | PyiAssignment],
-        list[PyiClass],
-        list[PyiFunction],
-    ]:
-        """Catch declarations with no surviving AST node in this scope.
-
-        Once real declaration analysis runs, a declaration with no
-        runtime/executable component (an uninitialized variable, a
-        ``cdef enum``, a ``cdef struct``/``union``, a ``cdef fused`` type
-        with no methods) is removed from the tree entirely and exists
-        only as a ``Symtab.Entry``. `visitor`'s structural walk
-        (``visit_CVarDefNode``, etc.) can only find what's still a node;
-        this fills in the rest by walking `visitor.node.scope.entries`
-        directly and skipping anything already captured structurally
-        (`handled_names`) or not actually declared in this scope
-        (`entry.scope is not scope` -- an imported/foreign name, already
-        handled separately by `ImportVisitor`).
-        """
-        scope = getattr(visitor.node, "scope", None)
-        if scope is None:
-            return [], [], [], []
-
-        extra_assignments: list[PyiAssignment] = []
-        extra_enums: list[PyiEnum | PyiAssignment] = []
-        extra_structs: list[PyiClass] = []
-        extra_functions: list[PyiFunction] = []
-
-        for name, entry in scope.entries.items():
-            if name in handled_names or (name.startswith("__") and name.endswith("__")):
-                continue
-            if name.startswith("__pyx_"):
-                continue
-            if not name.isidentifier():
-                # Not a name Python code could ever reference, so not
-                # worth a declaration -- and, unlike `__pyx_`-prefixed
-                # internal names, not reliably prefix-matchable. Seen in
-                # practice: Cython auto-generates a by-value return
-                # struct for an unspecialized fused `ctypedef fused`
-                # ctuple (e.g. `(floating, floating)` where `floating`
-                # is never resolved to a concrete type), named from
-                # `PyrexTypes.c_tuple_type`'s own internal placeholder
-                # cname (`"<dummy fused ctuple ...>"`, by its own
-                # comment "should never end up in code") plus a
-                # `_struct` suffix -- emitting it verbatim as a class
-                # name produced invalid Python syntax.
-                continue
-            if entry.scope is not scope:
-                continue
-
-            assignment, enum, struct, function = self._convert_declared_entry(
-                visitor, name, entry, ctypedef_aliases
-            )
-            if assignment is not None:
-                extra_assignments.append(assignment)
-            if enum is not None:
-                extra_enums.append(enum)
-            if struct is not None:
-                extra_structs.append(struct)
-            if function is not None:
-                extra_functions.append(function)
-
-        return extra_assignments, extra_enums, extra_structs, extra_functions
 
     def _convert_cdef_assignments(
         self,
@@ -586,7 +370,7 @@ class Converter:
         ``__init__`` regardless of Python visibility -- but it never
         becomes a `PropertyNode`/`CVarDefNode` `_convert_cdef_assignments`
         walks (there's no Python-visible property to render), so it never
-        makes it into `cdef_resolved_types`. `type_parsing.capture_static_types`'
+        makes it into `cdef_resolved_types`. `static_annotations.capture_static_types`'
         pre-pipeline ``_stubgen_static_property_types`` snapshot still has
         it (from either its raw ``cdef`` declaration or a Python-style
         annotation -- see `_capture_property_type`/
@@ -981,15 +765,15 @@ class Converter:
             visitor, functions, cdef_handled_names
         )
 
-        # Recovered here, before `_convert_declared_entries`, so its
+        # Recovered here, before `convert_declared_entries`, so its
         # `handled_names.add(name)` calls (mutating the same set) are
         # visible to that call's `scope.entries` walk and it doesn't
         # also emit a duplicate fallback entry for the same name.
-        recovered_annotations = self._recover_static_annotations(
+        recovered_annotations = recover_static_annotations(
             visitor, handled_names, ctypedef_aliases
         )
         # Merged into `conv_assignments_with_source` by original source
-        # line (see `_recover_static_annotations`'s docstring) rather
+        # line (see `recover_static_annotations`'s docstring) rather
         # than appended separately after pruning: a bare `x: int`
         # attribute and an ordinary `y: int = 0` one in the same class
         # are two arbitrarily-interleaved buckets by the time they reach
@@ -1013,7 +797,7 @@ class Converter:
         ]
 
         extra_assignments, extra_enums, extra_structs, extra_functions = (
-            self._convert_declared_entries(visitor, handled_names, ctypedef_aliases)
+            convert_declared_entries(visitor, handled_names, ctypedef_aliases)
         )
         functions = functions + extra_functions
 

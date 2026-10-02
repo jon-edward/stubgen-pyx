@@ -1,5 +1,5 @@
 """Direct unit tests for `conversion/signature.py`'s smaller helpers:
-`_decode_or_pass`'s type validation, and the annotation-extraction
+`decode_or_pass`'s type validation, and the annotation-extraction
 fallback chain's edge cases.
 """
 
@@ -11,27 +11,27 @@ import pytest
 from Cython.Compiler import Nodes
 
 from stubgen_pyx.conversion.signature import (
-    _decode_or_pass,
     _get_annotation,
     _get_return_type_annotation,
     get_signature,
 )
+from stubgen_pyx.conversion.utils import decode_or_pass
 
 sys.path.insert(0, "tests")
 from test_type_parsing import _first_node
 
 
 def test_decode_or_pass_decodes_bytes():
-    assert _decode_or_pass(b"hello") == "hello"
+    assert decode_or_pass(b"hello") == "hello"
 
 
 def test_decode_or_pass_passes_through_str():
-    assert _decode_or_pass("hello") == "hello"
+    assert decode_or_pass("hello") == "hello"
 
 
 def test_decode_or_pass_raises_for_anything_else():
     with pytest.raises(TypeError, match="Expected str or bytes"):
-        _decode_or_pass(123)  # type: ignore[arg-type]
+        decode_or_pass(123)  # type: ignore[arg-type]
 
 
 def test_get_annotation_tolerates_attribute_error():

@@ -113,7 +113,7 @@ def get_decorators(
     """Return decorator source strings for a function or class node.
 
     Checks for decorators stashed by
-    ``type_parsing.capture_static_types`` first: ``node.decorators`` is
+    ``static_annotations.capture_static_types`` first: ``node.decorators`` is
     cleared by ``AnalyseDeclarationsTransform`` as part of rewriting a
     real decorator into an equivalent `f = decorator(f)` assignment (see
     that function's docstring) -- by the time this runs, on the

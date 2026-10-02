@@ -8,7 +8,7 @@ from Cython.Compiler import Parsing
 from Cython.Compiler.Scanning import PyrexScanner, StringSourceDescriptor
 
 from stubgen_pyx.config import StubgenPyxConfig
-from stubgen_pyx.conversion import type_parsing
+from stubgen_pyx.conversion import static_annotations, type_parsing
 from stubgen_pyx.conversion.type_parsing import Nodes as type_parsing_Nodes
 from stubgen_pyx.parsing.context import StubgenContext
 from stubgen_pyx.parsing.parser import _DEFAULT_MODULE_NAME, _resolve_scope
@@ -330,7 +330,7 @@ class TestCaptureStaticTypesRobustness:
                 raise AttributeError("simulated")
 
         node = _RaisesOnBaseType()
-        type_parsing._capture_static_types_recursive(node, None, set())
+        static_annotations._capture_static_types_recursive(node, None, set())
         assert not hasattr(node, "_stubgen_static_type")
 
 

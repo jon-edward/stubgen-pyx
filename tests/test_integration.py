@@ -59,6 +59,43 @@ def greet(name: str) -> str:
     assert "greet someone" in result.lower()
 
 
+def test_classmethod_cls_type_uses_type_import_resolution(temp_dir):
+    pyx_file = temp_dir / "test.pyx"
+    pyx_file.write_text("""
+cdef class Factory:
+    @classmethod
+    def make(cls):
+        pass
+
+    @classmethod
+    def explicit(cls: object):
+        pass
+""")
+
+    result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+
+    assert "import builtins" not in result
+    assert "def make(cls: type): ..." in result
+    assert "def explicit(cls: object): ..." in result
+
+
+def test_classmethod_cls_type_stays_qualified_when_type_is_shadowed(temp_dir):
+    pyx_file = temp_dir / "test.pyx"
+    pyx_file.write_text("""
+type = object
+
+cdef class Factory:
+    @classmethod
+    def make(cls):
+        pass
+""")
+
+    result = StubgenPyx().convert_str(pyx_file.read_text(), pyx_path=pyx_file)
+
+    assert "import builtins" in result
+    assert "def make(cls: builtins.type): ..." in result
+
+
 def test_convert_glob_empty_pattern(temp_dir):
     """Test glob conversion with no matches."""
     config = StubgenPyxConfig(verbose=True)

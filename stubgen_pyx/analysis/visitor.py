@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from Cython.Compiler import ExprNodes, ModuleNode, Nodes
 from Cython.Compiler.Visitor import TreeVisitor
 
+from ..conversion.type_parsing import _declarator_name
+
 
 def _collect_fused_specialization_ids(
     node, out: set[int], _seen: set[int] | None = None
@@ -18,7 +20,7 @@ def _collect_fused_specialization_ids(
     should skip in favor of visiting ``FusedCFuncDefNode.node`` itself.
 
     Uses a raw, independent walk via ``child_attrs`` (same approach as
-    ``type_parsing.capture_static_types``) rather than relying on
+    ``static_annotations.capture_static_types``) rather than relying on
     traversal order within ``ScopeVisitor.visitchildren``: a
     ``FusedCFuncDefNode``'s own ``child_attrs`` doesn't include ``.node``/
     ``.nodes``/``.py_func``, so those are only reachable this way, and
@@ -226,7 +228,7 @@ class ScopeVisitor(TreeVisitor):
         corresponding function/method is already captured directly via
         its ``DefNode`` (with the decorator itself re-emitted from the
         pre-pipeline ``_stubgen_static_decorators`` snapshot -- see
-        ``type_parsing.capture_static_types``), so keeping this
+        ``static_annotations.capture_static_types``), so keeping this
         rebinding too would emit it a second time, as a bogus module/
         class-level assignment. Most of the time this shape fails to
         unparse on its own (the call's argument is usually a
@@ -256,8 +258,8 @@ class ScopeVisitor(TreeVisitor):
             # folds every bare-annotated attribute in this scope into (module or
             # plain-class body). The individually-typed attributes it was built
             # from are recovered separately from `_stubgen_static_annotations`
-            # (captured pre-pipeline, see `type_parsing.capture_static_types`)
-            # and emitted by `Converter._convert_declared_entries`; keeping this
+            # (captured pre-pipeline, see `static_annotations.capture_static_types`)
+            # and emitted by `static_annotations.convert_declared_entries`; keeping this
             # synthetic node too would emit a bogus, TypedDict-invalid
             # `__annotations__ = {...}` module/class-level assignment.
             return node
@@ -406,10 +408,6 @@ class ScopeVisitor(TreeVisitor):
         here is not just imprecise but actively false: nothing in real
         Python code could ever be assigned to or receive that alias.
         """
-        from ..conversion.type_parsing import (
-            _declarator_name,  # local: avoids a circular import with conversion.converter
-        )
-
         name = _declarator_name(node.declarator)
         scope = getattr(self.node, "scope", None)
         entry = scope.entries.get(name) if scope is not None and name else None

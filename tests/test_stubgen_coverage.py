@@ -19,8 +19,9 @@ import pytest
 from Cython.Compiler import Errors as CythonErrors
 
 from stubgen_pyx.config import StubgenPyxConfig
+from stubgen_pyx.models.merge import _merge_classes
 from stubgen_pyx.models.pyi_elements import PyiClass, PyiScope
-from stubgen_pyx.stubgen import StubgenPyx, _log_diagnostics, _merge_classes
+from stubgen_pyx.stubgen import StubgenPyx, _log_diagnostics
 
 
 @pytest.fixture
