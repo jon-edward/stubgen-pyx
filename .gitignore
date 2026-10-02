@@ -179,6 +179,10 @@ tests/fixtures/*.so
 /arrow
 /spaCy
 /h5py
+/cuda-python
 
 # profiling output
 *.prof
+
+# other dev artifacts
+call_graph.html

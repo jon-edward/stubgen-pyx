@@ -114,6 +114,10 @@ class _NameCollector(ast.NodeVisitor):
 
     def visit_Assign(self, node: ast.Assign) -> ast.Assign:
         """Special case for __all__ assignment."""
+        if self.add_declared:
+            for target in node.targets:
+                self._add_declared_target(target)
+
         if (
             isinstance(node.targets[0], ast.Name)
             and node.targets[0].id == "__all__"
@@ -128,3 +132,10 @@ class _NameCollector(ast.NodeVisitor):
 
         self.visit(node.value)
         return node
+
+    def _add_declared_target(self, target: ast.expr) -> None:
+        if isinstance(target, ast.Name):
+            self.names.add(target.id)
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for element in target.elts:
+                self._add_declared_target(element)

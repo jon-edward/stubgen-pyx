@@ -5,76 +5,120 @@ from __future__ import annotations
 import logging
 
 from Cython.Compiler import ExprNodes, Nodes
+from Cython.Compiler import PyrexTypes as _PyrexTypes
 
 from ..logging_utils import with_debug_fallback
+from .pyrex_types import (
+    _CYTHON_TO_NUMPY_SCALAR,
+    parameterize_builtin_generic,
+    render_pyrex_type,
+)
 from .unparse import unparse_expr
+from .utils import decode_or_pass
 
 _logger = logging.getLogger(__name__)
 
-_CYTHON_TO_NUMPY_SCALAR: dict[str, str] = {
-    "bint": "bool_",
-    "bool": "bool_",
-    "char": "byte",
-    "signed char": "int8",
-    "short": "short",
-    "short int": "short",
-    "int": "intc",
-    "long": "int_",
-    "long int": "int_",
-    "long long": "longlong",
-    "long long int": "longlong",
-    "unsigned char": "ubyte",
-    "unsigned short": "ushort",
-    "unsigned short int": "ushort",
-    "unsigned int": "uintc",
-    "unsigned long": "uint",
-    "unsigned long int": "uint",
-    "unsigned long long": "ulonglong",
-    "unsigned long long int": "ulonglong",
-    "int8_t": "int8",
-    "int16_t": "int16",
-    "int32_t": "int32",
-    "int64_t": "int64",
-    "uint8_t": "uint8",
-    "uint16_t": "uint16",
-    "uint32_t": "uint32",
-    "uint64_t": "uint64",
-    "Py_ssize_t": "intp",
-    "size_t": "uintp",
-    "Py_intptr_t": "intp",
-    "float": "single",
-    "double": "double",
-    "long double": "longdouble",
-    "float complex": "complex64",
-    "double complex": "complex128",
-}
-
-_CYTHON_BUILTIN_GENERIC_MAPPING: dict[str, str] = {
-    "tuple": "tuple[typing.Any, ...]",
-    "list": "list[typing.Any]",
-    "dict": "dict[typing.Any, typing.Any]",
-    "set": "set[typing.Any]",
-}
+# Cython 3.3 renamed the const/volatile declarator and base-type node
+# classes (`CConstDeclaratorNode` -> `CQualifierDeclaratorNode`,
+# `CConstOrVolatileTypeNode` -> `CQualifierTypeNode`, the latter now
+# also covering `restrict`), keeping the same attribute shape
+# (`.base`/`.base_type`, `.is_const`, `.is_volatile`). Resolved once
+# here so the rest of this module can use one name regardless of which
+# Cython version (>=3.0) is installed.
+_ConstDeclaratorNode = (
+    getattr(Nodes, "CQualifierDeclaratorNode", None) or Nodes.CConstDeclaratorNode
+)
+_ConstOrVolatileTypeNode = (
+    getattr(Nodes, "CQualifierTypeNode", None) or Nodes.CConstOrVolatileTypeNode
+)
 
 
-def parameterize_builtin_generic(name: str | None) -> str | None:
-    """Map bare Cython container names to Any-filled Python generics."""
-    if name is None:
+def _extract_resolved_type(node) -> str | None:
+    resolved_type = getattr(node, "type", None) or getattr(
+        getattr(node, "entry", None), "type", None
+    )
+    expected = resolved_type is None or (
+        resolved_type is _PyrexTypes.py_object_type
+        or isinstance(node, (Nodes.CFuncDefNode, Nodes.DefNode))
+    )
+    if expected:
+        if resolved_type is None:
+            _logger.debug("Unknown base type: %s", type(node).__name__)
         return None
-    return _CYTHON_BUILTIN_GENERIC_MAPPING.get(name, name)
+    rendered = render_pyrex_type(resolved_type)
+    if rendered is not None:
+        return rendered
+    _logger.debug("Unknown base type: %s", type(node).__name__)
+    return None
+
+
+def _extract_structural_type(node, base_type, is_ptr: bool) -> str | None:
+    if not is_ptr:
+        is_ptr = isinstance(getattr(node, "declarator", None), Nodes.CPtrDeclaratorNode)
+
+    if isinstance(base_type, Nodes.CTupleBaseTypeNode):
+        return _extract_tuple_type(base_type)
+    if isinstance(base_type, Nodes.TemplatedTypeNode):
+        return _extract_templated_type(base_type)
+    if isinstance(base_type, Nodes.MemoryViewSliceTypeNode):
+        return _extract_memoryview_type(base_type)
+
+    name = _type_from_base_type_name(base_type)
+    if isinstance(node, Nodes.CVarDefNode) and name is None:
+        return "typing.Any"
+    if is_ptr and name == "char":
+        return "bytes"
+    if is_ptr and name == "void":
+        return "typing.Any"
+    return parameterize_builtin_generic(name)
+
+
+def extract_type_from_base_type(node, is_ptr: bool = False) -> str | None:
+    """Extract a type annotation string from a base_type node.
+
+    Handles plain named types, pointer types (``char *`` -> ``bytes``),
+    tuple types, C++ templated types, fixed-size C arrays, and typed
+    memoryviews.
+
+    Checks for a value stashed by `static_annotations.capture_static_types`
+    first: some
+    Python-generic-parameterized types (``list[int]``) lose their
+    parameters once resolved to a real `PyrexTypes.Type` (there's no
+    equivalent to `CppClassType.templates` for them), so a pre-pipeline
+    snapshot of the structural extraction can be strictly more precise
+    than either a live walk of the (possibly since-cleared) node or the
+    `Entry`/`Type` fallback below. Only trusted when it's a real result;
+    a captured `None` falls through to the logic below instead, since
+    `Entry`/`Type` info didn't exist yet at capture time and might still
+    resolve something now.
+    """
+    static_type = getattr(node, "_stubgen_static_type", None)
+    if static_type is not None:
+        return static_type
+
+    try:
+        base_type = node.base_type
+        if isinstance(base_type, _ConstOrVolatileTypeNode):
+            base_type = base_type.base_type
+    except AttributeError:
+        if isinstance(node, ExprNodes.ExprNode):
+            return unparse_expr(node)
+        base_type = None
+
+    if base_type is None:
+        return _extract_resolved_type(node)
+    return _extract_structural_type(node, base_type, is_ptr)
 
 
 def _declarator_name(
-    decl: Nodes.CNameDeclaratorNode
-    | Nodes.CPtrDeclaratorNode
-    | Nodes.CConstDeclaratorNode,
+    decl: Nodes.CNameDeclaratorNode | Nodes.CPtrDeclaratorNode | _ConstDeclaratorNode,
 ) -> str | None:
     """Recursively unwrap pointer/const/func declarators to reach the name."""
     if isinstance(
         decl,
         (
             Nodes.CPtrDeclaratorNode,
-            Nodes.CConstDeclaratorNode,
+            _ConstDeclaratorNode,
             Nodes.CFuncDeclaratorNode,
             Nodes.CArrayDeclaratorNode,
         ),
@@ -139,18 +183,57 @@ def extract_name_and_type(node) -> tuple[str | None, str | None]:
     return name, typ
 
 
-def get_cdef_variables(node: Nodes.CVarDefNode) -> list[tuple[str, str | None]]:
+def get_cdef_variables(
+    node: Nodes.CVarDefNode | Nodes.PropertyNode,
+) -> list[tuple[str, str | None]]:
     """Return ``(name, type)`` pairs for every declarator in a cdef statement.
 
     A single ``cdef public int x, y, z`` node can contain multiple declarators.
     Fixed-size array types (``char[N]``, ``int[N][M]``) are resolved via the
     base_type's ``TemplatedTypeNode``; pointer declarators on ``char`` emit
     ``"bytes"``; function-pointer declarators emit ``"Callable"``.
+
+    Also accepts a ``PropertyNode`` -- what ``cdef public``/``cdef readonly``
+    attributes on an extension type become once real declaration analysis
+    has run (``AnalyseDeclarationsTransform`` synthesizes a property with
+    ``__get__``/``__set__`` in place of the original ``CVarDefNode``), and
+    the exact same shape a real, source-level ``@property``-decorated
+    ``def`` method takes too. Always exactly one name; the type comes from
+    the property's own ``__get__`` return annotation when the source wrote
+    one, or from the property's ``Entry`` otherwise (see below).
     """
+    if isinstance(node, Nodes.PropertyNode):
+        # A `@property`-decorated `def` method becomes this exact same
+        # `PropertyNode` shape once real declaration analysis runs --
+        # not just a `cdef public`/`cdef readonly` C attribute -- but
+        # its `entry.type` is always the generic `PyObjectType`
+        # ("object"): Cython has no reason to track anything more
+        # specific for a plain Python property at the Entry/Type level.
+        # The real declared type, when the source wrote one (`-> int`),
+        # survives instead on the synthesized `__get__` method's own
+        # `return_type_annotation` -- checked first and preferred over
+        # `entry.type` whenever present.
+        entry = node.entry
+        type_name = render_pyrex_type(entry.type) if entry else None
+        getter = next(
+            (
+                s
+                for s in getattr(node.body, "stats", ())
+                if getattr(s, "name", None) == "__get__"
+            ),
+            None,
+        )
+        annotation_node = getattr(getter, "return_type_annotation", None)
+        if annotation_node is not None:
+            type_name = parameterize_builtin_generic(
+                decode_or_pass(annotation_node.string.value)
+            )
+        return [(node.name, type_name)]
+
     accepted = (
         Nodes.CNameDeclaratorNode,
         Nodes.CPtrDeclaratorNode,
-        Nodes.CConstDeclaratorNode,
+        _ConstDeclaratorNode,
         Nodes.CFuncDeclaratorNode,
         Nodes.CArrayDeclaratorNode,
     )
@@ -192,48 +275,38 @@ def _type_from_base_type_name(base_type) -> str | None:
     return name
 
 
-def extract_type_from_base_type(node, is_ptr: bool = False) -> str | None:
-    """Extract a type annotation string from a base_type node.
+def _fused_member_name(node: Nodes.Node) -> str | None:
+    """Return a dotted type name for a simple or templated fused-type
+    member node, or None.
 
-    Handles plain named types, pointer types (``char *`` -> ``bytes``),
-    tuple types, C++ templated types, fixed-size C arrays, and typed
-    memoryviews.
+    Used only for ``ctypedef fused`` member type nodes (``node.types`` on
+    a ``FusedTypeNode``), which are always a simple or (rarely) templated
+    base-type node -- never anything `extract_type_from_base_type`'s
+    fuller machinery is needed for. Kept name-only (no full type
+    extraction) deliberately: this runs pre-pipeline, in
+    `static_annotations.capture_static_types`, specifically so it works from raw syntax
+    alone -- no `Entry`/`Type` resolution required -- see that function's
+    docstring for why a fused type's own members can't always wait for
+    resolution (a member naming an extension type declared only in the
+    companion `.pyx`, not the `.pxd` doing the fused declaration, never
+    resolves during the `.pxd`'s own, separate pipeline run).
     """
-    try:
-        base_type = node.base_type
-        if isinstance(base_type, Nodes.CConstOrVolatileTypeNode):
-            base_type = base_type.base_type
-    except AttributeError:
-        if isinstance(node, ExprNodes.ExprNode):
-            return unparse_expr(node)
-        _logger.debug("Unknown base type: %s", type(node).__name__)
-        return None
+    while isinstance(node, Nodes.TemplatedTypeNode):
+        node = node.base_type_node
+    if isinstance(node, Nodes.CSimpleBaseTypeNode):
+        return ".".join(node.module_path + [node.name])
+    return None
 
-    # CArgDeclNode carries a single .declarator; check it for pointer-ness.
-    if not is_ptr:
-        is_ptr = isinstance(getattr(node, "declarator", None), Nodes.CPtrDeclaratorNode)
 
-    if isinstance(base_type, Nodes.CTupleBaseTypeNode):
-        return _extract_tuple_type(base_type)
-    if isinstance(base_type, Nodes.TemplatedTypeNode):
-        return _extract_templated_type(base_type)
-    if isinstance(base_type, Nodes.MemoryViewSliceTypeNode):
-        return _extract_memoryview_type(base_type)
-
-    name = _type_from_base_type_name(base_type)
-
-    if isinstance(node, Nodes.CVarDefNode) and name is None:
-        # CVarDefNode may not have a named type, e.g. ``cdef public x``.
-        # In this case, use ``typing.Any`` without debug message.
-        return "typing.Any"
-
-    if is_ptr and name == "char":
-        return "bytes"
-
-    if is_ptr and name == "void":
-        return "typing.Any"
-
-    return parameterize_builtin_generic(name)
+def _cvardef_declarator_name(declarator) -> str | None:
+    """The name a `CVarDefNode`'s declarator declares, unwrapping a
+    pointer/const wrapper -- same shape as `signature._to_argument`'s
+    equivalent unwrapping for an argument declarator, used here for
+    `static_annotations.capture_static_types`'s property-type-by-name capture.
+    """
+    while isinstance(declarator, (Nodes.CPtrDeclaratorNode, _ConstDeclaratorNode)):
+        declarator = declarator.base
+    return getattr(declarator, "name", None) or None
 
 
 def _extract_tuple_type(node: Nodes.CTupleBaseTypeNode) -> str:

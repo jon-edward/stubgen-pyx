@@ -59,6 +59,31 @@ class _Unparser(ExpressionWriter):
             return
         self.found_unknown = node
 
+    def visit_TypecastNode(self, node):
+        """Render a C-style cast (``<int> x``) as ``typing.cast(int, x)``.
+
+        ``<type> expr`` is not Python syntax at all -- left as-is, the
+        surrounding statement fails `ast.parse` in whatever caller reads
+        this expression's text (`declarations.convert_assignment`'s own
+        fallback then can't parse the raw source either, since that's
+        the exact same invalid syntax), and the whole statement is
+        dropped. `typing.cast`'s first argument is inert to a type
+        checker (accepts any expression, including a plain name), so
+        the cast's declared type renders exactly like any other type
+        annotation elsewhere in this module -- through
+        `type_parsing.extract_type_from_base_type`, imported locally to
+        avoid a circular import (`type_parsing` imports `unparse_expr`
+        from this module already).
+        """
+        from .type_parsing import (  # avoids a circular import with type_parsing.py
+            extract_type_from_base_type,
+        )
+
+        type_str = extract_type_from_base_type(node) or "_typeshed.Incomplete"
+        self.put(f"typing.cast({type_str}, ")
+        self.visit(node.operand)
+        self.put(")")
+
     def visit_UnopNode(self, node):
         op = node.operator
 

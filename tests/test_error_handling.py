@@ -121,6 +121,81 @@ class TestStubgenErrorHandling:
             result = stubgen.convert_glob(str(tmppath / "*.pyx"))
             assert isinstance(result[0], ConversionResult)
 
+    def test_unresolved_cimport_does_not_fail_conversion(self, caplog):
+        """A `cimport` from a package that isn't installed here doesn't fail.
+
+        A stub generator can't assume every dependency the source
+        references is importable in this environment (e.g. a CI job
+        without a full dev environment installed) -- see
+        `parsing/pipeline.py::run_stub_pipeline`. The declaration touched
+        by the unresolved `cimport` is dropped from the stub, but the
+        conversion as a whole still succeeds, and what's known (`make`'s
+        own signature) is unaffected.
+        """
+        caplog.set_level("WARNING")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmppath = Path(tmpdir)
+            pyx_file = tmppath / "uses_missing_dep.pyx"
+            pyx_file.write_text(
+                "from definitely_not_installed.types cimport SomeCType\n"
+                "\n"
+                "cdef class Wrapper:\n"
+                "    cdef SomeCType raw\n"
+                "\n"
+                "def make() -> int:\n"
+                "    return 1\n"
+            )
+
+            config = StubgenPyxConfig(continue_on_error=False)
+            stubgen = StubgenPyx(config=config)
+
+            results = stubgen.convert_glob(str(pyx_file))
+            assert len(results) == 1
+            result = results[0]
+
+            assert result.success is True
+            assert "def make() -> int: ..." in result.pyi_file.read_text()
+
+            # The unresolved cimport is recorded, not swallowed silently.
+            assert len(result.diagnostics) > 0
+            assert "skipped" in result.status_message
+
+            # ... and actually logged, so a CI run watching only its
+            # console output still sees that something was dropped.
+            assert any(
+                "definitely_not_installed" in record.message
+                or "not found" in record.message
+                for record in caplog.records
+            )
+
+    def test_clean_file_has_no_diagnostics(self, caplog):
+        """A file with nothing unresolved gets an empty diagnostics list and no warnings."""
+        caplog.set_level("WARNING")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmppath = Path(tmpdir)
+            pyx_file = tmppath / "clean.pyx"
+            pyx_file.write_text("def hello(x: int) -> str:\n    return str(x)\n")
+
+            stubgen = StubgenPyx()
+            results = stubgen.convert_glob(str(pyx_file))
+
+            assert len(results) == 1
+            assert results[0].diagnostics == []
+            assert "skipped" not in results[0].status_message
+            assert len(caplog.records) == 0
+
+    def test_convert_str_logs_diagnostics(self, caplog):
+        """The string API (`convert_str`) surfaces diagnostics too, not just file conversion."""
+        caplog.set_level("WARNING")
+        stubgen = StubgenPyx()
+        stubgen.convert_str(
+            "from definitely_not_installed.types cimport SomeCType\n"
+            "\n"
+            "cdef class Wrapper:\n"
+            "    cdef SomeCType raw\n"
+        )
+        assert len(caplog.records) > 0
+
     def test_convert_glob_with_no_files_no_error(self):
         """Test glob with no matches doesn't error."""
         with tempfile.TemporaryDirectory() as tmpdir:
