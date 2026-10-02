@@ -40,6 +40,47 @@ class TestParsingEdgeCases:
             with pytest.raises(CompileError):
                 parse_file(pyx_file, StubgenContext())
 
+    def test_parse_file_diagnostic_from_auto_merged_pxd_is_captured(self, temp_dir):
+        """An unresolved `cimport` inside an auto-merged companion `.pxd` surfaces as a diagnostic.
+
+        `_resolve_scope`'s pxd auto-merge (`Context.find_module` ->
+        `Context.process_pxd`) runs a full nested parse-and-analyse
+        pipeline as a side effect of resolving the primary file's scope,
+        before the primary file's own `context.parse()` call. An error
+        reported during that nested pipeline's declaration analysis (as
+        opposed to its raw parse stage, which is `context.parse()`'s own
+        `Errors.hold_errors()` window) has to be caught by
+        `parse_file` itself, or it's silently dropped rather than ending
+        up in `ParsedSource.diagnostics`.
+        """
+        (temp_dir / "has_pxd.pxd").write_text(
+            "cimport definitely_not_installed_xyz\ncdef class Foo:\n    cdef int x\n"
+        )
+        (temp_dir / "has_pxd.pyx").write_text(
+            "cdef class Foo:\n    def bar(self):\n        return self.x\n"
+        )
+
+        context = StubgenContext(include_directories=[str(temp_dir)])
+        result = parse_file(temp_dir / "has_pxd.pyx", context)
+
+        assert len(result.diagnostics) == 1
+        assert "definitely_not_installed_xyz" in str(result.diagnostics[0])
+
+    def test_parse_file_diagnostics_are_isolated_per_file(self, temp_dir):
+        """One file's diagnostics don't leak into the next file's result on a shared context."""
+        (temp_dir / "bad.pxd").write_text("cimport definitely_not_installed_xyz\n")
+        (temp_dir / "bad.pyx").write_text("pass\n")
+        (temp_dir / "clean.pyx").write_text(
+            "def hello(x: int) -> str:\n    return str(x)\n"
+        )
+
+        context = StubgenContext(include_directories=[str(temp_dir)])
+        bad_result = parse_file(temp_dir / "bad.pyx", context)
+        clean_result = parse_file(temp_dir / "clean.pyx", context)
+
+        assert len(bad_result.diagnostics) == 1
+        assert clean_result.diagnostics == []
+
     def test_parse_file_with_complex_code(self):
         """Test parsing complex Cython code."""
         with tempfile.TemporaryDirectory() as tmpdir:

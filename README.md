@@ -121,6 +121,10 @@ stubgen-pyx . --file mymodule.pyx --output-file output/mymodule.pyi
 
 # Exclude certain files from conversion
 stubgen-pyx . --exclude-pattern "**/tests/**" --exclude-pattern "vendor/**"
+
+# Search extra directories for cimport/include targets outside the project
+# (e.g. a third-party .pxd-only package)
+stubgen-pyx . --include-dir /path/to/vendored/pxds
 ```
 
 **Disable specific transformations:**
@@ -156,6 +160,14 @@ stubgen-pyx . --exclude-attribution
 
 # Include private functions in the stub
 stubgen-pyx . --include-private
+
+# Replace a ctypedef alias with its underlying resolved type instead of
+# referencing the alias name
+stubgen-pyx . --resolve-ctypedef-aliases
+
+# Render every argument default as `...` instead of its real value,
+# matching the convention most .pyi stubs use
+stubgen-pyx . --replace-defaults-with-ellipsis
 ```
 
 ### Python API

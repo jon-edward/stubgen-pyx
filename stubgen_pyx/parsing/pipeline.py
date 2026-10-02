@@ -34,7 +34,6 @@ from __future__ import annotations
 
 from typing import Callable, Literal
 
-from Cython.Compiler import Errors
 from Cython.Compiler.Main import Context
 from Cython.Compiler.ParseTreeTransforms import (
     AnalyseDeclarationsTransform,
@@ -48,7 +47,7 @@ from Cython.Compiler.ParseTreeTransforms import (
 )
 from Cython.Compiler.Pipeline import run_pipeline
 
-from .context import _ensure_errors_thread_initialized
+from .context import _ensure_errors_thread_initialized, held_compiler_errors
 
 PipelineMode = Literal["pyx", "pxd"]
 
@@ -141,11 +140,8 @@ def run_stub_pipeline(
     """
 
     _ensure_errors_thread_initialized()
-    held = Errors.hold_errors()
-    try:
+    with held_compiler_errors() as held:
         error, data = run_pipeline(stub_pipeline(context, mode), tree, printtree=False)
-    finally:
-        Errors.release_errors(ignore=True)
 
     diagnostics = list(held)
     if error is not None:

@@ -32,9 +32,9 @@ from Cython.Compiler.Scanning import (
     StringSourceDescriptor,
 )
 
-from ..conversion.type_parsing import capture_static_types
+from ..conversion.static_annotations import capture_static_types
 from .comments import CommentIndex, extract_comments
-from .context import StubgenContext, find_root_package_dir
+from .context import StubgenContext, find_root_package_dir, held_compiler_errors
 from .pipeline import run_stub_pipeline
 
 
@@ -74,8 +74,7 @@ def _check_include_cycles(
     except (OSError, UnicodeDecodeError):
         return
 
-    held = Errors.hold_errors()
-    try:
+    with held_compiler_errors():
         for match in _INCLUDE_PATTERN.finditer(text):
             try:
                 include_path = context.find_include_file(
@@ -93,9 +92,6 @@ def _check_include_cycles(
                 _check_include_cycles(
                     Path(include_path), context, _visiting | {resolved}
                 )
-    finally:
-        Errors.release_errors(ignore=True)
-        del held
 
 
 @dataclass
@@ -198,9 +194,27 @@ def parse_file(
     source_desc = FileSourceDescriptor(str(path))
     initial_pos = (source_desc, 1, 0)
 
-    scope = _resolve_scope(context, module_name, initial_pos, allow_pxd_merge=not pxd)
+    # `_resolve_scope`'s pxd auto-merge (`Context.find_module` ->
+    # `Context.process_pxd`) runs a whole nested parse-and-analyse pipeline
+    # as a side effect -- only its first stage goes through
+    # `context.parse()` (whose own `Errors.hold_errors()` window covers
+    # just that raw parse). Everything after that stage, notably
+    # `AnalyseDeclarationsTransform` (where an unresolved `cimport` inside
+    # the merged `.pxd` is actually reported), runs with no error-holding
+    # frame active at all unless one is already on the stack here, and an
+    # error reported with no active frame is Cython's default (print to
+    # nothing, since no echo/listing file is configured, and otherwise
+    # silently counted) -- it never reaches `ParsedSource.diagnostics`.
+    # This wraps that gap so anything reported during scope resolution
+    # lands in `own_diagnostics` below instead of vanishing.
+    diagnostics_start = len(context._diagnostics)
+    with held_compiler_errors() as resolution_held:
+        scope = _resolve_scope(
+            context, module_name, initial_pos, allow_pxd_merge=not pxd
+        )
+        tree = context.parse(source_desc, scope, pxd=pxd, full_module_name=module_name)
+    own_diagnostics = resolution_held + context._diagnostics[diagnostics_start:]
 
-    tree = context.parse(source_desc, scope, pxd=pxd, full_module_name=module_name)
     tree.scope = scope
     tree.is_pxd = pxd
 
@@ -217,7 +231,7 @@ def parse_file(
         scope=scope,
         context=context,
         comments=comments,
-        diagnostics=result.diagnostics + context._diagnostics,
+        diagnostics=result.diagnostics + own_diagnostics,
     )
 
 
@@ -244,8 +258,7 @@ def parse_str(
     module_name = module_name or _DEFAULT_MODULE_NAME
     context = context or StubgenContext()
 
-    held = Errors.hold_errors()
-    try:
+    with held_compiler_errors():
         for match in _INCLUDE_PATTERN.finditer(source):
             try:
                 include_path = context.find_include_file(match.group(1))
@@ -253,9 +266,6 @@ def parse_str(
                 continue
             if include_path:
                 _check_include_cycles(Path(include_path), context)
-    finally:
-        Errors.release_errors(ignore=True)
-        del held
 
     source_desc = StringSourceDescriptor(module_name, source)
     initial_pos = (source_desc, 1, 0)

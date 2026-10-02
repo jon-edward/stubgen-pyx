@@ -12,7 +12,8 @@ on the context instance (``self.modules``) rather than per call.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Generator, Iterable
+from contextlib import contextmanager
 from pathlib import Path
 
 from Cython import Utils as CythonUtils
@@ -53,6 +54,30 @@ def _ensure_errors_thread_initialized() -> None:
     """
     if not hasattr(Errors.threadlocal, "cython_errors_count"):
         Errors.init_thread()
+
+
+@contextmanager
+def held_compiler_errors() -> Generator[list[Exception]]:
+    """Collect ``Cython.Compiler.Errors`` reports instead of Cython's default handling.
+
+    Wraps ``Errors.hold_errors()``/``Errors.release_errors(ignore=True)``.
+    Any error Cython reports while this is active -- directly, or as a side
+    effect of a nested call that pushes and pops its own further-nested
+    holding frame -- is appended to the yielded list, rather than printed
+    (the default when no frame is active) or replayed into an outer frame
+    (the default on release, suppressed here by ``ignore=True``). Nest
+    freely: ``Errors.hold_errors``/``release_errors`` is a stack, so a
+    nested ``with held_compiler_errors():`` only ever captures what's
+    reported during its own scope.
+
+    Never raises on Cython's behalf -- a caller that needs to tell
+    "recorded" from "fatal" apart checks the yielded list itself.
+    """
+    held = Errors.hold_errors()
+    try:
+        yield held
+    finally:
+        Errors.release_errors(ignore=True)
 
 
 class StubgenContext(Context):
@@ -140,12 +165,20 @@ class StubgenContext(Context):
             return super().search_include_directories(*args, **kwargs)
 
     def parse(self, *args, **kwargs):
-        self._diagnostics = []
-        held = Errors.hold_errors()
-        try:
+        """As ``Context.parse``, additionally accumulating recorded errors onto ``self._diagnostics``.
+
+        Appends rather than replacing: a single ``parse_file``/``parse_str``
+        call can trigger more than one nested ``context.parse()`` call (e.g.
+        a companion ``.pxd`` auto-merged via ``Context.find_module`` is
+        parsed before the primary file is), and a later call replacing
+        ``self._diagnostics`` outright would silently discard an earlier
+        one's diagnostics before the caller ever reads them. Callers that
+        care about isolating one logical parse's diagnostics from another's
+        should snapshot ``len(context._diagnostics)`` before and slice from
+        there after, as ``parser.parse_file`` does.
+        """
+        with held_compiler_errors() as held:
             result = super().parse(*args, **kwargs)
-        finally:
-            Errors.release_errors(ignore=True)
         self._diagnostics.extend(held)
         return result
 
