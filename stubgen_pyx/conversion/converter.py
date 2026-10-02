@@ -37,6 +37,7 @@ from .declarations import (
     convert_enum,
     convert_import,
     convert_struct_or_union,
+    is_enum_alias_assignment,
 )
 from .docstrings import docstring_to_string
 from .fused_types import (
@@ -575,15 +576,31 @@ class Converter:
         local_ctypedef_aliases: dict[str, str],
         resolve_ctypedef_aliases: bool,
         defer_ctypedef_pruning: bool,
-    ) -> tuple[list[PyiAssignment], list[tuple[str, PyiAssignment]]]:
+        enum_alias_assignments: list[PyiAssignment] | None = None,
+    ) -> tuple[
+        list[PyiAssignment], list[tuple[str, PyiAssignment]], list[PyiAssignment]
+    ]:
+        """Drop each `ctypedef` alias (and, via `enum_alias_assignments`, each
+        plain ``cdef enum``'s ``Name: TypeAlias = int``) that nothing else in
+        the scope references any more.
+
+        Returns the surviving ordinary assignments, the locally dead aliases
+        (name, assignment) -- which stay in the scope too when
+        `defer_ctypedef_pruning` is set, for the whole-batch check to remove
+        later -- and the enum alias assignments to keep.
+        """
         functions_and_classes = PyiScope(functions=functions, classes=classes)
+        enum_alias_ids = {id(a) for a in enum_alias_assignments or []}
         other_statements = [assignment.statement for assignment in cdef_assignments] + [
             assignment.statement
             for assignment in extra_assignments
             if isinstance(assignment, PyiAssignment)
+            and id(assignment) not in enum_alias_ids
         ]
 
-        def _ctypedef_alias_name(raw_node) -> str | None:
+        def _ctypedef_alias_name(raw_node, converted: PyiAssignment) -> str | None:
+            if id(converted) in enum_alias_ids:
+                return converted.name
             if not (
                 resolve_ctypedef_aliases and isinstance(raw_node, Nodes.CTypeDefNode)
             ):
@@ -613,14 +630,14 @@ class Converter:
             (raw_node, converted)
             for raw_node, converted in conv_assignments_with_source
             if converted is not None
-        ]
+        ] + [(None, converted) for converted in enum_alias_assignments or []]
         locally_dead: list[tuple[str, PyiAssignment]] = []
         for _ in range(len(live_assignments)):
             pruned_this_pass = False
             still_live = []
             live_converted = [converted for _, converted in live_assignments]
             for raw_node, converted in live_assignments:
-                alias_name = _ctypedef_alias_name(raw_node)
+                alias_name = _ctypedef_alias_name(raw_node, converted)
                 if alias_name is not None and not _is_used_elsewhere(
                     alias_name, converted.statement, live_converted
                 ):
@@ -632,10 +649,12 @@ class Converter:
             if not pruned_this_pass:
                 break
 
-        converted_assignments = [converted for _, converted in live_assignments]
+        kept = [converted for _, converted in live_assignments]
         if defer_ctypedef_pruning:
-            converted_assignments += [converted for _, converted in locally_dead]
-        return converted_assignments, locally_dead
+            kept += [converted for _, converted in locally_dead]
+        converted_assignments = [a for a in kept if id(a) not in enum_alias_ids]
+        kept_enum_aliases = [a for a in kept if id(a) in enum_alias_ids]
+        return converted_assignments, locally_dead, kept_enum_aliases
 
     def convert_scope(
         self,
@@ -801,16 +820,40 @@ class Converter:
         )
         functions = functions + extra_functions
 
-        conv_assignments, locally_dead = self._prune_scope_assignments(
-            conv_assignments_with_source,
-            functions,
-            classes,
-            cdef_assignments,
-            extra_assignments,
-            local_ctypedef_aliases,
-            resolve_ctypedef_aliases,
-            defer_ctypedef_pruning,
+        visitor_enums = [convert_enum(enum) for enum in visitor.enums]
+        # A plain `cdef enum`'s `Name: TypeAlias = int` is pruned like a
+        # `ctypedef` alias once its usages resolve to `int`.
+        enum_alias_assignments = [
+            a
+            for a in visitor_enums + extra_enums + extra_assignments
+            if resolve_ctypedef_aliases
+            and isinstance(a, PyiAssignment)
+            and a.name in local_ctypedef_aliases
+            and is_enum_alias_assignment(a)
+        ]
+        conv_assignments, locally_dead, kept_enum_aliases = (
+            self._prune_scope_assignments(
+                conv_assignments_with_source,
+                functions,
+                classes,
+                cdef_assignments,
+                extra_assignments,
+                local_ctypedef_aliases,
+                resolve_ctypedef_aliases,
+                defer_ctypedef_pruning,
+                enum_alias_assignments,
+            )
         )
+        dropped_enum_alias_ids = {id(a) for a in enum_alias_assignments} - {
+            id(a) for a in kept_enum_aliases
+        }
+        visitor_enums = [
+            e for e in visitor_enums if id(e) not in dropped_enum_alias_ids
+        ]
+        extra_enums = [e for e in extra_enums if id(e) not in dropped_enum_alias_ids]
+        extra_assignments = [
+            a for a in extra_assignments if id(a) not in dropped_enum_alias_ids
+        ]
 
         scope = PyiScope(
             assignments=[
@@ -823,8 +866,7 @@ class Converter:
             + [a for a in extra_enums if isinstance(a, PyiAssignment)],
             functions=functions,
             classes=structs_or_enums + classes + extra_structs,
-            enums=[convert_enum(enum) for enum in visitor.enums]
-            + [e for e in extra_enums if isinstance(e, PyiEnum)],
+            enums=visitor_enums + [e for e in extra_enums if isinstance(e, PyiEnum)],
         )
         if defer_ctypedef_pruning and prunable_ctypedef_aliases is not None:
             for alias_name, converted in locally_dead:

@@ -16,6 +16,7 @@ from stubgen_pyx.models.pyi_elements import (
     PyiAssignment,
     PyiClass,
     PyiFunction,
+    PyiImport,
     PyiModule,
     PyiScope,
     PyiSignature,
@@ -96,3 +97,61 @@ def test_pyi_module_uses_name_true_via_nested_class_attribute():
     )
     module = PyiModule(scope=PyiScope(classes=[inner]))
     assert pyi_module_uses_name(module, "MyAlias") is True
+
+
+def _module_with_import(statement: str, **scope) -> PyiModule:
+    return PyiModule(imports=[PyiImport(statement)], scope=PyiScope(**scope))
+
+
+def test_pyi_module_uses_name_counts_any_import_by_default():
+    module = _module_with_import("from m import Color")
+    assert pyi_module_uses_name(module, "Color") is True
+
+
+def test_pyi_module_uses_name_ignores_unused_import_when_imports_are_trimmed():
+    module = _module_with_import("from m import Color")
+    assert pyi_module_uses_name(module, "Color", imports_are_trimmed=True) is False
+
+
+def test_pyi_module_uses_name_counts_explicit_reexport_when_imports_are_trimmed():
+    module = _module_with_import("from m import Color as Color")
+    assert pyi_module_uses_name(module, "Color", imports_are_trimmed=True) is True
+
+
+def test_pyi_module_uses_name_counts_import_whose_binding_is_used_when_trimmed():
+    func = PyiFunction(
+        "f",
+        is_async=False,
+        signature=PyiSignature(args=[PyiArgument("x", annotation="C")]),
+    )
+    module = _module_with_import("from m import Color as C", functions=[func])
+    assert pyi_module_uses_name(module, "Color", imports_are_trimmed=True) is True
+
+
+def test_pyi_module_uses_name_ignores_renamed_import_whose_binding_is_unused():
+    module = _module_with_import("from m import Color as C")
+    assert pyi_module_uses_name(module, "Color", imports_are_trimmed=True) is False
+
+
+def test_pyi_module_uses_name_counts_name_in_module_path_when_trimmed():
+    module = _module_with_import("from Color import something")
+    assert pyi_module_uses_name(module, "Color", imports_are_trimmed=True) is True
+
+
+def test_pyi_module_uses_name_counts_unparseable_import_when_trimmed():
+    module = _module_with_import("from m import (Color")
+    assert pyi_module_uses_name(module, "Color", imports_are_trimmed=True) is True
+
+
+def test_pyi_module_uses_name_ignores_assignment_declaring_the_same_name():
+    """Another file declaring `name` is a separate symbol, not a use of it."""
+    declaration = PyiAssignment("const_x: TypeAlias = int", name="const_x")
+    module = PyiModule(scope=PyiScope(assignments=[declaration]))
+    assert pyi_module_uses_name(module, "const_x") is False
+
+
+def test_pyi_module_uses_name_still_counts_other_assignment_mentioning_name():
+    declaration = PyiAssignment("const_x: TypeAlias = int", name="const_x")
+    other = PyiAssignment("y: const_x", name="y")
+    module = PyiModule(scope=PyiScope(assignments=[declaration, other]))
+    assert pyi_module_uses_name(module, "const_x") is True

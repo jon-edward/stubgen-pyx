@@ -6,6 +6,7 @@ cross-check used when pruning an alias that turns out to be unused.
 
 from __future__ import annotations
 
+import ast
 import re
 from collections.abc import Iterator
 
@@ -20,9 +21,23 @@ from ..models.pyi_elements import (
 from .pyrex_types import render_pyrex_type
 
 
+def _is_plain_enum_entry(entry) -> bool:
+    """Whether `entry` is a ``cdef enum`` with no Python-level wrapper.
+
+    A ``cpdef enum`` (`entry.create_wrapper`) is a real ``IntEnum`` at
+    runtime and is never treated as an alias.
+    """
+    t = entry.type
+    return (
+        entry.is_type
+        and (getattr(t, "is_enum", False) or getattr(t, "is_cpp_enum", False))
+        and not getattr(entry, "create_wrapper", False)
+    )
+
+
 def ctypedef_alias_map(visitor: ScopeVisitor) -> dict[str, str]:
-    """Collect ``ctypedef`` aliases visible in this scope, resolved to
-    their underlying type.
+    """Collect the ``ctypedef`` aliases and plain ``cdef enum`` names
+    visible in this scope, resolved to their underlying type.
 
     Only used when `resolve_ctypedef_aliases` (see `StubgenPyxConfig`)
     is on. Walks `scope.entries` for `entry.is_type and entry.type.
@@ -35,8 +50,14 @@ def ctypedef_alias_map(visitor: ScopeVisitor) -> dict[str, str]:
     render at all (returns `None`): better to keep referencing the
     alias name than to substitute in nothing/a broken result.
 
-    A `ctypedef` has no runtime component, so -- same architecture
-    documented throughout `_convert_declared_entries`/
+    A ``cdef enum`` (no ``cpdef``) has no Python-level binding, so its
+    name maps to ``"int"``. A ``ctypedef`` whose underlying type
+    mentions such an enum resolves through it as well
+    (``ctypedef Color ColorAlias`` -> ``"int"``). A ``cpdef enum``
+    keeps its name: it is an ``IntEnum`` class at runtime.
+
+    A `ctypedef`/``cdef enum`` has no runtime component, so -- same
+    architecture documented throughout `_convert_declared_entries`/
     `convert_fused_types` -- it never survives as a node in
     `body.stats` once real declaration analysis runs; `scope.entries`
     is the only place left to find one.
@@ -44,14 +65,36 @@ def ctypedef_alias_map(visitor: ScopeVisitor) -> dict[str, str]:
     scope = getattr(visitor.node, "scope", None)
     if scope is None:
         return {}
-    aliases: dict[str, str] = {}
+    enum_aliases = {
+        name: "int"
+        for name, entry in scope.entries.items()
+        if _is_plain_enum_entry(entry)
+    }
+    aliases: dict[str, str] = dict(enum_aliases)
     for name, entry in scope.entries.items():
         if not (entry.is_type and getattr(entry.type, "is_typedef", False)):
             continue
+        if _typedef_of_plain_enum(entry.type):
+            aliases[name] = "int"
+            continue
         resolved = render_pyrex_type(entry.type)
-        if resolved is not None and resolved != name:
+        if resolved is None:
+            continue
+        resolved = _substitute_ctypedef_aliases(resolved, enum_aliases) or resolved
+        if resolved != name:
             aliases[name] = resolved
     return aliases
+
+
+def _typedef_of_plain_enum(t) -> bool:
+    """Whether the typedef `t` ultimately aliases a ``cdef enum`` (no
+    ``cpdef``). Works from the type itself, so it also holds for a typedef
+    cimported without the enum it aliases."""
+    while getattr(t, "is_typedef", False):
+        t = t.typedef_base_type
+    if not (getattr(t, "is_enum", False) or getattr(t, "is_cpp_enum", False)):
+        return False
+    return not getattr(getattr(t, "entry", None), "create_wrapper", False)
 
 
 def apply_ctypedef_aliases(
@@ -134,27 +177,35 @@ def _scope_assignments(scope: PyiScope) -> Iterator[PyiAssignment]:
 
 
 def remove_assignment_from_module(module: PyiModule, assignment: PyiAssignment) -> bool:
-    """Remove `assignment` (by identity) from wherever it currently lives
-    in `module`'s scope tree -- its own top-level assignments, or a
-    nested class's. Returns whether it was found and removed.
+    """Remove `assignment` from wherever it currently lives in `module`'s
+    scope tree -- its own top-level assignments or enum entries (a
+    ``cdef enum``'s ``TypeAlias`` lives in the latter), or a nested
+    class's. Returns whether it was found and removed.
 
-    Deliberately searches the final module by identity rather than
-    reusing a list reference captured earlier (at the point a
-    `ctypedef` alias's containing scope was first converted, inside
-    `Converter.convert_scope`): a companion `.pxd`'s assignments get
-    merged into the `.pyx`'s own module afterward
-    (`merge_pxd_into_module`), which builds a new list rather than
-    mutating the `.pxd`'s own scope's list in place -- so a `.remove()`
-    against that earlier reference would silently no-op on a list
-    nothing renders from anymore. Searching by identity in the already
-    -merged module sidesteps depending on any list staying the same
-    object through however many merge/dedup steps ran in between.
+    Matches by identity first, then by equality. Both the `.pyx`'s and its
+    companion `.pxd`'s conversion emit a ``cdef enum``'s alias (they share
+    one module scope), `merge_pxd_into_module` keeps only one of the two
+    copies, and the copy registered for pruning may be the discarded one.
+
+    Deliberately searches the final module rather than reusing a list
+    reference captured earlier (at the point a `ctypedef` alias's
+    containing scope was first converted, inside `Converter.convert_scope`):
+    a companion `.pxd`'s assignments get merged into the `.pyx`'s own
+    module afterward (`merge_pxd_into_module`), which builds a new list
+    rather than mutating the `.pxd`'s own scope's list in place -- so a
+    `.remove()` against that earlier reference would silently no-op on a
+    list nothing renders from anymore.
     """
-    for scope in _iter_scopes(module.scope):
-        for i, existing in enumerate(scope.assignments):
-            if existing is assignment:
-                del scope.assignments[i]
-                return True
+    for same in (
+        lambda existing: existing is assignment,
+        lambda existing: existing == assignment,
+    ):
+        for scope in _iter_scopes(module.scope):
+            for statements in (scope.assignments, scope.enums):
+                for i, existing in enumerate(statements):
+                    if same(existing):
+                        del statements[i]
+                        return True
     return False
 
 
@@ -165,10 +216,17 @@ def _iter_scopes(scope: PyiScope) -> Iterator[PyiScope]:
         yield from _iter_scopes(class_.scope)
 
 
-def pyi_module_uses_name(module: PyiModule, name: str) -> bool:
+def pyi_module_uses_name(
+    module: PyiModule, name: str, imports_are_trimmed: bool = False
+) -> bool:
     """Whether `name` appears anywhere in `module` -- its own imports, or
     recursively through its scope (function signatures and attribute
     assignments, including nested classes).
+
+    With `imports_are_trimmed`, an import only counts if it survives
+    `trim_imports` (see `_import_uses_name`): one that brings `name` in
+    but is never used is about to be removed, so it no longer needs
+    `name` to exist.
 
     Used for `stubgen.py`'s whole-batch ctypedef-alias-pruning cross
     -check (`convert_multiple_files`, when `resolve_ctypedef_aliases` is
@@ -180,36 +238,100 @@ def pyi_module_uses_name(module: PyiModule, name: str) -> bool:
     file's own scope the way `Converter.convert_scope`'s own
     (necessarily more limited) check does.
     """
-    if any(_text_uses_name(imp.statement, name) for imp in module.imports):
+    if any(
+        _import_uses_name(module, imp.statement, name, imports_are_trimmed)
+        for imp in module.imports
+    ):
         return True
+    return _scope_uses_name(module, name)
+
+
+def _scope_uses_name(module: PyiModule, name: str) -> bool:
+    """Whether `name` appears in a function signature or attribute
+    assignment anywhere in `module`'s scope tree (imports not considered).
+
+    An assignment that itself declares `name` (``name: TypeAlias = int``)
+    is not a use of it: another file declaring the same name is a
+    separate symbol, and would otherwise keep this one alive."""
     for function in _scope_functions(module.scope):
         if any(
             _text_uses_name(arg.annotation, name) for arg in function.signature.args
         ) or _text_uses_name(function.signature.return_type, name):
             return True
     return any(
-        _text_uses_name(a.statement, name) for a in _scope_assignments(module.scope)
+        a.name != name and _text_uses_name(a.statement, name)
+        for a in _scope_assignments(module.scope)
     )
 
 
-def prune_prepared_ctypedef_aliases(prepared: list[tuple]) -> None:
+def _import_uses_name(
+    module: PyiModule, statement: str, name: str, imports_are_trimmed: bool
+) -> bool:
+    """Whether the import `statement` needs `name` to exist elsewhere.
+
+    Without `imports_are_trimmed`, any mention of `name` counts. With it,
+    an imported `name` only counts if the import survives `trim_imports`:
+    its bound name is used elsewhere in `module`, or it is an explicit
+    ``X as X`` re-export. A mention that isn't an imported name (a module
+    path component) always counts, as does a statement that doesn't parse.
+    """
+    if not _text_uses_name(statement, name):
+        return False
+    if not imports_are_trimmed:
+        return True
+    try:
+        tree = ast.parse(statement)
+    except SyntaxError:
+        return True
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        module_path = getattr(node, "module", None) or ""
+        if _text_uses_name(module_path, name):
+            return True
+        for alias in node.names:
+            if alias.name == "*" or not _text_uses_name(alias.name, name):
+                continue
+            if alias.asname == alias.name or _scope_uses_name(
+                module, alias.asname or alias.name
+            ):
+                return True
+    return False
+
+
+def prune_prepared_ctypedef_aliases(
+    prepared: list[tuple], imports_are_trimmed: bool = False
+) -> None:
     """Prune each file's provisionally-dead ctypedef aliases (`prepared`,
     as built by `StubgenPyx._prepare_multiple_file_conversions`) once every
-    other successfully-converted module in the same batch has been checked
-    too -- see `pyi_module_uses_name`'s docstring for why that cross-check
-    is needed.
+    successfully-converted module in the same batch has been checked --
+    see `pyi_module_uses_name`'s docstring for why that cross-check is
+    needed.
+
+    The declaring module counts too: a surviving alias in it that is
+    defined in terms of this one (``B: TypeAlias = A``) still needs it.
+    Removing an alias can orphan the one it was defined in terms of, so
+    this repeats until nothing more is removed.
     """
     successful_modules = [entry[4] for entry in prepared if entry[4] is not None]
-    for _, _, early_result, _, module, _, prunable in prepared:
-        if early_result is not None or not prunable:
-            continue
-        for alias_name, assignment in prunable.items():
-            used_elsewhere = any(
-                other is not module and pyi_module_uses_name(other, alias_name)
-                for other in successful_modules
-            )
-            if not used_elsewhere:
+    pending = [
+        (module, dict(prunable))
+        for _, _, early_result, _, module, _, prunable in prepared
+        if early_result is None and prunable
+    ]
+    removed_any = True
+    while removed_any:
+        removed_any = False
+        for module, prunable in pending:
+            for alias_name, assignment in list(prunable.items()):
+                if any(
+                    pyi_module_uses_name(other, alias_name, imports_are_trimmed)
+                    for other in successful_modules
+                ):
+                    continue
                 remove_assignment_from_module(module, assignment)
+                del prunable[alias_name]
+                removed_any = True
 
 
 def _text_uses_name(text: str | None, name: str) -> bool:

@@ -670,7 +670,9 @@ class StubgenPyx:
         prepared = self._prepare_multiple_file_conversions(
             pyx_paths, context, output_dir, common_root
         )
-        prune_prepared_ctypedef_aliases(prepared)
+        prune_prepared_ctypedef_aliases(
+            prepared, imports_are_trimmed=self.config.trim_imports
+        )
         return self._finalize_prepared_conversions(prepared, dry_run)
 
     def _compile_file_with_error_handling(

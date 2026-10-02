@@ -1062,16 +1062,19 @@ class Foo:
         the declaration in the file that owns it -- a single file's own
         cast usage always gets fully substituted away, same as any
         other usage (see `test_resolves_alias_used_inside_a_cast`), so
-        a cross-file batch (`TestCtypedefAliasBatchPruning`'s own
-        shape) is what's needed to still have the declaration around
-        to check for corruption at all.
+        a sibling file that explicitly re-exports the alias
+        (`TestCtypedefAliasBatchPruning`'s own shape) is what's needed
+        to still have the declaration around to check for corruption.
         """
         (temp_dir / "types_mod.pxd").write_text("ctypedef int size_type\n")
         types_file = temp_dir / "types_mod.pyx"
         types_file.write_text("")
         consumer_file = temp_dir / "consumer.pyx"
         consumer_file.write_text(
-            "from types_mod cimport size_type\n\nclass Foo:\n    x = <size_type> 1\n"
+            "from types_mod cimport size_type as size_type\n"
+            "\n"
+            "class Foo:\n"
+            "    x = <size_type> 1\n"
         )
 
         stubgen = StubgenPyx(
@@ -1184,7 +1187,11 @@ class TestCtypedefAliasBatchPruning:
     has to be structured for cross-file `cimport` to work at all.
     """
 
-    def test_alias_kept_when_only_used_by_a_sibling_file(self, temp_dir):
+    def test_alias_pruned_when_sibling_substitutes_it_away(self, temp_dir):
+        """A sibling's `cimport` of the alias doesn't keep it once that
+        sibling's own output no longer references it: its signature is
+        substituted to the concrete type and the now-unused import is
+        trimmed."""
         (temp_dir / "types_mod.pxd").write_text("ctypedef int size_type\n")
         types_file = temp_dir / "types_mod.pyx"
         types_file.write_text("")
@@ -1210,15 +1217,154 @@ class TestCtypedefAliasBatchPruning:
             results = stubgen.convert_multiple_files(list(files))
             assert all(r.success for r in results)
 
-            types_pyi = (temp_dir / "types_mod.pyi").read_text()
+            assert "size_type" not in (temp_dir / "types_mod.pyi").read_text()
             consumer_pyi = (temp_dir / "consumer.pyi").read_text()
-
-            # The declaration survives in the file that owns it, because
-            # consumer.pyx's own cimport of it still needs it to exist there
-            # -- even though consumer.pyx's own signature gets substituted
-            # to the concrete type directly, same as usual.
-            assert "size_type: TypeAlias = int" in types_pyi
             assert "def f(x: int) -> int: ..." in consumer_pyi
+            assert "size_type" not in consumer_pyi
+
+    @pytest.mark.parametrize(
+        "declaration",
+        ["ctypedef int const_x\n", "cdef enum const_x:\n    A\n"],
+        ids=["ctypedef", "cdef_enum"],
+    )
+    def test_same_alias_name_declared_in_two_files_is_still_pruned(
+        self, temp_dir, declaration
+    ):
+        """A same-named declaration in another file is a separate symbol and
+        must not keep this one alive."""
+        for name in ("same1", "same2"):
+            (temp_dir / f"{name}.pxd").write_text(declaration)
+            (temp_dir / f"{name}.pyx").write_text("")
+
+        stubgen = StubgenPyx(
+            StubgenPyxConfig(resolve_ctypedef_aliases=True, continue_on_error=True)
+        )
+        results = stubgen.convert_multiple_files(
+            [temp_dir / "same1.pyx", temp_dir / "same2.pyx"]
+        )
+        assert all(r.success for r in results)
+
+        assert "const_x" not in (temp_dir / "same1.pyi").read_text()
+        assert "const_x" not in (temp_dir / "same2.pyi").read_text()
+
+    def test_alias_kept_when_a_kept_alias_in_the_same_file_is_defined_from_it(
+        self, temp_dir
+    ):
+        """`B: TypeAlias = A` is kept (re-exported by a sibling), so `A`
+        must stay defined rather than leave `B` pointing at nothing."""
+        (temp_dir / "chain_a.pxd").write_text("ctypedef int A\nctypedef A B\n")
+        (temp_dir / "chain_a.pyx").write_text("")
+        (temp_dir / "chain_c.pyx").write_text(
+            "from chain_a cimport B as B\n\ndef f(B x):\n    pass\n"
+        )
+
+        stubgen = StubgenPyx(
+            StubgenPyxConfig(resolve_ctypedef_aliases=True, continue_on_error=True)
+        )
+        for order in (["chain_a.pyx", "chain_c.pyx"], ["chain_c.pyx", "chain_a.pyx"]):
+            results = stubgen.convert_multiple_files([temp_dir / n for n in order])
+            assert all(r.success for r in results)
+
+            chain_a = (temp_dir / "chain_a.pyi").read_text()
+            assert "A: TypeAlias = int" in chain_a
+            assert "B: TypeAlias = A" in chain_a
+            assert "Incomplete" not in chain_a
+
+    def test_orphaned_alias_chain_across_files_is_pruned_in_either_order(
+        self, temp_dir
+    ):
+        """`A` is only referenced by `B` in another file, and `B` itself is
+        unused and dropped, so `A` is dropped too -- whichever file is
+        processed first."""
+        (temp_dir / "orphan_a.pxd").write_text("ctypedef int A\n")
+        (temp_dir / "orphan_a.pyx").write_text("")
+        (temp_dir / "orphan_b.pxd").write_text(
+            "from orphan_a cimport A\nctypedef A B\n"
+        )
+        (temp_dir / "orphan_b.pyx").write_text("")
+
+        stubgen = StubgenPyx(
+            StubgenPyxConfig(resolve_ctypedef_aliases=True, continue_on_error=True)
+        )
+        for order in (
+            ["orphan_a.pyx", "orphan_b.pyx"],
+            ["orphan_b.pyx", "orphan_a.pyx"],
+        ):
+            results = stubgen.convert_multiple_files([temp_dir / n for n in order])
+            assert all(r.success for r in results)
+
+            assert "TypeAlias" not in (temp_dir / "orphan_a.pyi").read_text()
+            assert "TypeAlias" not in (temp_dir / "orphan_b.pyi").read_text()
+
+    def test_alias_kept_when_sibling_reexports_it(self, temp_dir):
+        (temp_dir / "types_mod4.pxd").write_text("ctypedef int size_type\n")
+        types_file = temp_dir / "types_mod4.pyx"
+        types_file.write_text("")
+        consumer_file = temp_dir / "consumer4.pyx"
+        consumer_file.write_text(
+            "from types_mod4 cimport size_type as size_type\n"
+            "\n"
+            "def f(size_type x) -> size_type:\n"
+            "    return x\n"
+        )
+
+        stubgen = StubgenPyx(
+            StubgenPyxConfig(resolve_ctypedef_aliases=True, continue_on_error=True)
+        )
+        results = stubgen.convert_multiple_files([types_file, consumer_file])
+        assert all(r.success for r in results)
+
+        assert "size_type: TypeAlias = int" in (temp_dir / "types_mod4.pyi").read_text()
+        consumer_pyi = (temp_dir / "consumer4.pyi").read_text()
+        assert "from types_mod4 import size_type as size_type" in consumer_pyi
+        assert "def f(x: int) -> int: ..." in consumer_pyi
+
+    def test_alias_kept_when_sibling_imports_are_not_trimmed(self, temp_dir):
+        (temp_dir / "types_mod5.pxd").write_text("ctypedef int size_type\n")
+        types_file = temp_dir / "types_mod5.pyx"
+        types_file.write_text("")
+        consumer_file = temp_dir / "consumer5.pyx"
+        consumer_file.write_text(
+            "from types_mod5 cimport size_type\n"
+            "\n"
+            "def f(size_type x) -> size_type:\n"
+            "    return x\n"
+        )
+
+        stubgen = StubgenPyx(
+            StubgenPyxConfig(
+                resolve_ctypedef_aliases=True,
+                continue_on_error=True,
+                trim_imports=False,
+            )
+        )
+        results = stubgen.convert_multiple_files([types_file, consumer_file])
+        assert all(r.success for r in results)
+
+        assert "size_type: TypeAlias = int" in (temp_dir / "types_mod5.pyi").read_text()
+        consumer_pyi = (temp_dir / "consumer5.pyi").read_text()
+        assert "from types_mod5 import size_type" in consumer_pyi
+
+    def test_alias_kept_when_sibling_references_it_through_the_module(self, temp_dir):
+        (temp_dir / "types_mod6.pxd").write_text("ctypedef int size_type\n")
+        types_file = temp_dir / "types_mod6.pyx"
+        types_file.write_text("")
+        consumer_file = temp_dir / "consumer6.pyx"
+        consumer_file.write_text(
+            "cimport types_mod6\n\ndef f(types_mod6.size_type x):\n    return x\n"
+        )
+
+        stubgen = StubgenPyx(
+            StubgenPyxConfig(resolve_ctypedef_aliases=True, continue_on_error=True)
+        )
+        results = stubgen.convert_multiple_files([types_file, consumer_file])
+        assert all(r.success for r in results)
+
+        assert "size_type: TypeAlias = int" in (temp_dir / "types_mod6.pyi").read_text()
+        assert (
+            "def f(x: types_mod6.size_type): ..."
+            in (temp_dir / "consumer6.pyi").read_text()
+        )
 
     def test_alias_still_pruned_when_truly_unused_across_the_batch(self, temp_dir):
         (temp_dir / "types_mod2.pxd").write_text(
@@ -1228,7 +1374,7 @@ class TestCtypedefAliasBatchPruning:
         types_file.write_text("")
         consumer_file = temp_dir / "consumer2.pyx"
         consumer_file.write_text(
-            "from types_mod2 cimport size_type\n"
+            "from types_mod2 cimport size_type as size_type\n"
             "\n"
             "def f(size_type x) -> size_type:\n"
             "    return x\n"
@@ -1241,7 +1387,7 @@ class TestCtypedefAliasBatchPruning:
         assert all(r.success for r in results)
 
         types_pyi = (temp_dir / "types_mod2.pyi").read_text()
-        # size_type survives (still cimported by consumer2.pyx); the
+        # size_type survives (re-exported by consumer2.pyx); the
         # genuinely never-referenced-anywhere unused_type is pruned.
         assert "size_type: TypeAlias = int" in types_pyi
         assert "unused_type" not in types_pyi
@@ -1636,7 +1782,7 @@ from aggregation cimport groupby_aggregation
 ctypedef groupby_aggregation * gba_ptr
 """)
         (temp_dir / "other.pyx").write_text("""
-from shared cimport gba_ptr
+from shared cimport gba_ptr as gba_ptr
 
 cpdef gba_ptr use_it():
     pass

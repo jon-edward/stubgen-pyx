@@ -31,7 +31,10 @@ class StubgenPyxConfig:
             paths outside that (default: empty).
         resolve_ctypedef_aliases: Replace a ``ctypedef`` alias
             (``ctypedef double MyFloat``) with its underlying resolved type
-            (``float``) in function/method argument and return annotations
+            (``float``), and a ``cdef enum`` name with ``int`` (its
+            ``Name: TypeAlias = int`` stand-in is dropped the same way; a
+            ``cpdef enum`` stays an ``IntEnum``), in function/method
+            argument and return annotations
             and in class/module attribute declarations, wherever it can be
             resolved -- rather than referencing the alias name itself. A
             ``ctypedef`` has no Python-level binding at runtime at all
@@ -45,15 +48,13 @@ class StubgenPyxConfig:
             still needs it. That "nothing else" check is whole-batch
             aware when converting more than one file at once
             (``convert_multiple_files``/``convert_glob``): another file
-            in the same run that ``cimport``s the alias is enough to
-            keep its declaration, even if that other file's own output
-            ends up using the substituted concrete type directly and
-            never mentions the alias by name -- confirmed against a
-            real multi-file package (an earlier, single-file-only
-            version of this check pruned a central "shared type
-            aliases" module's declarations out from under files elsewhere
-            in the same package that still imported them, producing a
-            genuinely broken cross-file reference). A single-file
+            in the same run whose output still imports the alias keeps
+            its declaration -- an explicit ``X as X`` re-export, any
+            import left in place when ``trim_imports`` is off, or an
+            import whose bound name is still used in that file's
+            annotations or assignments (e.g. ``mod.Alias``). An import
+            that ``trim_imports`` is about to remove because every
+            usage was substituted does not count. A single-file
             conversion (``convert_str``/``compile_str_to_module``, or
             ``convert_single_file`` outside a batch) has no other files
             to check against and keeps the simpler, immediate, local

@@ -200,16 +200,27 @@ def convert_assignment(
     return PyiAssignment(source, name=name)
 
 
+def enum_alias_assignment(name: str) -> PyiAssignment:
+    """The ``Name: TypeAlias = int`` stand-in for a ``cdef enum`` (no
+    ``cpdef``), which has no Python-level binding of its own."""
+    return PyiAssignment(f"{name}: typing_extensions.TypeAlias = int", name=name)
+
+
+def is_enum_alias_assignment(assignment: PyiAssignment) -> bool:
+    """Whether `assignment` is what `enum_alias_assignment` builds."""
+    return (
+        assignment.name is not None
+        and assignment.statement == enum_alias_assignment(assignment.name).statement
+    )
+
+
 def convert_enum(node: Nodes.CEnumDefNode) -> PyiEnum | PyiAssignment:
     """Convert a Cython enum definition to PyiEnum."""
     if node.create_wrapper:  # type: ignore
         name: str | None = node.name  # type: ignore
         return PyiEnum(enum_name=name, names=get_enum_names(node))
     # Make it usable as an alias for int
-    return PyiAssignment(
-        f"{node.name}: typing_extensions.TypeAlias = int",  # type: ignore
-        name=node.name,  # type: ignore
-    )
+    return enum_alias_assignment(node.name)  # type: ignore
 
 
 def _is_unhashable_hash_assignment(node: ast.stmt) -> bool:

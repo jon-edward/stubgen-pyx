@@ -28,7 +28,7 @@ from ..models.pyi_elements import (
     PyiSignature,
 )
 from .ctypedef_aliases import _substitute_ctypedef_aliases
-from .declarations import convert_struct_or_union_type
+from .declarations import convert_struct_or_union_type, enum_alias_assignment
 from .pyrex_types import render_pyrex_type
 from .type_parsing import (
     _cvardef_declarator_name,
@@ -378,12 +378,7 @@ def convert_declared_entry(
                     None,
                     None,
                 )
-            return (
-                PyiAssignment(f"{name}: typing_extensions.TypeAlias = int", name=name),
-                None,
-                None,
-                None,
-            )
+            return enum_alias_assignment(name), None, None, None
         if getattr(t, "is_struct_or_union", False):
             return None, None, convert_struct_or_union_type(t), None
         return None, None, None, None

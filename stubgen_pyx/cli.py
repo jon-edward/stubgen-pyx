@@ -163,11 +163,12 @@ Examples:
 
     parser.add_argument(
         "--resolve-ctypedef-aliases",
-        help="Replace a ctypedef alias with its underlying resolved type in "
-        "annotations and attribute declarations wherever it can be resolved, "
-        "instead of referencing the alias name. A ctypedef has no Python-level "
-        "binding at runtime, so once every usage is substituted, the alias's "
-        "own declaration is dropped too if nothing else in the stub needs it",
+        help="Replace a ctypedef alias with its underlying resolved type, and a "
+        "cdef enum name with int, in annotations and attribute declarations "
+        "wherever it can be resolved, instead of referencing the alias name. "
+        "A ctypedef or cdef enum has no Python-level binding at runtime, so "
+        "once every usage is substituted, its own declaration is dropped too "
+        "if nothing else in the stub needs it. A cpdef enum stays an IntEnum",
         action="store_true",
     )
 
