@@ -9,7 +9,7 @@ from Cython.Compiler import PyrexTypes as _PyrexTypes
 
 from ..logging_utils import with_debug_fallback
 from .pyrex_types import (
-    _CYTHON_TO_NUMPY_SCALAR,
+    CYTHON_TO_NUMPY_SCALAR,
     parameterize_builtin_generic,
     render_pyrex_type,
 )
@@ -404,7 +404,7 @@ def _extract_memoryview_type(node) -> str:
     base = getattr(node, "base_type_node", None)
     if base is not None:
         name = getattr(base, "name", None)
-        scalar = None if name is None else _CYTHON_TO_NUMPY_SCALAR.get(name)
+        scalar = None if name is None else CYTHON_TO_NUMPY_SCALAR.get(name)
         if scalar:
             return f"numpy.typing.NDArray[numpy.{scalar}]"
     return "memoryview"

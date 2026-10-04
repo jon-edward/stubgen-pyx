@@ -6,7 +6,7 @@ from Cython.Compiler import PyrexTypes as _PyrexTypes
 
 from ..logging_utils import with_debug_fallback
 
-_CYTHON_TO_NUMPY_SCALAR: dict[str, str] = {
+CYTHON_TO_NUMPY_SCALAR: dict[str, str] = {
     "bint": "bool_",
     "bool": "bool_",
     "char": "byte",
@@ -134,7 +134,7 @@ def _render_memoryview_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str | N
     if not getattr(t, "is_memoryviewslice", False):
         return None
     dtype_name = str(t.dtype) if t.dtype is not None else None
-    scalar = None if dtype_name is None else _CYTHON_TO_NUMPY_SCALAR.get(dtype_name)
+    scalar = None if dtype_name is None else CYTHON_TO_NUMPY_SCALAR.get(dtype_name)
     return f"numpy.typing.NDArray[numpy.{scalar}]" if scalar else "memoryview"
 
 

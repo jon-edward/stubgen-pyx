@@ -671,6 +671,41 @@ class MyClass(metaclass=type):
         cls = result.scope.classes[0]
         assert cls.metaclass == "type"
 
+    def test_class_defines_buffer_protocol(self):
+        """Test converting class that defines buffer protocol."""
+        code = """
+cdef class NonBufferingClass:
+    pass
+
+cdef class BufferingClass1:
+    def __getbuffer__(self):
+        pass
+
+cdef class BufferingClass2:
+    def __buffer__(self):
+        pass
+
+cdef class BufferingClass3:
+    def __releasebuffer__(self):
+        pass
+
+cdef class BufferingClass4:
+    def __release_buffer__(self):
+        pass
+"""
+        parsed = parse_pyx(code)
+        visitor = ModuleVisitor(parsed.source_ast)
+
+        converter = Converter()
+        result = converter.convert_module(visitor, parsed.source)
+
+        assert len(result.scope.classes) == 5
+        for idx, cls in enumerate(result.scope.classes):
+            if idx == 0:
+                assert "typing_extensions.Buffer" not in cls.bases
+            else:
+                assert "typing_extensions.Buffer" in cls.bases
+
 
 class TestFunctionSourceOrder:
     """Test that functions appear in source order, not cdef-before-def."""

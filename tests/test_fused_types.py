@@ -362,7 +362,7 @@ def test_fused_typed_memoryview_single_usage_renders_ndarray_union():
     """)
     )
     assert "def f(x)" not in result
-    assert "x: NDArray[numpy.intc] | NDArray[numpy.double]" in result
+    assert "x: NDArray[intc] | NDArray[double]" in result
     assert "def f(x: int" not in result
     assert "def f(x: double" not in result
 
@@ -387,7 +387,7 @@ def test_fused_typed_memoryview_keeps_both_widths_despite_scalar_collapse():
             pass
     """)
     )
-    assert "x: NDArray[numpy.single] | NDArray[numpy.double]" in result
+    assert "x: NDArray[single] | NDArray[double]" in result
 
 
 def test_builtin_cython_floating_produces_valid_alias():

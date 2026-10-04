@@ -131,9 +131,11 @@ class TestAddTypeImports:
 
         assert result == (
             "import numpy\n"
+            "from numpy import intc\n"
+            "from numpy import single\n"
             "from numpy.typing import NDArray\n"
             "\n"
-            "def func(a: NDArray[numpy.intc], b: NDArray[numpy.single]) -> NDArray[numpy.intc]:\n"
+            "def func(a: NDArray[intc], b: NDArray[single]) -> NDArray[intc]:\n"
             "    ..."
         )
 

@@ -12,7 +12,7 @@ from Cython.Compiler.PyrexTypes import FusedType
 from ..analysis.visitor import ScopeVisitor
 from ..models.pyi_elements import PyiAssignment, PyiFusedType, PyiSignature
 from ..postprocessing.normalize_names import _CYTHON_TRANSLATIONS
-from .pyrex_types import _CYTHON_TO_NUMPY_SCALAR, render_pyrex_type
+from .pyrex_types import CYTHON_TO_NUMPY_SCALAR, render_pyrex_type
 
 
 def convert_fused_types(visitor: ScopeVisitor) -> dict[str, PyiFusedType]:
@@ -54,7 +54,7 @@ def convert_fused_types(visitor: ScopeVisitor) -> dict[str, PyiFusedType]:
         members = [
             (
                 _CYTHON_TRANSLATIONS.get(raw_name, raw_name),
-                _CYTHON_TO_NUMPY_SCALAR.get(raw_name),
+                CYTHON_TO_NUMPY_SCALAR.get(raw_name),
             )
             for raw_name in raw_names
             if raw_name is not None
@@ -72,7 +72,7 @@ def convert_fused_types(visitor: ScopeVisitor) -> dict[str, PyiFusedType]:
         members = [
             (
                 _CYTHON_TRANSLATIONS.get(member_name, member_name),
-                _CYTHON_TO_NUMPY_SCALAR.get(member_name),
+                CYTHON_TO_NUMPY_SCALAR.get(member_name),
             )
             for member_name in member_names
         ]
@@ -105,7 +105,7 @@ def convert_fused_types(visitor: ScopeVisitor) -> dict[str, PyiFusedType]:
                 members.append(
                     (
                         rendered,
-                        _CYTHON_TO_NUMPY_SCALAR.get(getattr(member, "name", None)),
+                        CYTHON_TO_NUMPY_SCALAR.get(getattr(member, "name", None)),
                     )
                 )
             fused_type = _build_fused_type(name, members)

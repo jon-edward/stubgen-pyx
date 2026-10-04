@@ -149,6 +149,8 @@ class ScopeVisitor(TreeVisitor):
     cdef_structs_or_unions: list[Nodes.CStructOrUnionDefNode] = field(
         default_factory=list, init=False
     )
+    defines_buffer_protocol: bool = False
+    """Whether the scope defines buffer protocol methods (``__buffer__``, ``__getbuffer__``, etc)."""
     cpp_classes: list[Nodes.CppClassNode] = field(default_factory=list, init=False)
     # The set of `id()`s of every fused-specialization/dispatcher node
     # reachable from `node`, as `_collect_fused_specialization_ids`
@@ -343,10 +345,18 @@ class ScopeVisitor(TreeVisitor):
         """
         if id(node) in self._fused_specialization_ids:
             return node
-        self.py_functions.append(node)
         name = _declared_name(node)
+        if name in (
+            "__getbuffer__",
+            "__buffer__",
+            "__releasebuffer__",
+            "__release_buffer__",
+        ):
+            self.defines_buffer_protocol = True
+            return node
         if name is not None:
             self._def_positions[name] = node.pos
+        self.py_functions.append(node)
         return node
 
     def visit_CFuncDefNode(self, node):

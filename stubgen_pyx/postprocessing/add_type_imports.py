@@ -7,6 +7,7 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass, field
 
+from ..conversion.pyrex_types import CYTHON_TO_NUMPY_SCALAR
 from .collect_names import collect_names
 from .utils import dotted_name
 
@@ -18,6 +19,7 @@ TYPE_IMPORTS = (
     "typing.cast",
     "typing.TypedDict",
     "typing.TypeVar",
+    "typing_extensions.Buffer",  # Use backport for Python < 3.10
     "typing_extensions.TypeAlias",  # Use backport for Python < 3.10
     "enum.IntEnum",
     "numpy.typing.NDArray",
@@ -26,6 +28,9 @@ TYPE_IMPORTS = (
 )
 # Qualified names for imported types that
 # might be needed by stubs.
+TYPE_IMPORTS += tuple(
+    f"numpy.{scalar}" for scalar in CYTHON_TO_NUMPY_SCALAR.values()
+)  # For numpy scalars
 
 
 def add_type_imports(node: ast.AST) -> ast.AST:

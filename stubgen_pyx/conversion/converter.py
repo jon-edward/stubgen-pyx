@@ -923,10 +923,14 @@ class Converter:
                 for decorator in decorators
             ]
 
+        bases = get_bases(class_visitor.node)
+        if class_visitor.scope.defines_buffer_protocol:
+            bases.append("typing_extensions.Buffer")
+
         return PyiClass(
             name=name,
             doc=doc if include_docstrings else None,
-            bases=get_bases(class_visitor.node),
+            bases=bases,
             metaclass=get_metaclass(class_visitor.node),
             decorators=decorators,
             scope=scope,
