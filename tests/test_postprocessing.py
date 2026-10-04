@@ -49,6 +49,53 @@ class TestAddTypeImports:
 
         assert result == "from typing import Any\nx: Any"
 
+    def test_resolves_builtin_type_without_import(self):
+        tree = ast.parse("x: builtins.type")
+
+        result = ast.unparse(add_type_imports(tree))
+
+        assert result == "x: type"
+
+    def test_resolves_builtin_type_with_import_used_builtins(self):
+        tree = ast.parse("import builtins\nx: builtins.type = builtins.str")
+
+        result = ast.unparse(add_type_imports(tree))
+
+        assert result == "import builtins\nx: type = builtins.str"
+
+    def test_resolves_builtin_type_annotations(self):
+        tree = ast.parse("def func(x: builtins.type) -> builtins.type:\n    ...")
+
+        result = ast.unparse(add_type_imports(tree))
+
+        assert result == "def func(x: type) -> type:\n    ..."
+
+    def test_resolves_classmethod_cls_type_through_type_imports(self):
+        tree = ast.parse(
+            "class Foo:\n"
+            "    @classmethod\n"
+            "    def make(cls: builtins.type): ...\n"
+            "    def accepts_type(value: builtins.type): ...\n"
+        )
+
+        result = ast.unparse(add_type_imports(tree))
+
+        assert result == (
+            "class Foo:\n\n"
+            "    @classmethod\n"
+            "    def make(cls: type):\n"
+            "        ...\n\n"
+            "    def accepts_type(value: type):\n"
+            "        ..."
+        )
+
+    def test_resolves_builtin_type_name_used(self):
+        tree = ast.parse("type = str\nx: builtins.type = int")
+
+        result = ast.unparse(add_type_imports(tree))
+
+        assert result == "import builtins\ntype = str\nx: builtins.type = int"
+
     def test_keeps_qualified_name_when_leaf_conflicts_with_declaration(self):
         tree = ast.parse("class Incomplete: ...\nx: _typeshed.Incomplete")
 
@@ -84,9 +131,11 @@ class TestAddTypeImports:
 
         assert result == (
             "import numpy\n"
+            "from numpy import intc\n"
+            "from numpy import single\n"
             "from numpy.typing import NDArray\n"
             "\n"
-            "def func(a: NDArray[numpy.intc], b: NDArray[numpy.single]) -> NDArray[numpy.intc]:\n"
+            "def func(a: NDArray[intc], b: NDArray[single]) -> NDArray[intc]:\n"
             "    ..."
         )
 
@@ -173,7 +222,12 @@ x: Dict[str, List[int]] = {}
 """
         tree = ast.parse(code)
         names = collect_names.collect_names(tree)
-        assert "Dict" in names or "typing" in names
+        # Both `Dict` and `List` are referenced in the annotation and must
+        # be collected; `Optional` is imported but never used in the code
+        # itself, so it must NOT show up as a used name.
+        assert "Dict" in names
+        assert "List" in names
+        assert "Optional" not in names
 
     def test_collect_names_builtin_types(self):
         """Test collecting builtin type names."""
@@ -525,6 +579,36 @@ class TestTrimNotDefined:
         result = trim_not_defined.trim_not_defined(tree)
         result_str = ast.unparse(result)
         assert "List" in result_str
+
+    def test_plain_assign_value_replacement_adds_annotation(self):
+        """A plain (unannotated) assignment whose value references an
+        undefined name gets an explicit `_typeshed.Incomplete`
+        annotation when its value is replaced with `...`, rather than
+        being left as a bare `name = ...`: a type checker infers a bare
+        `name = ...`'s type from the literal Ellipsis value itself
+        (EllipsisType) rather than leaving it unresolved, which then
+        breaks any real usage of that name elsewhere (e.g.
+        `IDS.items()` failing because IDS was inferred as EllipsisType,
+        not a dict).
+        """
+        code = 'IDS = {"a": UndefinedConst}'
+        tree = ast.parse(code)
+        result = trim_not_defined.trim_not_defined(tree)
+        result_str = ast.unparse(result)
+        assert "UndefinedConst" not in result_str
+        assert "IDS: _typeshed.Incomplete = ..." in result_str
+        assert "IDS = ..." not in result_str
+
+    def test_multi_target_assign_value_replacement_unaffected(self):
+        """A multi-target assignment (`a = b = ...`) can't become an
+        `ast.AnnAssign` (Python doesn't support that), so it keeps the
+        older, unannotated-value behavior rather than crashing."""
+        code = 'a = b = {"x": UndefinedConst}'
+        tree = ast.parse(code)
+        result = trim_not_defined.trim_not_defined(tree)
+        result_str = ast.unparse(result)
+        assert "UndefinedConst" not in result_str
+        assert "a = b = ..." in result_str
 
     def test_keeps_type_alias_if_star_imported(self):
         """Test that type aliases are kept if star-imported."""

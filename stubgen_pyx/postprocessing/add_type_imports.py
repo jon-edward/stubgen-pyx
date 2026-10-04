@@ -7,6 +7,7 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass, field
 
+from ..conversion.pyrex_types import CYTHON_TO_NUMPY_SCALAR
 from .collect_names import collect_names
 from .utils import dotted_name
 
@@ -14,15 +15,22 @@ TYPE_IMPORTS = (
     "_typeshed.Incomplete",
     "typing.Any",
     "typing.Callable",
+    "typing.Final",
+    "typing.cast",
     "typing.TypedDict",
     "typing.TypeVar",
+    "typing_extensions.Buffer",  # Use backport for Python < 3.10
     "typing_extensions.TypeAlias",  # Use backport for Python < 3.10
     "enum.IntEnum",
     "numpy.typing.NDArray",
     "numpy",
+    "builtins.type",  # For classmethods
 )
 # Qualified names for imported types that
 # might be needed by stubs.
+TYPE_IMPORTS += tuple(
+    f"numpy.{scalar}" for scalar in CYTHON_TO_NUMPY_SCALAR.values()
+)  # For numpy scalars
 
 
 def add_type_imports(node: ast.AST) -> ast.AST:
@@ -92,6 +100,9 @@ def _resolve_type_import(
     used_names: set[str],
 ) -> tuple[_Import | None, str | None]:
     """Return an import to add and replacement for one qualified name."""
+    if qualified_name == "builtins.type" and "type" not in used_names:
+        return None, "type"
+
     if "." not in qualified_name:
         existing = _find_import(existing_imports, qualified_name, None)
         if existing and existing.asname:

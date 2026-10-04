@@ -238,9 +238,39 @@ class _NotDefinedRemover(ast.NodeTransformer):
             output.append(dec)
         return output
 
-    def visit_Assign(self, node: ast.Assign) -> ast.Assign:
-        """Process assignment values."""
-        node.value = self._replace_value_if_undefined(node.value)
+    def visit_Assign(self, node: ast.Assign) -> ast.Assign | ast.AnnAssign:
+        """Process assignment values.
+
+        When the value gets replaced (undefined names found), converts a
+        plain ``name = ...`` into an annotated ``name: _typeshed.Incomplete
+        = ...`` instead -- a bare, unannotated ``name = ...`` would
+        otherwise let a type checker infer ``name``'s type from the
+        literal ``Ellipsis`` value itself (``EllipsisType``) rather than
+        leaving it unresolved (e.g. ``spacy.symbols``, whose ``NAMES =
+        [it[0] for it in sorted(IDS.items(), ...)]`` then fails to
+        type-check: "EllipsisType has no attribute items", once ``IDS =
+        {...hundreds of enum-constant references...}`` collapses to a
+        bare ``IDS = ...`` here for referencing names private to the
+        source file). Only done for a single, plain `ast.Name` target --
+        `ast.AnnAssign` doesn't support anything else (a tuple/multiple
+        -target assignment keeps today's plain, unannotated Ellipsis
+        value; rare in practice, and not worth the complexity of a type
+        comment instead for that shape).
+        """
+        original_value = node.value
+        new_value = self._replace_value_if_undefined(node.value)
+        if (
+            new_value is not original_value
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            return ast.AnnAssign(
+                target=node.targets[0],
+                annotation=_typeshed_incomplete(),
+                value=new_value,
+                simple=1,
+            )
+        node.value = new_value
         return node
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> ast.AnnAssign:
