@@ -215,6 +215,16 @@ def parse_file(
         tree = context.parse(source_desc, scope, pxd=pxd, full_module_name=module_name)
     own_diagnostics = resolution_held + context._diagnostics[diagnostics_start:]
 
+    # A `.pxd` already auto-loaded into `scope` (by a `cimport` from another
+    # module, via `Context.find_module`) is analysed a second time below;
+    # Cython reports every declaration of that second pass as a
+    # redeclaration. The first pass already recorded any real diagnostics.
+    redundant_pxd_pass = pxd and scope.pxd_file_loaded
+    if pxd:
+        # Flagging the scope loaded stops `Context.find_module` from
+        # auto-loading and analysing this `.pxd` into it again later.
+        scope.pxd_file_loaded = True
+
     tree.scope = scope
     tree.is_pxd = pxd
 
@@ -231,7 +241,7 @@ def parse_file(
         scope=scope,
         context=context,
         comments=comments,
-        diagnostics=result.diagnostics + own_diagnostics,
+        diagnostics=[] if redundant_pxd_pass else result.diagnostics + own_diagnostics,
     )
 
 
