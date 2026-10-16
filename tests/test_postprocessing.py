@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ast
+import subprocess
+import sys
 
 import pytest
 
@@ -138,6 +140,49 @@ class TestAddTypeImports:
             "def func(a: NDArray[intc], b: NDArray[single]) -> NDArray[intc]:\n"
             "    ..."
         )
+
+
+class TestAddTypeImportsAliasChoice:
+    """With several imports of one module, the first in the file wins."""
+
+    _USE = "x: numpy.typing.NDArray[numpy.uint8]"
+
+    def test_first_alias_in_file_wins(self):
+        tree = ast.parse(f"import numpy as np\nimport numpy as cnp\n{self._USE}")
+
+        result = ast.unparse(add_type_imports(tree))
+
+        assert result == (
+            "import numpy as np\nimport numpy as cnp\nx: np.typing.NDArray[np.uint8]"
+        )
+
+    def test_swapped_order_swaps_the_choice(self):
+        tree = ast.parse(f"import numpy as cnp\nimport numpy as np\n{self._USE}")
+
+        result = ast.unparse(add_type_imports(tree))
+
+        assert result == (
+            "import numpy as cnp\nimport numpy as np\nx: cnp.typing.NDArray[cnp.uint8]"
+        )
+
+    @pytest.mark.parametrize("seed", ["0", "1", "2", "3"])
+    def test_choice_is_independent_of_hash_seed(self, seed):
+        code = (
+            "import ast\n"
+            "from stubgen_pyx.postprocessing.add_type_imports import add_type_imports\n"
+            "src = 'import numpy as np\\nimport numpy as cnp\\n"
+            f"{self._USE}'\n"
+            "print(ast.unparse(add_type_imports(ast.parse(src))).splitlines()[-1])\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            env={"PYTHONHASHSEED": seed},
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        assert result.stdout.strip() == "x: np.typing.NDArray[np.uint8]"
 
 
 class TestCollectNames:

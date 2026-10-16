@@ -16,6 +16,9 @@ class StubgenPyxConfig:
         pxd_to_stubs: Merge .pxd file contents into stubs (default: True).
         normalize_names: Normalize Cython type names to Python equivalents (default: True).
         deduplicate_imports: Remove duplicate imports (default: True).
+        canonicalize_import_aliases: Use one name for a module imported under
+            several names (``import numpy as np`` and ``import numpy as cnp``):
+            the first import in the file wins (default: True).
         trim_not_defined: Replace undefined names with ``...`` (default: True).
         fix_scalar_defaults: Coerce str/int literal defaults on bytes/bool
             args (from ``char *``/``bint`` params) to match their annotation
@@ -79,6 +82,7 @@ class StubgenPyxConfig:
     pxd_to_stubs: bool = True
     normalize_names: bool = True
     deduplicate_imports: bool = True
+    canonicalize_import_aliases: bool = True
     trim_not_defined: bool = True
     fix_scalar_defaults: bool = True
     include_docstrings: bool = True

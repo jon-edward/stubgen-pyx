@@ -145,6 +145,9 @@ stubgen-pyx . --no-pxd-to-stubs
 # Skip deduplicating imports
 stubgen-pyx . --no-deduplicate-imports
 
+# Keep a module imported under several names (np and cnp) as is
+stubgen-pyx . --no-canonicalize-import-aliases
+
 # Skip trimming undefined names from annotations and defaults
 stubgen-pyx . --no-trim-not-defined
 
@@ -215,6 +218,7 @@ config = StubgenPyxConfig(
     normalize_names=False,  # Don't normalize Cython types
     sort_imports=False,  # Don't sort imports
     deduplicate_imports=False,  # Don't deduplicate imports
+    canonicalize_import_aliases=False,  # Don't merge aliases of one module
     exclude_attribution=False,  # Don't skip stubgen-pyx attribution comment
     continue_on_error=True,  # Continue on errors
     include_private=False,  # Exclude private functions
@@ -284,6 +288,7 @@ All configuration is handled through the `StubgenPyxConfig` dataclass:
 | `sort_imports`        | bool | True    | Sort imports                                           |
 | `trim_imports`        | bool | True    | Trim unused imports                                    |
 | `deduplicate_imports` | bool | True    | Deduplicate imports for the same name                  |
+| `canonicalize_import_aliases` | bool | True | Use one name for a module imported under several names |
 | `trim_not_defined`    | bool | True    | Trim undefined names from annotations                  |
 | `fix_scalar_defaults` | bool | True    | Coerce char\*/bint literal defaults to match `bytes`/`bool` |
 | `pxd_to_stubs`        | bool | True    | Include .pxd file contents                             |

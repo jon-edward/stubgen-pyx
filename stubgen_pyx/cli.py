@@ -125,6 +125,12 @@ Examples:
     )
 
     parser.add_argument(
+        "--no-canonicalize-import-aliases",
+        help="Do not collapse a module imported under several names to one name",
+        action="store_true",
+    )
+
+    parser.add_argument(
         "--no-trim-not-defined",
         help="Do not replace names that are not builtin and not defined with `...`",
         action="store_true",
@@ -240,6 +246,7 @@ def main() -> None:
         normalize_names=not args.no_normalize_names,
         pxd_to_stubs=not args.no_pxd_to_stubs,
         deduplicate_imports=not args.no_deduplicate_imports,
+        canonicalize_import_aliases=not args.no_canonicalize_import_aliases,
         trim_not_defined=not args.no_trim_not_defined,
         fix_scalar_defaults=not args.no_fix_scalar_defaults,
         include_docstrings=not args.exclude_docstrings,

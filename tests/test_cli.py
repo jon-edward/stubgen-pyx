@@ -87,6 +87,12 @@ class TestCreateParser:
         args = parser.parse_args([".", "--no-pxd-to-stubs"])
         assert args.no_pxd_to_stubs is True
 
+    def test_parser_with_no_canonicalize_import_aliases(self):
+        """Test parser with --no-canonicalize-import-aliases flag."""
+        parser = cli._create_parser()
+        args = parser.parse_args([".", "--no-canonicalize-import-aliases"])
+        assert args.no_canonicalize_import_aliases is True
+
     def test_parser_with_no_deduplicate_imports(self):
         """Test parser with --no-deduplicate-imports flag."""
         parser = cli._create_parser()
