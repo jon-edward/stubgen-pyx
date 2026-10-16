@@ -6,10 +6,11 @@ import ast
 
 import pytest
 
-from stubgen_pyx import StubgenPyx, StubgenPyxConfig
 from stubgen_pyx.postprocessing.canonicalize_import_aliases import (
     canonicalize_import_aliases,
 )
+
+from .cimport_helpers import FAKE_NUMPY, convert_files
 
 
 def _canonicalize(source: str) -> str:
@@ -131,31 +132,30 @@ class TestConflictsLeaveNamesAlone:
 
 class TestPipeline:
     _SRC = (
-        "cimport numpy as cnp\nimport numpy as np\n\n"
+        "cimport fakenp as cnp\nimport fakenp as np\n\n"
         "cdef class A:\n    cdef readonly cnp.ndarray arr\n\n"
         "    def f(self) -> np.ndarray: ...\n"
     )
 
-    def test_enabled_by_default(self):
-        result = StubgenPyx(StubgenPyxConfig(exclude_attribution=True)).convert_str(
-            self._SRC
+    def _convert(self, tmp_path, **config_options) -> str:
+        files = {**FAKE_NUMPY, "use.pyx": self._SRC}
+        result = convert_files(
+            tmp_path, files, ["fakenp.pyx", "use.pyx"], **config_options
         )
+        return result["use.pyx"]
 
-        assert result == (
-            "from typing import Final\n\nimport numpy as cnp\n\n\n"
+    def test_enabled_by_default(self, tmp_path):
+        assert self._convert(tmp_path) == (
+            "from typing import Final\n\nimport fakenp as cnp\n\n\n"
             "class A:\n    arr: Final[cnp.ndarray]\n\n"
             "    def f(self) -> cnp.ndarray: ...\n"
         )
 
-    def test_can_be_disabled(self):
-        config = StubgenPyxConfig(
-            exclude_attribution=True, canonicalize_import_aliases=False
-        )
-
-        result = StubgenPyx(config).convert_str(self._SRC)
+    def test_can_be_disabled(self, tmp_path):
+        result = self._convert(tmp_path, canonicalize_import_aliases=False)
 
         assert result == (
-            "from typing import Final\n\nimport numpy as cnp\nimport numpy as np\n\n\n"
+            "from typing import Final\n\nimport fakenp as cnp\nimport fakenp as np\n\n\n"
             "class A:\n    arr: Final[cnp.ndarray]\n\n"
             "    def f(self) -> np.ndarray: ...\n"
         )

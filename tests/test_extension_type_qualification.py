@@ -1,5 +1,5 @@
 """Extension types declared in another module are spelled the way the stub
-imports them (``cimport numpy as cnp`` -> ``cnp.ndarray``), not as a bare
+imports them (``cimport fakenp as cnp`` -> ``cnp.ndarray``), not as a bare
 name that nothing in the stub defines."""
 
 from __future__ import annotations
@@ -9,7 +9,9 @@ import pytest
 from stubgen_pyx import StubgenPyx, StubgenPyxConfig
 from stubgen_pyx.conversion.pyrex_types import render_pyrex_type
 from stubgen_pyx.parsing.context import StubgenContext
-from stubgen_pyx.parsing.parser import parse_str
+from stubgen_pyx.parsing.parser import parse_file
+
+from .cimport_helpers import FAKE_NUMPY, convert_files
 
 _CONFIG = StubgenPyxConfig(exclude_attribution=True, include_private=True)
 
@@ -39,41 +41,50 @@ def _convert_package(tmp_path, header: str, type_spelling: str) -> str:
     return (tmp_path / "pkg/use.pyi").read_text()
 
 
-class TestNumpyNdarray:
+class TestAliasedModuleType:
     PXD = (
-        "cimport numpy as cnp\n\n"
+        "cimport fakenp as cnp\n\n"
         "cdef class A:\n"
         "    cdef readonly cnp.ndarray ro\n"
         "    cdef public cnp.ndarray rw\n"
     )
+    PYX_IMPORT = "cimport fakenp as cnp\n\ncdef class A:\n    pass\n"
+    EXPECTED = (
+        "from typing import Final\n\n"
+        "import fakenp as cnp\n\n\n"
+        "class A:\n    ro: Final[cnp.ndarray]\n    rw: cnp.ndarray\n"
+    )
 
-    def test_attributes_declared_in_pxd(self):
-        result = StubgenPyx(_CONFIG).convert_str(
-            "cimport numpy as cnp\n\ncdef class A:\n    pass\n", pxd_str=self.PXD
+    def test_attributes_declared_in_pxd(self, tmp_path):
+        result = convert_files(
+            tmp_path,
+            {**FAKE_NUMPY, "use.pxd": self.PXD, "use.pyx": self.PYX_IMPORT},
+            ["fakenp.pyx", "use.pyx"],
         )
-        assert result == (
-            "from typing import Final\n\n"
-            "import numpy as cnp\n\n\n"
-            "class A:\n    ro: Final[cnp.ndarray]\n    rw: cnp.ndarray\n"
-        )
+        assert result["use.pyx"] == self.EXPECTED
 
-    def test_attributes_declared_in_pyx(self):
-        result = StubgenPyx(_CONFIG).convert_str(self.PXD)
-        assert result == (
-            "from typing import Final\n\n"
-            "import numpy as cnp\n\n\n"
-            "class A:\n    ro: Final[cnp.ndarray]\n    rw: cnp.ndarray\n"
+    def test_attributes_declared_in_pyx(self, tmp_path):
+        result = convert_files(
+            tmp_path,
+            {**FAKE_NUMPY, "use.pyx": self.PXD},
+            ["fakenp.pyx", "use.pyx"],
         )
+        assert result["use.pyx"] == self.EXPECTED
 
-    def test_star_import_does_not_leave_a_bare_name(self):
+    def test_star_import_does_not_leave_a_bare_name(self, tmp_path):
         # A star import disables `trim_not_defined`, so an unqualified
         # `ndarray` would be emitted as-is instead of `Incomplete`.
-        result = StubgenPyx(_CONFIG).convert_str(
-            "from os.path import *\ncimport numpy as cnp\n\ncdef class A:\n    pass\n",
-            pxd_str=self.PXD,
+        result = convert_files(
+            tmp_path,
+            {
+                **FAKE_NUMPY,
+                "use.pxd": self.PXD,
+                "use.pyx": "from os.path import *\n" + self.PYX_IMPORT,
+            },
+            ["fakenp.pyx", "use.pyx"],
         )
-        assert "ro: Final[cnp.ndarray]" in result
-        assert "Final[ndarray]" not in result
+        assert "ro: Final[cnp.ndarray]" in result["use.pyx"]
+        assert "Final[ndarray]" not in result["use.pyx"]
 
 
 class TestProjectLocalExtensionTypes:
@@ -135,11 +146,17 @@ class TestLocalAndBareRendering:
             "class A:\n    o: Final[Other]\n    p: Other\n"
         )
 
-    def test_render_without_scope_is_the_bare_name(self):
-        parsed = parse_str(
-            "cimport numpy as cnp\n\ncdef class A:\n    cdef readonly cnp.ndarray ro\n",
-            context=StubgenContext(),
-        )
+    def test_render_without_scope_is_the_bare_name(self, tmp_path):
+        for name, text in {
+            **FAKE_NUMPY,
+            "use.pyx": (
+                "cimport fakenp as cnp\n\n"
+                "cdef class A:\n    cdef readonly cnp.ndarray ro\n"
+            ),
+        }.items():
+            (tmp_path / name).write_text(text)
+        context = StubgenContext(include_directories=[str(tmp_path)])
+        parsed = parse_file(tmp_path / "use.pyx", context)
         class_entry = parsed.scope.entries["A"]
         attr_type = class_entry.type.scope.entries["ro"].type
         assert render_pyrex_type(attr_type) == "ndarray"
