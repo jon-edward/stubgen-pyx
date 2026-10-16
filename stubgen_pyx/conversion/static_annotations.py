@@ -288,7 +288,7 @@ def _is_readonly_cdef_attribute(
     return getattr(cdef_variable, "visibility", None) == "readonly"
 
 
-def _convert_declared_function(name: str, t) -> PyiFunction:
+def _convert_declared_function(name: str, t, scope=None) -> PyiFunction:
     """Convert a function-shaped Entry's `CFuncType` -- no surviving
     `CFuncDefNode`/`DefNode` (e.g. a `cpdef` declared directly inside
     `cdef extern from ...:`, with no body of its own) -- to a
@@ -304,7 +304,7 @@ def _convert_declared_function(name: str, t) -> PyiFunction:
         PyiArgument(
             name=arg.name or f"arg{i}",
             annotation=with_debug_fallback(
-                render_pyrex_type(arg.type),
+                render_pyrex_type(arg.type, scope=scope),
                 "_typeshed.Incomplete",
                 lambda name_=arg.name: f"Unable to determine type for {name_}",
             ),
@@ -312,7 +312,7 @@ def _convert_declared_function(name: str, t) -> PyiFunction:
         for i, arg in enumerate(t.args)
     ]
     return_type = with_debug_fallback(
-        render_pyrex_type(t.return_type),
+        render_pyrex_type(t.return_type, scope=scope),
         "_typeshed.Incomplete",
         lambda: f"Unable to determine return type for {name}",
     )
@@ -384,14 +384,18 @@ def convert_declared_entry(
         return None, None, None, None
 
     if entry.is_cfunction:
-        function = _convert_declared_function(name, t) if entry.create_wrapper else None
+        function = (
+            _convert_declared_function(name, t, entry.scope)
+            if entry.create_wrapper
+            else None
+        )
         return None, None, None, function
 
     if not entry.is_variable or not (
         visitor.in_class and entry.visibility in ("public", "readonly")
     ):
         return None, None, None, None
-    type_name = render_pyrex_type(t)
+    type_name = render_pyrex_type(t, scope=entry.scope)
     resolved = with_debug_fallback(
         type_name,
         "_typeshed.Incomplete",

@@ -143,7 +143,7 @@ def convert_struct_or_union_type(t) -> PyiClass:
     for mname, mentry in member_scope.entries.items() if member_scope else ():
         if mname.startswith("__"):
             continue
-        type_name = render_pyrex_type(mentry.type)
+        type_name = render_pyrex_type(mentry.type, scope=member_scope)
         resolved = with_debug_fallback(
             type_name,
             "_typeshed.Incomplete",

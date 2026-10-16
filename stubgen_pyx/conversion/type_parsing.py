@@ -45,7 +45,9 @@ def _extract_resolved_type(node) -> str | None:
         if resolved_type is None:
             _logger.debug("Unknown base type: %s", type(node).__name__)
         return None
-    rendered = render_pyrex_type(resolved_type)
+    rendered = render_pyrex_type(
+        resolved_type, scope=getattr(getattr(node, "entry", None), "scope", None)
+    )
     if rendered is not None:
         return rendered
     _logger.debug("Unknown base type: %s", type(node).__name__)
@@ -214,7 +216,7 @@ def get_cdef_variables(
         # `return_type_annotation` -- checked first and preferred over
         # `entry.type` whenever present.
         entry = node.entry
-        type_name = render_pyrex_type(entry.type) if entry else None
+        type_name = render_pyrex_type(entry.type, scope=entry.scope) if entry else None
         getter = next(
             (
                 s

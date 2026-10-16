@@ -90,7 +90,10 @@ def _get_return_type_annotation(node: Nodes.CFuncDefNode | Nodes.DefNode) -> str
         # `CFuncType`, not the return type alone -- has to be narrowed
         # to `.return_type` explicitly, or `render_pyrex_type` would
         # render the callable itself instead of what it returns.
-        return render_pyrex_type(resolved_type.return_type)
+        return render_pyrex_type(
+            resolved_type.return_type,
+            scope=getattr(getattr(node, "entry", None), "scope", None),
+        )
 
     return None
 

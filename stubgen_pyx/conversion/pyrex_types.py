@@ -52,6 +52,10 @@ _CYTHON_BUILTIN_GENERIC_MAPPING: dict[str, str] = {
 }
 
 
+#: Home modules whose extension types have no importable binding.
+_NON_IMPORTABLE_MODULES = frozenset({"__builtin__", "builtins", "cython"})
+
+
 def parameterize_builtin_generic(name: str | None) -> str | None:
     """Map bare Cython container names to Any-filled Python generics."""
     if name is None:
@@ -60,18 +64,25 @@ def parameterize_builtin_generic(name: str | None) -> str | None:
 
 
 def render_pyrex_type(
-    t: _PyrexTypes.PyrexType | None, *, _depth: int = 0
+    t: _PyrexTypes.PyrexType | None, *, scope=None, _depth: int = 0
 ) -> str | None:
-    """Render a resolved ``PyrexTypes.Type`` as a Python annotation string."""
+    """Render a resolved ``PyrexTypes.Type`` as a Python annotation string.
+
+    ``scope`` is any ``Symtab.Scope`` inside the module the annotation will
+    appear in. Extension types declared in another module are then spelled
+    the way that module's stub imports them (``cnp.ndarray`` for
+    ``cimport numpy as cnp``); without a scope they render as their bare
+    name.
+    """
     if t is None:
         return None
     if getattr(t, "is_cv_qualified", False):
-        return render_pyrex_type(t.cv_base_type, _depth=_depth)
-    return _render_unqualified_pyrex_type(t, _depth=_depth)
+        return render_pyrex_type(t.cv_base_type, scope=scope, _depth=_depth)
+    return _render_unqualified_pyrex_type(t, scope=scope, _depth=_depth)
 
 
 def _render_unqualified_pyrex_type(
-    t: _PyrexTypes.PyrexType, *, _depth: int
+    t: _PyrexTypes.PyrexType, *, scope, _depth: int
 ) -> str | None:
     if t.is_void:
         return "None"
@@ -86,13 +97,13 @@ def _render_unqualified_pyrex_type(
         _render_builtin_type,
     )
     for renderer in renderers:
-        rendered = renderer(t, _depth=_depth)
+        rendered = renderer(t, scope=scope, _depth=_depth)
         if rendered is not None:
             return rendered
     return None
 
 
-def _render_pointer_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str | None:
+def _render_pointer_type(t: _PyrexTypes.PyrexType, *, scope, _depth: int) -> str | None:
     if not t.is_ptr:
         return None
     base = t.base_type
@@ -101,25 +112,25 @@ def _render_pointer_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str | None
     if base.is_void:
         return "typing.Any"
     if getattr(base, "is_cfunction", False):
-        return _render_cfunction_type(base, _depth=_depth)
-    return render_pyrex_type(base, _depth=_depth + 1)
+        return _render_cfunction_type(base, scope=scope, _depth=_depth)
+    return render_pyrex_type(base, scope=scope, _depth=_depth + 1)
 
 
-def _render_array_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str | None:
+def _render_array_type(t: _PyrexTypes.PyrexType, *, scope, _depth: int) -> str | None:
     if not t.is_array:
         return None
     if t.base_type is _PyrexTypes.c_char_type:
         return "bytes"
-    inner = render_pyrex_type(t.base_type, _depth=_depth + 1)
+    inner = render_pyrex_type(t.base_type, scope=scope, _depth=_depth + 1)
     return f"list[{inner}]" if inner is not None else None
 
 
-def _render_ctuple_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str | None:
+def _render_ctuple_type(t: _PyrexTypes.PyrexType, *, scope, _depth: int) -> str | None:
     if not getattr(t, "is_ctuple", False):
         return None
     parts = [
         with_debug_fallback(
-            render_pyrex_type(component, _depth=_depth + 1),
+            render_pyrex_type(component, scope=scope, _depth=_depth + 1),
             "object",
             lambda component_idx=component_idx: (
                 f"Replaced tuple component at index {component_idx} with 'object'"
@@ -130,7 +141,9 @@ def _render_ctuple_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str | None:
     return f"tuple[{', '.join(parts)}]"
 
 
-def _render_memoryview_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str | None:
+def _render_memoryview_type(
+    t: _PyrexTypes.PyrexType, *, scope, _depth: int
+) -> str | None:
     if not getattr(t, "is_memoryviewslice", False):
         return None
     dtype_name = str(t.dtype) if t.dtype is not None else None
@@ -138,13 +151,15 @@ def _render_memoryview_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str | N
     return f"numpy.typing.NDArray[numpy.{scalar}]" if scalar else "memoryview"
 
 
-def _render_cpp_template_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str | None:
+def _render_cpp_template_type(
+    t: _PyrexTypes.PyrexType, *, scope, _depth: int
+) -> str | None:
     if not getattr(t, "is_cpp_class", False) or not getattr(t, "templates", None):
         return None
     base = t.name
     parts = [
         with_debug_fallback(
-            render_pyrex_type(argument, _depth=_depth + 1),
+            render_pyrex_type(argument, scope=scope, _depth=_depth + 1),
             "_typeshed.Incomplete",
             lambda argument_idx=argument_idx: (
                 f"Replaced template argument of {base} at index {argument_idx} with '_typeshed.Incomplete'"
@@ -155,7 +170,7 @@ def _render_cpp_template_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str |
     return f"{base}[{', '.join(parts)}]"
 
 
-def _render_named_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str | None:
+def _render_named_type(t: _PyrexTypes.PyrexType, *, scope, _depth: int) -> str | None:
     name = getattr(t, "name", None)
     if name is None:
         return None
@@ -167,22 +182,67 @@ def _render_named_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str | None:
         "is_cpp_class",
         "is_fused",
     )
-    return name if any(getattr(t, flag, False) for flag in type_flags) else None
+    if not any(getattr(t, flag, False) for flag in type_flags):
+        return None
+    if getattr(t, "is_extension_type", False):
+        return _qualify_extension_type(t, name, scope)
+    return name
 
 
-def _render_builtin_type(t: _PyrexTypes.PyrexType, *, _depth: int) -> str | None:
+def _qualify_extension_type(t: _PyrexTypes.PyrexType, name: str, scope) -> str:
+    """Spell an extension type the way the current module's stub can reach it.
+
+    A type declared in another module is reachable through whichever
+    ``cimport`` bound it, which the stub rewrites to the matching
+    ``import``: ``from pkg.lib cimport Foo [as Q]`` -> ``Foo``/``Q``;
+    ``cimport numpy as cnp`` or ``from pkg cimport lib`` -> ``cnp.ndarray``/
+    ``lib.Foo``; ``cimport pkg.lib`` -> ``pkg.lib.Foo``. Falls back to the bare
+    name when no scope is given, the type is local, or no binding is found.
+    """
+    home = getattr(t, "module_name", None)
+    module_scope = scope.global_scope() if scope is not None else None
+    if (
+        module_scope is None
+        or not home
+        or home in _NON_IMPORTABLE_MODULES
+        or home == module_scope.qualified_name
+    ):
+        return name
+
+    entries = module_scope.entries
+    for entry_name, entry in entries.items():
+        if entry.is_type and entry.type is t:
+            return entry_name
+    for entry_name, entry in entries.items():
+        as_module = getattr(entry, "as_module", None)
+        if as_module is not None and as_module.qualified_name == home:
+            return f"{entry_name}.{name}"
+    for entry_name, entry in entries.items():
+        as_module = getattr(entry, "as_module", None)
+        if (
+            as_module is not None
+            and as_module.qualified_name == entry_name
+            and home.startswith(f"{entry_name}.")
+        ):
+            return f"{home}.{name}"
+    return name
+
+
+def _render_builtin_type(t: _PyrexTypes.PyrexType, *, scope, _depth: int) -> str | None:
     if not (t.is_pyobject or t.is_numeric or t.is_string):
         return None
     return parameterize_builtin_generic(t.py_type_name())
 
 
-def _render_cfunction_type(t: _PyrexTypes.CFuncType, *, _depth: int) -> str | None:
+def _render_cfunction_type(
+    t: _PyrexTypes.CFuncType, *, scope, _depth: int
+) -> str | None:
     """Render a resolved ``CFuncType`` (a function pointer's pointee, typically) as ``Callable[[...], ...]``."""
     if not getattr(t, "is_cfunction", False):
         return None
     args = [
         with_debug_fallback(
-            render_pyrex_type(arg.type, _depth=_depth + 1),
+            render_pyrex_type(arg.type, scope=scope, _depth=_depth + 1),
             "_typeshed.Incomplete",
             lambda arg_idx_=arg_idx: (
                 f"Replaced argument {arg_idx_} type with '_typeshed.Incomplete'"
@@ -191,7 +251,7 @@ def _render_cfunction_type(t: _PyrexTypes.CFuncType, *, _depth: int) -> str | No
         for arg_idx, arg in enumerate(t.args)
     ]
     return_type = with_debug_fallback(
-        render_pyrex_type(t.return_type, _depth=_depth + 1),
+        render_pyrex_type(t.return_type, scope=scope, _depth=_depth + 1),
         "_typeshed.Incomplete",
         lambda: "Replaced return type with '_typeshed.Incomplete'",
     )
