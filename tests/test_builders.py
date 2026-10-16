@@ -75,6 +75,20 @@ class TestBuilder:
         result = builder.build_argument(arg)
         assert result == "x = None"
 
+    def test_build_argument_replace_defaults_with_ellipsis(self):
+        """The real default value renders as `...` when the option is set."""
+        builder = Builder(replace_defaults_with_ellipsis=True)
+        arg = PyiArgument("x", annotation="int", default="5")
+        result = builder.build_argument(arg)
+        assert result == "x: int = ..."
+
+    def test_build_argument_replace_defaults_with_ellipsis_no_default_unaffected(self):
+        """An argument with no default at all is unaffected either way."""
+        builder = Builder(replace_defaults_with_ellipsis=True)
+        arg = PyiArgument("x", annotation="int")
+        result = builder.build_argument(arg)
+        assert result == "x: int"
+
     def test_build_signature_simple(self):
         """Test building a simple signature."""
         builder = Builder()
@@ -243,6 +257,34 @@ class TestBuilder:
         builder = Builder(include_private=False)
         result = builder.build_assignment(PyiAssignment("__all__ = ['x']"))
         assert result == "__all__ = ['x']"
+
+    def test_build_assignment_uses_name_field_when_present(self):
+        """The `name` field, when set, is used directly rather than
+        re-derived by partitioning `statement` -- which can be fooled by
+        a `=`/`:` embedded in the value/annotation before the real
+        separator (e.g. a default inside `Annotated[...]`)."""
+        builder = Builder(include_private=False)
+        # `.partition("=")` would split at the embedded `default=5` first;
+        # only the explicit `name=` field gives the real, correct name.
+        tricky = PyiAssignment(
+            "_secret: Annotated[int, Field(default=5)] = 5", name="_secret"
+        )
+        assert builder.build_assignment(tricky) is None
+
+        public_tricky = PyiAssignment(
+            "visible: Annotated[int, Field(default=5)] = 5", name="visible"
+        )
+        assert (
+            builder.build_assignment(public_tricky)
+            == "visible: Annotated[int, Field(default=5)] = 5"
+        )
+
+    def test_build_assignment_falls_back_without_name_field(self):
+        """Without a `name` field (e.g. a `PyiAssignment` built directly
+        without one), privacy is still derived from `statement` as before."""
+        builder = Builder(include_private=False)
+        assert builder.build_assignment(PyiAssignment("_x: int = 5")) is None
+        assert builder.build_assignment(PyiAssignment("x: int = 5")) == "x: int = 5"
 
     def test_build_import_simple(self):
         """Test building a simple import statement."""
@@ -420,7 +462,8 @@ class TestBuilder:
         )
         result = builder.build_module(module)
         assert "test module" in result
-        assert "import" in result or "Dict" in result
+        assert "from typing import Dict" in result
+        assert "def test():" in result
 
 
 class TestBuilderClassBases:

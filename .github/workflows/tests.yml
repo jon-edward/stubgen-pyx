@@ -21,3 +21,35 @@ jobs:
       - name: Test with pytest
         run: |
           uv run pytest --cov=stubgen_pyx tests/
+
+  test-cython-versions:
+    # Cython's own AST/type classes are not stable across the declared
+    # range in pyproject.toml (`Cython >=3.0.0, <3.4.0`) -- e.g. Cython
+    # 3.3 renamed `CConstDeclaratorNode`/`CConstOrVolatileTypeNode` to
+    # `CQualifierDeclaratorNode`/`CQualifierTypeNode`. The main `test`
+    # job above only ever installs whatever version `.[test]`'s own
+    # constraint happens to resolve to (in practice, always the latest
+    # compatible release), so it never actually exercises the bottom of
+    # the declared range on its own. This job pins explicitly to both
+    # ends: 3.2.9 (the last 3.2.x release, just below the 3.3 rename)
+    # and 3.3.0 (the first release with it).
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.12"]
+        cython-version: ["3.2.9", "3.3.0"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+      - name: Install Python and package with pinned Cython
+        run: |
+          uv python install ${{ matrix.python-version }}
+          uv venv
+          uv pip install ".[test]"
+      - name: Verify installed Cython version
+        run: |
+          uv run --with "cython==${{ matrix.cython-version }}" python -c "import Cython; assert Cython.__version__ == '${{ matrix.cython-version }}', Cython.__version__; print('Cython', Cython.__version__)"
+      - name: Test with pytest
+        run: |
+          uv run pytest tests/

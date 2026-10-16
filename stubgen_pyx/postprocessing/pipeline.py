@@ -12,6 +12,7 @@ from pathlib import Path
 from ..config import StubgenPyxConfig
 from .add_type_imports import add_type_imports
 from .attribution import stubgen_attribution
+from .canonicalize_import_aliases import canonicalize_import_aliases
 from .collapse_funcdefs import collapse_funcdefs
 from .collect_names import collect_names
 from .deduplicate_imports import deduplicate_imports
@@ -79,6 +80,10 @@ def _ast_transforms(
     # implementation referenced are then seen as unused.
     tree = remove_overload_implementations(tree)
     tree = unquote_annotations(tree)
+
+    if config.canonicalize_import_aliases:
+        tree = canonicalize_import_aliases(tree)
+
     tree = add_type_imports(tree)
 
     if config.trim_not_defined:

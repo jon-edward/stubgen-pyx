@@ -125,6 +125,12 @@ Examples:
     )
 
     parser.add_argument(
+        "--no-canonicalize-import-aliases",
+        help="Do not collapse a module imported under several names to one name",
+        action="store_true",
+    )
+
+    parser.add_argument(
         "--no-trim-not-defined",
         help="Do not replace names that are not builtin and not defined with `...`",
         action="store_true",
@@ -158,6 +164,37 @@ Examples:
     parser.add_argument(
         "--exclude-docstrings",
         help="Exclude docstrings in the output stub",
+        action="store_true",
+    )
+
+    parser.add_argument(
+        "--resolve-ctypedef-aliases",
+        help="Replace a ctypedef alias with its underlying resolved type, and a "
+        "cdef enum name with int, in annotations and attribute declarations "
+        "wherever it can be resolved, instead of referencing the alias name. "
+        "A ctypedef or cdef enum has no Python-level binding at runtime, so "
+        "once every usage is substituted, its own declaration is dropped too "
+        "if nothing else in the stub needs it. A cpdef enum stays an IntEnum",
+        action="store_true",
+    )
+
+    parser.add_argument(
+        "--include-dir",
+        help="Extra directory to search when resolving cimport/include targets "
+        "that aren't part of the project itself (e.g. a third-party .pxd-only "
+        "package). Each file's own project root is always searched "
+        "automatically; this is only for paths outside that. This option can "
+        "be used multiple times (default: None)",
+        type=str,
+        nargs="*",
+        default=None,
+    )
+
+    parser.add_argument(
+        "--replace-defaults-with-ellipsis",
+        help="Render every argument default as `...` instead of its real "
+        "value (`def f(x: int = ...)` rather than `def f(x: int = 5)`), "
+        "matching the convention most .pyi stubs use",
         action="store_true",
     )
 
@@ -209,6 +246,7 @@ def main() -> None:
         normalize_names=not args.no_normalize_names,
         pxd_to_stubs=not args.no_pxd_to_stubs,
         deduplicate_imports=not args.no_deduplicate_imports,
+        canonicalize_import_aliases=not args.no_canonicalize_import_aliases,
         trim_not_defined=not args.no_trim_not_defined,
         fix_scalar_defaults=not args.no_fix_scalar_defaults,
         include_docstrings=not args.exclude_docstrings,
@@ -216,6 +254,9 @@ def main() -> None:
         continue_on_error=args.continue_on_error,
         include_private=args.include_private,
         verbose=args.verbose,
+        resolve_ctypedef_aliases=args.resolve_ctypedef_aliases,
+        include_dirs=list(args.include_dir) if args.include_dir else [],
+        replace_defaults_with_ellipsis=args.replace_defaults_with_ellipsis,
     )
 
     source_dir = Path(args.dir) if args.dir else Path(".")

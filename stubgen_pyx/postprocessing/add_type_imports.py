@@ -5,8 +5,10 @@ Add required type imports to a Python .pyi file.
 from __future__ import annotations
 
 import ast
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from ..conversion.pyrex_types import CYTHON_TO_NUMPY_SCALAR
 from .collect_names import collect_names
 from .utils import dotted_name
 
@@ -14,15 +16,22 @@ TYPE_IMPORTS = (
     "_typeshed.Incomplete",
     "typing.Any",
     "typing.Callable",
+    "typing.Final",
+    "typing.cast",
     "typing.TypedDict",
     "typing.TypeVar",
+    "typing_extensions.Buffer",  # Use backport for Python < 3.10
     "typing_extensions.TypeAlias",  # Use backport for Python < 3.10
     "enum.IntEnum",
     "numpy.typing.NDArray",
     "numpy",
+    "builtins.type",  # For classmethods
 )
 # Qualified names for imported types that
 # might be needed by stubs.
+TYPE_IMPORTS += tuple(
+    f"numpy.{scalar}" for scalar in CYTHON_TO_NUMPY_SCALAR.values()
+)  # For numpy scalars
 
 
 def add_type_imports(node: ast.AST) -> ast.AST:
@@ -49,8 +58,13 @@ def _collect_qualified_names(node: ast.AST) -> set[str]:
     return collector.names
 
 
-def _collect_imports(node: ast.AST) -> set[_Import]:
-    """Return all regular imports declared in ``node``."""
+def _collect_imports(node: ast.AST) -> list[_Import]:
+    """Return the distinct regular imports declared in ``node``, in source order.
+
+    Order decides which of several imports of the same module (``import
+    numpy as np`` and ``import numpy as cnp``) a qualified name resolves
+    to: the first one in the file.
+    """
     visitor = _ImportVisitor()
     visitor.visit(node)
     return visitor.imports
@@ -58,7 +72,7 @@ def _collect_imports(node: ast.AST) -> set[_Import]:
 
 def _resolve_type_imports(
     qualified_names: set[str],
-    existing_imports: set[_Import],
+    existing_imports: Sequence[_Import],
     used_names: set[str],
 ) -> tuple[set[_Import], dict[str, str]]:
     """Resolve required imports and qualified-name replacements."""
@@ -88,10 +102,13 @@ def _is_used(qualified_name: str, names: set[str]) -> bool:
 
 def _resolve_type_import(
     qualified_name: str,
-    existing_imports: set[_Import],
+    existing_imports: Sequence[_Import],
     used_names: set[str],
 ) -> tuple[_Import | None, str | None]:
     """Return an import to add and replacement for one qualified name."""
+    if qualified_name == "builtins.type" and "type" not in used_names:
+        return None, "type"
+
     if "." not in qualified_name:
         existing = _find_import(existing_imports, qualified_name, None)
         if existing and existing.asname:
@@ -116,7 +133,7 @@ def _resolve_type_import(
 
 
 def _find_import(
-    imports: set[_Import], module: str, name: str | None
+    imports: Sequence[_Import], module: str, name: str | None
 ) -> _Import | None:
     """Find an import matching a module and optional imported name."""
     return next(
@@ -130,9 +147,12 @@ def _find_import(
 
 
 def _find_longest_module_import(
-    qualified_name: str, imports: set[_Import]
+    qualified_name: str, imports: Sequence[_Import]
 ) -> _Import | None:
-    """Find the most specific plain module import covering ``qualified_name``."""
+    """Find the most specific plain module import covering ``qualified_name``.
+
+    Ties go to the earliest import in ``imports``.
+    """
     module_imports = (
         candidate
         for candidate in imports
@@ -194,17 +214,21 @@ class _Import:
 class _ImportVisitor(ast.NodeVisitor):
     """Collect imports from a module without traversing imported names."""
 
-    imports: set[_Import] = field(default_factory=set)
+    imports: list[_Import] = field(default_factory=list)
+
+    def _add(self, import_: _Import) -> None:
+        if import_ not in self.imports:
+            self.imports.append(import_)
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
-            self.imports.add(_Import(alias.name, None, alias.asname))
+            self._add(_Import(alias.name, None, alias.asname))
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         for alias in node.names:
             if node.module is None:
                 continue
-            self.imports.add(_Import(node.module, alias.name, alias.asname))
+            self._add(_Import(node.module, alias.name, alias.asname))
 
 
 @dataclass

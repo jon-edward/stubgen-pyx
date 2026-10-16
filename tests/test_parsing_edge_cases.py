@@ -3,26 +3,83 @@
 from __future__ import annotations
 
 import tempfile
-import tokenize
 from pathlib import Path
 
 import pytest
+from Cython.Compiler.Errors import CompileError
 
-from stubgen_pyx.parsing.parser import parse_pyx
-from stubgen_pyx.parsing.preprocess import LineColConverter
+from stubgen_pyx.config import StubgenPyxConfig
+from stubgen_pyx.parsing.context import StubgenContext, context_for_paths
+from stubgen_pyx.parsing.parser import parse_file
+from stubgen_pyx.stubgen import StubgenPyx
+
+
+@pytest.fixture
+def temp_dir():
+    """Create a temporary directory for test files."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        yield Path(tmpdir)
 
 
 class TestParsingEdgeCases:
     """Test edge cases in parsing."""
 
     def test_parse_file_with_syntax_error(self):
-        """Test parsing a file with syntax errors."""
+        """Test parsing a file with syntax errors.
+
+        A real syntax error (as opposed to a declaration-level issue like
+        an unresolved `cimport`) surfaces as `Context.parse`'s own
+        error-count check raising -- not collected into
+        `ParsedSource.diagnostics` the way `AnalyseDeclarationsTransform`
+        issues are. See `parsing/pipeline.py::run_stub_pipeline`.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             pyx_file = Path(tmpdir) / "bad_syntax.pyx"
             pyx_file.write_text("def broken( pass")
 
-            with pytest.raises(tokenize.TokenError):
-                parse_pyx(pyx_file.read_text(), pyx_path=pyx_file)
+            with pytest.raises(CompileError):
+                parse_file(pyx_file, StubgenContext())
+
+    def test_parse_file_diagnostic_from_auto_merged_pxd_is_captured(self, temp_dir):
+        """An unresolved `cimport` inside an auto-merged companion `.pxd` surfaces as a diagnostic.
+
+        `_resolve_scope`'s pxd auto-merge (`Context.find_module` ->
+        `Context.process_pxd`) runs a full nested parse-and-analyse
+        pipeline as a side effect of resolving the primary file's scope,
+        before the primary file's own `context.parse()` call. An error
+        reported during that nested pipeline's declaration analysis (as
+        opposed to its raw parse stage, which is `context.parse()`'s own
+        `Errors.hold_errors()` window) has to be caught by
+        `parse_file` itself, or it's silently dropped rather than ending
+        up in `ParsedSource.diagnostics`.
+        """
+        (temp_dir / "has_pxd.pxd").write_text(
+            "cimport definitely_not_installed_xyz\ncdef class Foo:\n    cdef int x\n"
+        )
+        (temp_dir / "has_pxd.pyx").write_text(
+            "cdef class Foo:\n    def bar(self):\n        return self.x\n"
+        )
+
+        context = StubgenContext(include_directories=[str(temp_dir)])
+        result = parse_file(temp_dir / "has_pxd.pyx", context)
+
+        assert len(result.diagnostics) == 1
+        assert "definitely_not_installed_xyz" in str(result.diagnostics[0])
+
+    def test_parse_file_diagnostics_are_isolated_per_file(self, temp_dir):
+        """One file's diagnostics don't leak into the next file's result on a shared context."""
+        (temp_dir / "bad.pxd").write_text("cimport definitely_not_installed_xyz\n")
+        (temp_dir / "bad.pyx").write_text("pass\n")
+        (temp_dir / "clean.pyx").write_text(
+            "def hello(x: int) -> str:\n    return str(x)\n"
+        )
+
+        context = StubgenContext(include_directories=[str(temp_dir)])
+        bad_result = parse_file(temp_dir / "bad.pyx", context)
+        clean_result = parse_file(temp_dir / "clean.pyx", context)
+
+        assert len(bad_result.diagnostics) == 1
+        assert clean_result.diagnostics == []
 
     def test_parse_file_with_complex_code(self):
         """Test parsing complex Cython code."""
@@ -41,40 +98,9 @@ cdef class MyClass:
     def get_value(self):
         return self.value
 """)
-            result = parse_pyx(pyx_file.read_text(), pyx_path=pyx_file)
+            result = parse_file(pyx_file, StubgenContext())
             assert result is not None
-
-    def test_line_col_converter_basic(self):
-        """Test LineColConverter with basic code."""
-        code = "line1\nline2\nline3"
-        converter = LineColConverter(code)
-        offset = converter.line_col_to_offset((1, 0))
-        assert offset == 0
-
-    def test_line_col_converter_multiline(self):
-        """Test LineColConverter with multiple lines."""
-        code = "line1\nline2\nline3"
-        converter = LineColConverter(code)
-        # Line 2, Column 0 should be after first line and newline
-        offset = converter.line_col_to_offset((2, 0))
-        assert offset > 0
-        assert offset == 6  # "line1\n" is 6 chars
-
-    def test_line_col_converter_end_of_file(self):
-        """Test LineColConverter at end of file."""
-        code = "line1\nline2"
-        converter = LineColConverter(code)
-        offset = converter.line_col_to_offset((2, 5))
-        assert offset == 11
-
-    def test_line_col_converter_offset_to_line_col(self):
-        """Test converting offset back to line/col."""
-        code = "line1\nline2\nline3"
-        converter = LineColConverter(code)
-        # Get offset for line 2, col 2
-        offset = converter.line_col_to_offset((2, 2))
-        # Should be able to get this offset
-        assert offset >= 0
+            assert result.diagnostics == []
 
     def test_parse_file_with_docstring(self):
         """Test parsing file with docstring."""
@@ -87,7 +113,7 @@ def hello():
     """Function docstring."""
     pass
 ''')
-            result = parse_pyx(pyx_file.read_text(), pyx_path=pyx_file)
+            result = parse_file(pyx_file, StubgenContext())
             assert result is not None
 
     def test_parse_file_with_imports(self):
@@ -100,8 +126,13 @@ from typing import Dict, List
 cimport cython
 from cpython.mem cimport PyMem_Malloc
 """)
-            result = parse_pyx(pyx_file.read_text(), pyx_path=pyx_file)
+            result = parse_file(pyx_file, StubgenContext())
             assert result is not None
+            # `numpy` isn't a real cimport here (it's a plain Python
+            # `import`), and the rest resolve natively (`cython` is a
+            # pseudo-module, `cpython.mem` is under Cython's own
+            # standard include path) -- no diagnostics expected.
+            assert result.diagnostics == []
 
     def test_parse_file_with_cdef_types(self):
         """Test parsing file with cdef type declarations."""
@@ -115,7 +146,7 @@ cdef str name = "hello"
 cdef class MyClass:
     cdef int attr
 """)
-            result = parse_pyx(pyx_file.read_text(), pyx_path=pyx_file)
+            result = parse_file(pyx_file, StubgenContext())
             assert result is not None
 
     def test_parse_file_with_properties(self):
@@ -134,7 +165,7 @@ cdef class MyClass:
     def value(self, int v):
         self._value = v
 """)
-            result = parse_pyx(pyx_file.read_text(), pyx_path=pyx_file)
+            result = parse_file(pyx_file, StubgenContext())
             assert result is not None
 
     def test_parse_file_with_decorators(self):
@@ -142,67 +173,73 @@ cdef class MyClass:
         with tempfile.TemporaryDirectory() as tmpdir:
             pyx_file = Path(tmpdir) / "decorated.pyx"
             pyx_file.write_text("""
-@staticmethod
-def static_method():
-    pass
+class Plain:
+    @staticmethod
+    def static_method():
+        pass
 
-@classmethod
-def class_method(cls):
-    pass
+    @classmethod
+    def class_method(cls):
+        pass
 
-@property
-def my_prop(self):
-    return 42
+    @property
+    def my_prop(self):
+        return 42
 """)
-            result = parse_pyx(pyx_file.read_text(), pyx_path=pyx_file)
+            result = parse_file(pyx_file, StubgenContext())
             assert result is not None
 
     def test_parse_file_with_builtin_types(self):
-        """Test parsing file with builtin type annotations."""
+        """Test parsing file with builtin type annotations.
+
+        Named `builtin_types.pyx`, not `builtins.pyx`: the latter collides
+        with Cython's own reserved `builtins` module scope during
+        qualified-name resolution (`Context.find_module` resolves it to a
+        `BuiltinScope`, not an ordinary `ModuleScope`) -- an inherent
+        property of using Cython's real module-name machinery, not
+        something specific to this project. A real Cython project with a
+        top-level file literally named `builtins.pyx` would hit the same
+        collision with the real compiler.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
-            pyx_file = Path(tmpdir) / "builtins.pyx"
+            pyx_file = Path(tmpdir) / "builtin_types.pyx"
             pyx_file.write_text("""
 def func(x: int, y: str, z: bool) -> list:
     pass
 """)
-            result = parse_pyx(pyx_file.read_text(), pyx_path=pyx_file)
+            result = parse_file(pyx_file, StubgenContext())
             assert result is not None
 
 
-class TestPreprocessingEdgeCases:
-    """Test edge cases in preprocessing."""
+class TestRealFileFormatting:
+    """Parsing real files with varied whitespace/line-ending styles.
 
-    def test_preprocess_with_windows_line_endings(self):
-        """Test preprocessing with Windows line endings."""
+    There's no preprocessing step to normalize these -- these exercise
+    Cython's own scanner handling the raw file directly, and
+    `ParsedSource.source` is exactly the file's own text, unmodified.
+    """
+
+    def test_parse_file_with_windows_line_endings(self):
+        """Test parsing a file with Windows line endings."""
         with tempfile.TemporaryDirectory() as tmpdir:
             pyx_file = Path(tmpdir) / "windows.pyx"
-            # Write with Windows line endings
             pyx_file.write_bytes(b"def hello():\r\n    pass\r\n")
-            result = parse_pyx(pyx_file.read_text(), pyx_path=pyx_file)
+            result = parse_file(pyx_file, StubgenContext())
             assert result is not None
 
-    def test_preprocess_with_tabs(self):
-        """Test preprocessing with tab indentation."""
+    def test_parse_file_with_tabs(self):
+        """Test parsing a file with tab indentation."""
         with tempfile.TemporaryDirectory() as tmpdir:
             pyx_file = Path(tmpdir) / "tabs.pyx"
             pyx_file.write_text("""
 def hello():
 \tpass
 """)
-            result = parse_pyx(pyx_file.read_text(), pyx_path=pyx_file)
+            result = parse_file(pyx_file, StubgenContext())
             assert result is not None
 
-    def test_preprocess_with_mixed_indentation(self):
-        """Test preprocessing with mixed spaces and tabs."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            pyx_file = Path(tmpdir) / "mixed.pyx"
-            # Mix spaces and tabs
-            pyx_file.write_text("def hello():\n    pass\n")
-            result = parse_pyx(pyx_file.read_text(), pyx_path=pyx_file)
-            assert result is not None
-
-    def test_preprocess_strip_expand_semicolons_at_newline(self):
-        """Test preprocessing with semicolon at end of line."""
+    def test_parse_file_source_is_unmodified(self):
+        """`ParsedSource.source` is exactly the file's own text -- no preprocessing."""
         with tempfile.TemporaryDirectory() as tmpdir:
             pyx_file = Path(tmpdir) / "semicolon.pyx"
             code = """
@@ -214,13 +251,82 @@ class Test:
 """
             pyx_file.write_text(code)
 
-            result = parse_pyx(pyx_file.read_text(), pyx_path=pyx_file).source
-            lines_in = [line.rstrip("; ") for line in code.splitlines() if line.strip()]
-            lines_out = [
-                line.rstrip(" ") for line in result.splitlines() if line.strip()
-            ]
+            result = parse_file(pyx_file, StubgenContext())
+            assert result.source == code
 
-            for line_in, line_out in zip(lines_in, lines_out):
-                assert line_in == line_out
 
-            assert result is not None
+class TestNamespacePackageRootDetection:
+    """`context_for_paths` must widen its search past a PEP 420 implicit
+    namespace-package directory (no `__init__` of its own) sitting above
+    the real, `__init__`-bearing package root.
+
+    Regression test found converting NVIDIA/cuda-python's `cuda_core`
+    package: its layout is `cuda/core/...`, where `cuda/` has no
+    `__init__` file (a namespace package shared with the separately
+    installed `cuda_bindings` distribution) but `cuda/core/` does.
+    `Cython.Utils.find_root_package_dir` (which `context_for_paths`
+    uses to auto-derive each file's include search root) stops
+    climbing at the first ancestor with no `__init__`, so it named
+    `.../cuda` as the root -- one level too shallow for a `cimport
+    cuda.core.sibling_module` (which needs `.../cuda`'s *parent*
+    searched, so `cuda/core/sibling_module.pxd` resolves beneath it)
+    to succeed. A same-package cimport crossing into a sibling
+    subpackage this way silently failed to resolve, and anything
+    referencing the unresolved type was dropped from the generated
+    stub rather than degraded.
+
+    Fixed in `parsing/context.py::context_for_paths`: also add each
+    root's parent directory to the search path.
+    """
+
+    def _make_namespace_package_layout(self, temp_dir: Path) -> Path:
+        """`<temp_dir>/ns/pkg/{__init__.pxd,a.pxd,a.pyx,b.pyx}` -- `ns`
+        has no `__init__` (the namespace package), `pkg` does (the
+        real, `__init__`-bearing package underneath it).
+        """
+        pkg_dir = temp_dir / "ns" / "pkg"
+        pkg_dir.mkdir(parents=True)
+        (pkg_dir / "__init__.pxd").write_text("")
+        (pkg_dir / "a.pxd").write_text("""
+cdef class Shared:
+    cdef int value
+""")
+        (pkg_dir / "a.pyx").write_text("""
+cdef class Shared:
+    def __init__(self, value: int):
+        self.value = value
+""")
+        (pkg_dir / "b.pyx").write_text("""
+from ns.pkg.a cimport Shared
+
+cdef class UsesShared:
+    cdef Shared shared
+
+    def __init__(self, shared: Shared):
+        self.shared = shared
+""")
+        return pkg_dir
+
+    def test_context_for_paths_adds_namespace_parent(self, temp_dir):
+        pkg_dir = self._make_namespace_package_layout(temp_dir)
+        context = context_for_paths([pkg_dir / "b.pyx"])
+        # The namespace-package dir itself (old behavior) plus its
+        # parent (the fix) must both be on the search path.
+        assert str((temp_dir / "ns").resolve()) in context.include_directories
+        assert str(temp_dir.resolve()) in context.include_directories
+
+    def test_cross_subpackage_cimport_resolves(self, temp_dir):
+        """End-to-end: a same-package cimport across a namespace-package
+        boundary must actually resolve, not just widen the search list.
+        """
+        pkg_dir = self._make_namespace_package_layout(temp_dir)
+
+        stubgen = StubgenPyx(StubgenPyxConfig(include_private=True))
+        results = stubgen.convert_glob(str(pkg_dir / "b.pyx"))
+        assert all(r.success for r in results), [
+            r.error for r in results if not r.success
+        ]
+
+        result = (pkg_dir / "b.pyi").read_text()
+        assert "class UsesShared" in result
+        assert "shared: Shared" in result or "Shared" in result

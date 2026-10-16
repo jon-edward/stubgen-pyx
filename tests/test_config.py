@@ -15,6 +15,7 @@ def test_config_defaults():
     assert config.pxd_to_stubs is True
     assert config.normalize_names is True
     assert config.deduplicate_imports is True
+    assert config.canonicalize_import_aliases is True
     assert config.trim_not_defined is True
     assert config.exclude_attribution is False
     assert config.continue_on_error is False

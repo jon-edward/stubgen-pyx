@@ -87,6 +87,12 @@ class TestCreateParser:
         args = parser.parse_args([".", "--no-pxd-to-stubs"])
         assert args.no_pxd_to_stubs is True
 
+    def test_parser_with_no_canonicalize_import_aliases(self):
+        """Test parser with --no-canonicalize-import-aliases flag."""
+        parser = cli._create_parser()
+        args = parser.parse_args([".", "--no-canonicalize-import-aliases"])
+        assert args.no_canonicalize_import_aliases is True
+
     def test_parser_with_no_deduplicate_imports(self):
         """Test parser with --no-deduplicate-imports flag."""
         parser = cli._create_parser()
@@ -116,6 +122,38 @@ class TestCreateParser:
         parser = cli._create_parser()
         args = parser.parse_args([".", "--include-private"])
         assert args.include_private is True
+
+    def test_parser_with_resolve_ctypedef_aliases(self):
+        """Test parser with --resolve-ctypedef-aliases flag."""
+        parser = cli._create_parser()
+        args = parser.parse_args([".", "--resolve-ctypedef-aliases"])
+        assert args.resolve_ctypedef_aliases is True
+
+    def test_parser_resolve_ctypedef_aliases_defaults_false(self):
+        parser = cli._create_parser()
+        args = parser.parse_args(["."])
+        assert args.resolve_ctypedef_aliases is False
+
+    def test_parser_with_include_dir(self):
+        """Test parser with --include-dir flag accepting multiple paths."""
+        parser = cli._create_parser()
+        args = parser.parse_args([".", "--include-dir", "/some/path", "/other/path"])
+        assert args.include_dir == ["/some/path", "/other/path"]
+
+    def test_parser_include_dir_defaults_none(self):
+        parser = cli._create_parser()
+        args = parser.parse_args(["."])
+        assert args.include_dir is None
+
+    def test_parser_with_replace_defaults_with_ellipsis(self):
+        parser = cli._create_parser()
+        args = parser.parse_args([".", "--replace-defaults-with-ellipsis"])
+        assert args.replace_defaults_with_ellipsis is True
+
+    def test_parser_replace_defaults_with_ellipsis_defaults_false(self):
+        parser = cli._create_parser()
+        args = parser.parse_args(["."])
+        assert args.replace_defaults_with_ellipsis is False
 
     def test_parser_default_directory(self):
         """Test parser with default directory."""
