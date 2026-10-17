@@ -17,8 +17,25 @@ Automatic stub file generation for Cython extensions that enables full IDE suppo
 <small>Are you using this project in production or in an open-source tool? We'd love to feature you!
 Please open a [pull request](https://github.com/jon-edward/stubgen-pyx/pulls) to add your project, company, or application to this list.</small>
 
+## Sponsors
+
+<p align="center">
+  Thank you to the contributors and sponsors who make it possible to keep maintaining this project.<br />
+  If stubgen-pyx has saved you or your team time and effort, please consider
+  <a href="https://github.com/sponsors/jon-edward">sponsoring</a> to have your avatar or logo shown here.
+</p>
+
+<p align="center">
+<!-- sponsors-premium --><!-- sponsors-premium -->
+</p>
+
+<p align="center">
+<!-- sponsors --><!-- sponsors -->
+</p>
+
 ## Table of Contents
 
+- [Sponsors](#sponsors)
 - [Features](#features)
 - [Installation](#installation)
 - [Quick Start](#quick-start)

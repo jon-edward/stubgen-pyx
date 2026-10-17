@@ -1,0 +1,43 @@
+name: Update Sponsors
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  sponsors:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Generate premium sponsors
+        uses: JamesIves/github-sponsors-readme-action@v1
+        with:
+          token: ${{ secrets.SPONSORS_TOKEN }}
+          file: README.md
+          marker: sponsors-premium
+          minimum: 2500
+          fallback: ""
+          template: '<a href="{{{ url }}}"><img src="{{{ avatarUrl }}}" width="80" alt="{{{ login }}}" title="{{{ name }}}" /></a>&nbsp;&nbsp;'
+
+      - name: Generate sponsors
+        uses: JamesIves/github-sponsors-readme-action@v1
+        with:
+          token: ${{ secrets.SPONSORS_TOKEN }}
+          file: README.md
+          marker: sponsors
+          maximum: 2499
+          fallback: ""
+          template: '<a href="{{{ url }}}"><img src="{{{ avatarUrl }}}" width="50" alt="{{{ login }}}" title="{{{ name }}}" /></a>&nbsp;&nbsp;'
+
+      - name: Commit README changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git diff --cached --quiet || git commit -m "Update sponsors in README"
+          git push
